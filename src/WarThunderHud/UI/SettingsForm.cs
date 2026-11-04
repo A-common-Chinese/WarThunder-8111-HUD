@@ -24,6 +24,7 @@ public sealed class SettingsForm : Form
     private readonly TextBox _zoomKey = new() { Width = 90 };
     private readonly TextBox _mapKey = new() { Width = 90 };
     private readonly TextBox _scoreKey = new() { Width = 90 };
+    private readonly NumericUpDown _hole = new() { Minimum = 0, Maximum = 240, DecimalPlaces = 0, Increment = 8, Width = 80 };
     private readonly NumericUpDown _endScale = new() { Minimum = 0.5m, Maximum = 3.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
     private readonly NumericUpDown _overspeed = new() { Minimum = 200, Maximum = 3000, DecimalPlaces = 0, Increment = 10, Width = 80 };
     private readonly NumericUpDown _fov = new() { Minimum = 15, Maximum = 120, DecimalPlaces = 0, Increment = 1, Width = 80 };
@@ -46,6 +47,7 @@ public sealed class SettingsForm : Form
     public string ScoreboardKey => _scoreKey.Text;
     public double OverspeedKmh => (double)_overspeed.Value;
     public double EnduranceScale => (double)_endScale.Value;
+    public int CursorHoleHalfPx => (int)_hole.Value;
 
     public SettingsForm(HudConfig cfg, bool hudVisible, bool bodyFixedOnly)
     {
@@ -76,6 +78,7 @@ public sealed class SettingsForm : Form
         _scoreKey.Text = cfg.ScoreboardKey;
         _overspeed.Value = (decimal)Math.Clamp(cfg.OverspeedKmh, 200, 3000);
         _endScale.Value = (decimal)Math.Clamp(cfg.EnduranceScale, 0.5, 3.0);
+        _hole.Value = Math.Clamp(cfg.CursorHoleHalfPx, 0, 240);
 
         var layout = new TableLayoutPanel
         {
@@ -108,6 +111,7 @@ public sealed class SettingsForm : Form
         AddRow(new Label { Text = "俯仰零位（度，F7 自动填入）", AutoSize = true }, _pitchZero);
         AddRow(new Label { Text = "超速阈值（IAS km/h，超过则变红）", AutoSize = true }, _overspeed);
         AddRow(new Label { Text = "续航标定系数（对齐游戏读数，1.3≈实测）", AutoSize = true }, _endScale);
+        AddRow(new Label { Text = "光标洞半径 px（0=关闭，越小越不挡图标）", AutoSize = true }, _hole);
         AddRow(new Label { Text = "视角切换键（默认 V）", AutoSize = true }, _viewKey);
         AddRow(new Label { Text = "瞄准/放大键（默认 Z）", AutoSize = true }, _zoomKey);
         AddRow(new Label { Text = "地图键（默认 M）", AutoSize = true }, _mapKey);
@@ -148,6 +152,7 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 }
+
 
 
 

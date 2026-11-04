@@ -46,6 +46,12 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("enduranceScale")] public double EnduranceScale { get; set; } = 1.30;
 
+    /// <summary>
+    /// Half-size (px) of the transparent hole at screen centre that lets the game draw its cursor.
+    /// Smaller = less HUD occlusion near the boresight; 0 disables the hole.
+    /// </summary>
+    [JsonPropertyName("cursorHoleHalfPx")] public int CursorHoleHalfPx { get; set; } = 16;   // 32 px hole: hides the game cursor, keeps the FPM ring visible
+
     /// <summary>IAS above which the speed readout turns red (km/h). No Vne in the API.</summary>
     [JsonPropertyName("overspeedKmh")] public double OverspeedKmh { get; set; } = 1400;
 
@@ -94,6 +100,9 @@ public sealed class HudConfig
 
     public HudConfig Clone() => (HudConfig)MemberwiseClone();
 }
+
+
+
 
 
 

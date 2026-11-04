@@ -145,6 +145,7 @@ internal static class NativeMethods
     public const uint VK_F12 = 0x7B;
     public const uint VK_PRIOR = 0x21;
     public const uint VK_R = 0x52;
+    public const uint VK_H = 0x48;
     public const uint VK_F1 = 0x70;
     public const uint VK_Z = 0x5A;
     public const uint VK_V = 0x56;
@@ -277,6 +278,12 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint WM_MOUSEMOVE = 0x0200;
+    public const int HTCLIENT = 1;
+
     [DllImport("user32.dll")]
     public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
 
@@ -286,6 +293,8 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 }
+
+
 
 
 

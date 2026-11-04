@@ -17,7 +17,7 @@ public static class Program
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
-        string mode = args.Length > 0 ? args[0].ToLowerInvariant() : "probe";
+        string mode = args.Length > 0 ? args[0].ToLowerInvariant() : "overlay";   // double-click = start the HUD
 
         switch (mode)
         {
@@ -34,11 +34,11 @@ public static class Program
             case "dumpgeo":
                 return DumpGeometry(args);
             case "overlay":
-                return RunOverlay(args);
+                return RunOverlay(args.Length > 0 ? args : new[] { "overlay" });
             case "fusiontest":
                 return FusionTest();
             default:
-                Console.WriteLine("usage: WtHud [probe [seconds] | replay <file> [speed] | preview <out.png> [w] [h] [variant] | selftest]");
+                Console.WriteLine("usage: WtHud                       # start the HUD overlay (default)\n         WtHud overlay [seconds] [demo]\n         WtHud probe [seconds] | replay <file> [speed] | preview <out.png> [w] [h] [variant] | selftest | fusiontest | dumpgeo");
                 return 2;
         }
     }
@@ -220,6 +220,7 @@ public static class Program
                     cfg.PitchZeroDeg = form.PitchZero;
                     cfg.OverspeedKmh = form.OverspeedKmh;
                     cfg.EnduranceScale = form.EnduranceScale;
+                    cfg.CursorHoleHalfPx = form.CursorHoleHalfPx;
 
                     cal.VerticalFovDeg = cfg.VerticalFovDeg;
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
@@ -246,13 +247,13 @@ public static class Program
 
     private static int RunOverlay(string[] args)
     {
-        double seconds = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 30;
+        double seconds = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 0;   // 0 = run until exit
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
 
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         int w = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
         int h = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
-        Console.WriteLine($"overlay {w}x{h} for {seconds}s demo={demo}");
+        Console.WriteLine($"overlay {w}x{h} for {(seconds <= 0 ? "unlimited" : seconds + "s")} demo={demo}");
 
         telemetry = new TelemetryClient(0);
         fusion = new AttitudeFusion();
@@ -291,6 +292,8 @@ public static class Program
         var logPath = Path.Combine(AppContext.BaseDirectory, "wthud-overlay.log");
         try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false) { AutoFlush = true })); } catch { }
         Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {w}x{h}");
+        overlay.SetCursorHole(cfg.CursorHoleHalfPx);
+        overlay.NudgeForegroundCursor();
         var console = NativeMethods.GetConsoleWindow();
         if (console != IntPtr.Zero) NativeMethods.ShowWindow(console, NativeMethods.SW_HIDE);
         var game = System.Diagnostics.Process.GetProcessesByName("aces").FirstOrDefault();
@@ -340,6 +343,20 @@ public static class Program
                 cfg.VerticalFovDeg = Math.Min(120, cfg.VerticalFovDeg + 1);
                 cal.VerticalFovDeg = cfg.VerticalFovDeg;
                 Console.WriteLine($"Ctrl+Alt+PgDn   -> FOV = {cfg.VerticalFovDeg:F0} deg (symbols smaller)");
+            }
+            else if (id == 14)
+            {
+                // Ctrl+Alt+H cycles the cursor-hole size so the minimum acceptable value can be
+                // found in game (smaller hole = less HUD occlusion near the boresight).
+                int[] sizes = { 0, 16, 24, 32, 40, 56, 70 };
+                int cur = Array.IndexOf(sizes, overlay.CursorHoleHalfPx);
+                int next = sizes[(cur + 1) % sizes.Length];
+                overlay.SetCursorHole(next);
+                cfg.CursorHoleHalfPx = next;
+                Console.WriteLine($"cursor hole -> {next * 2}x{next * 2} px  (Ctrl+Alt+H cycles, F12 saves)");
+                Console.WriteLine($"  cursor now : {NativeMethods.DescribeCursor()}");
+                Thread.Sleep(220);
+                Console.WriteLine($"  cursor +220: {NativeMethods.DescribeCursor()}");
             }
             else if (id == 13)
             {
@@ -395,6 +412,17 @@ public static class Program
                 {
                     Console.WriteLine($"foreground -> {(foreground ? "game (overlay shown)" : "other app (overlay hidden)")}");
                     wasForeground = foreground;
+
+                    // Coming back from another app the OS may still be drawing that app's arrow
+                    // (War Thunder pins the pointer to the screen centre, so no new WM_SETCURSOR
+                    // ever arrives and the arrow stays). Post one so the game hides it again.
+                    if (foreground)
+                    {
+                        overlay.ForceInvisibleCursor();
+                        overlay.NudgeForegroundCursor();
+                        Thread.Sleep(30);
+                        overlay.NudgeForegroundCursor();
+                    }
                 }
 
                 // Keep the drawn cursor null while the game is in front. ShowCursor must NOT be
@@ -402,6 +430,27 @@ public static class Program
                 if (foreground && !settingsOpen) NativeMethods.SetCursor(IntPtr.Zero);
 
                 long now = Environment.TickCount64;
+
+                // Watchdog: the game pins the pointer and only re-hides the cursor inside its
+                // WM_SETCURSOR handler. If the OS still reports a visible cursor while the game
+                // owns the foreground, keep poking it until it hides.
+                if (foreground && !settingsOpen && now - lastCursorNudge > 150)
+                {
+                    lastCursorNudge = now;
+                    string curState = NativeMethods.DescribeCursor();
+                    if (curState.Contains("showing=True"))
+                    {
+                        cursorNudges++;
+                        if (cursorNudges <= 8 || cursorNudges % 40 == 0)
+                            Console.WriteLine($"cursor watchdog #{cursorNudges}: {curState}");
+                        overlay.ForceInvisibleCursor();
+                        overlay.NudgeForegroundCursor();
+                    }
+                    else
+                    {
+                        cursorNudges = 0;
+                    }
+                }
                 bool armed = foreground && !settingsOpen;
 
                 bool zoomNow = zoomKey.IsDown();
@@ -449,7 +498,7 @@ public static class Program
         double zoomBlend = 0;
         double lastFrameTime = 0;
 
-        while (overlay.Running && clock.Elapsed.TotalSeconds < seconds)
+        while (overlay.Running && (seconds <= 0 || clock.Elapsed.TotalSeconds < seconds))
         {
             if (!overlay.PumpMessages()) break;
 
@@ -627,6 +676,20 @@ public static class Program
             }
             frames++;
 
+            // Cursor visibility probe: the OS cursor is drawn either by our overlay (invisible
+            // class cursor) or by the game window underneath. Log every transition so a stray
+            // arrow can be traced to a window/process instead of guessed at.
+            if ((frames & 7) == 0)
+            {
+                string curDesc = NativeMethods.DescribeCursor();
+                bool curShowing = curDesc.Contains("showing=True");
+                if (curShowing != lastCursorShowing)
+                {
+                    lastCursorShowing = curShowing;
+                    Console.WriteLine($"cursor transition -> {curDesc}  hole={overlay.CursorHoleHalfPx * 2}px fg={NativeMethods.GetForegroundWindow()}");
+                }
+            }
+
 
             if (clock.Elapsed.TotalSeconds - lastLog > 2.5)
             {
@@ -753,6 +816,9 @@ public static class Program
 
     private static volatile bool settingsOpen;
     private static long lastExitPress;
+    private static bool lastCursorShowing = true;
+    private static long lastCursorNudge;
+    private static int cursorNudges;
 
     private static string lastVehicle = "";
     private static bool prevValid;
@@ -879,6 +945,14 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
+
+
+
+
 
 
 

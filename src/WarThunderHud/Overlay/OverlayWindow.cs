@@ -90,11 +90,13 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.RegisterHotKey(_hwnd, 11, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_R);
         NativeMethods.RegisterHotKey(_hwnd, 12, NativeMethods.MOD_NOREPEAT, NativeMethods.VK_F1);
         NativeMethods.RegisterHotKey(_hwnd, 13, NativeMethods.MOD_NOREPEAT, NativeMethods.VK_F5);
+        NativeMethods.RegisterHotKey(_hwnd, 14, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_H);
 
         NativeMethods.ShowWindow(_hwnd, NativeMethods.SW_SHOWNOACTIVATE);
         NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, 0, 0, width, height,
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
 
+        _winW = width; _winH = height;
         ApplyCursorHoleRegion(width, height);
         InitGraphics(width, height);
     }
@@ -105,9 +107,58 @@ public sealed class OverlayWindow : IDisposable
     /// game keeps hiding its own cursor. The HUD already leaves a gap at the boresight, so the
     /// hole does not remove any symbology.
     /// </summary>
+    private int _winW, _winH;
+
+    /// <summary>Half-size in pixels of the transparent centre hole (0 = no hole).</summary>
+    public int CursorHoleHalfPx { get; private set; } = 70;
+
+    /// <summary>Re-assert the invisible cursor right after a region change (Windows re-evaluates
+    /// the cursor owner whenever the window shape changes, which flashes the arrow).</summary>
+    public void ForceInvisibleCursor()
+    {
+        if (_invisibleCursor != IntPtr.Zero) NativeMethods.SetCursor(_invisibleCursor);
+    }
+
+    /// <summary>
+    /// Ask the foreground window (the game) to re-run its WM_SETCURSOR handler. Changing the
+    /// overlay region makes Windows re-evaluate which window owns the cursor and it can fall back
+    /// to the game class cursor (an arrow), which then never clears because the game pins the
+    /// pointer to the screen centre. A single posted WM_SETCURSOR makes the game hide it again.
+    /// </summary>
+    public void NudgeForegroundCursor()
+    {
+        IntPtr fg = NativeMethods.GetForegroundWindow();
+        if (fg == IntPtr.Zero || fg == _hwnd) return;
+        IntPtr lParam = (IntPtr)(NativeMethods.HTCLIENT | (NativeMethods.WM_MOUSEMOVE << 16));
+        NativeMethods.PostMessage(fg, NativeMethods.WM_SETCURSOR, fg, lParam);
+    }
+
+    /// <summary>Resize the centre hole; smaller values occlude less HUD symbology.</summary>
+    public void SetCursorHole(int halfPx)
+    {
+        CursorHoleHalfPx = Math.Clamp(halfPx, 0, 240);
+        ApplyCursorHoleRegion(_winW, _winH);
+    }
+
+    /// <summary>
+    /// Cuts a small hole out of the window region at the screen centre. War Thunder clips the
+    /// OS cursor there; with the hole that pixel region belongs to the game window again, so the
+    /// game keeps hiding its own cursor. Keep it as small as the game still accepts, otherwise it
+    /// swallows HUD symbols (notably the flight-path marker near the boresight).
+    /// </summary>
     private void ApplyCursorHoleRegion(int width, int height)
     {
-        const int hole = 70;
+        int hole = CursorHoleHalfPx;
+        if (width <= 0 || height <= 0) return;
+
+        if (hole <= 0)
+        {
+            IntPtr whole = NativeMethods.CreateRectRgn(0, 0, width, height);
+            NativeMethods.SetWindowRgn(_hwnd, whole, true);
+            Console.WriteLine("overlay region: full screen (no cursor hole)");
+            return;
+        }
+
         int cx = width / 2, cy = height / 2;
         IntPtr full = NativeMethods.CreateRectRgn(0, 0, width, height);
         IntPtr holeRgn = NativeMethods.CreateRectRgn(cx - hole, cy - hole, cx + hole, cy + hole);
@@ -315,6 +366,11 @@ public sealed class OverlayWindow : IDisposable
         }
     }
 }
+
+
+
+
+
 
 
 

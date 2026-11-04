@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -63,8 +63,11 @@ public static class TelemetryParser
             hasFuelInd = r.TryGetProperty("fuel", out _);
 
             if (r.TryGetProperty("aviahorizon_pitch", out _)) pitch = GetDouble(r, "aviahorizon_pitch");
-            if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
-            else if (r.TryGetProperty("aviahorizon_roll", out _)) bank = -GetDouble(r, "aviahorizon_roll");
+            // aviahorizon_roll is the real roll angle in degrees (sign inverted vs. our
+            // convention). The "bank" field is a different, small-range quantity (observed
+            // +/-8) and must not drive the bank pointer; keep it only as a fallback.
+            if (r.TryGetProperty("aviahorizon_roll", out _)) bank = -GetDouble(r, "aviahorizon_roll");
+            else if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
             if (r.TryGetProperty("turn", out _)) turn = GetDouble(r, "turn");
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");
             for (int i = 1; i <= 4; i++)
@@ -144,6 +147,7 @@ public static class TelemetryParser
         return e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
     }
 }
+
 
 
 

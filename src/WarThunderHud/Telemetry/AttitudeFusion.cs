@@ -67,6 +67,8 @@ public sealed class AttitudeFusion
     private double _nativeDot;       // correlation between native pitch and synthesis
     private int _nativeSamples;
     private int _nativeSign = 1;
+    private double _nativeTrust = 1.0;
+    private double _nativeDissentSec;
 
     public AttitudeFusion(double smoothing = 0.45)
     {
@@ -114,38 +116,20 @@ public sealed class AttitudeFusion
         bankSynth = Math.Clamp(bankSynth, -80, 80);
 
         // ---- native path ----
+        // Pass the game values straight through, no correction: on this simulation the native
+        // artificial horizon is what the player expects to see, and every "improvement" we tried
+        // (sign detection, bias learning, roll-rate fusion) made it worse after a full roll.
         if (s.PitchDeg.HasValue && s.BankDeg.HasValue)
         {
-            // Some vehicles report the artificial-horizon pitch with an inverted sign
-            // (measured on a MiG-19: native = -(velocity path angle + AoA) - 2.5 deg).
-            // Decide the sign from the correlation with the physical estimate instead of
-            // trusting one convention.
-            if (_nativeSamples < 60)
-            {
-                _nativeDot += s.PitchDeg.Value * pitchSynth;
-                _nativeSamples++;
-                if (_nativeSamples == 60) _nativeSign = _nativeDot >= 0 ? 1 : -1;
-            }
-            if (!_biasInit)
-            {
-                _pitchBias = _nativeSign * s.PitchDeg.Value - pitchSynth;
-                _biasInit = true;
-            }
-            else if (Math.Abs(s.NyG) < 3.0)
-            {
-                double diff = _nativeSign * s.PitchDeg.Value - pitchSynth;
-                _pitchBias = _pitchBias * 0.98 + diff * 0.02;
-            }
-
-            _pitchSmooth += ((_nativeSign * s.PitchDeg.Value) - _pitchBias - _pitchSmooth) * _alpha;
-            _bankSmooth += (s.BankDeg.Value - _bankSmooth) * _alpha;
-            _confidence = Math.Min(1.0, _confidence + 0.1);
+            _pitchSmooth = s.PitchDeg.Value;
+            _bankSmooth = s.BankDeg.Value;
+            _confidence = 1.0;
             return new AttitudeSolution
             {
                 PitchDeg = _pitchSmooth,
                 BankDeg = _bankSmooth,
                 Source = AttitudeSource.Game,
-                Confidence = _confidence,
+                Confidence = 1.0,
             };
         }
 
@@ -188,6 +172,7 @@ public sealed class AttitudeFusion
     /// <summary>Current low-passed turn rate, deg/s (exposed for testing/logging).</summary>
     public double TurnRateDegS => _turnRateDegS;
 }
+
 
 
 

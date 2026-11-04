@@ -1,4 +1,4 @@
-﻿# War Thunder HUD (8111)
+# War Thunder HUD (8111)
 
 用官方 `localhost:8111` 接口驱动的**战争雷霆平视显示器（HUD）叠加层**，反作弊安全：**不注入、不读内存、不改文件、不拦截网络、不自动操作**。
 
@@ -72,6 +72,7 @@ no packet interception, no automation.
 | `Ctrl+Alt+↑ / ↓` | HUD 整体上移 / 下移 0.5° |
 | `Ctrl+Alt+PgUp / PgDn` | 垂直视场角（角度尺度）∓1° |
 | `Ctrl+Alt+R` | 相机滚转耦合 0/1 |
+| `Ctrl+Alt+H` | 循环光标洞尺寸（0/32/48/64/80/112/140 px，越小越不挡符号） |
 | `Z` | 瞄准布局切换（跟随游戏放大键） |
 | `V` | 视角切换计数（座舱隐藏 HUD） |
 
@@ -153,6 +154,7 @@ docs/          设计文档与接口调研
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 
