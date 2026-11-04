@@ -18,7 +18,7 @@ no packet interception, no automation.
 
 近距离视角：
 
-![座舱视角（HUD 自动隐藏）](docs/screenshots/hud-02-cockpit-view.jpg)
+![近距离视角](docs/screenshots/hud-02-close-view.jpg)
 ## 特性
 
 ### 显示
@@ -153,6 +153,7 @@ docs/          设计文档与接口调研
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 
