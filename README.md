@@ -8,6 +8,17 @@ no packet interception, no automation.
 
 ---
 
+---
+
+## 效果截图
+
+第三人称（HUD 全要素）：
+
+![第三人称 HUD](docs/screenshots/hud-01-third-person.jpg)
+
+近距离视角：
+
+![近距离视角](docs/screenshots/hud-02-close-view.jpg)
 ## 特性
 
 ### 显示
@@ -142,4 +153,5 @@ docs/          设计文档与接口调研
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
