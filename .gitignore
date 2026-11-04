@@ -1,0 +1,23 @@
+# build output
+bin/
+obj/
+dist/
+publish/
+*.user
+
+# IDE
+.vs/
+.idea/
+*.suo
+
+# local runtime output
+*.log
+hud-config.json
+wthud-overlay.log
+
+# portable SDK / tools
+.tools/
+
+# OS
+Thumbs.db
+desktop.ini
