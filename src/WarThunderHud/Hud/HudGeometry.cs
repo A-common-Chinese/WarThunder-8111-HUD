@@ -1,4 +1,8 @@
-﻿using WtHud.Telemetry;
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 A-common-Chinese
+// This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
+
+using WtHud.Telemetry;
 
 namespace WtHud.Hud;
 

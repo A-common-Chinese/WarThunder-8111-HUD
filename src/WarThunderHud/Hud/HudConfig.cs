@@ -1,4 +1,8 @@
-﻿using System.Text.Json;
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 A-common-Chinese
+// This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
+
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace WtHud.Hud;
