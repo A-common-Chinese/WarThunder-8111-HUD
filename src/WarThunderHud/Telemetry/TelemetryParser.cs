@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -17,6 +17,9 @@ public static class TelemetryParser
     {
         double ias = 0, tas = 0, mach = 0, alt = 0, vy = 0, aoa = 0, aos = 0, ny = 1, wx = 0;
         double mfuel = 0, mfuel0 = 0, gearPct = 0, flapsPct = 0, airbrakePct = 0;
+        // Some aircraft expose a real radio altimeter; most do not (the API has no terrain data).
+        double? radioAlt = null;
+        double? vne = null;
         bool stateValid = false;
 
         if (!string.IsNullOrWhiteSpace(stateJson))
@@ -38,6 +41,7 @@ public static class TelemetryParser
             gearPct = GetDouble(r, "gear, %", -1);
             flapsPct = GetDouble(r, "flaps, %", -1);
             airbrakePct = GetDouble(r, "airbrake, %", -1);
+            if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
         }
 
         string vehicle = "";
@@ -69,6 +73,8 @@ public static class TelemetryParser
             if (r.TryGetProperty("aviahorizon_roll", out _)) bank = -GetDouble(r, "aviahorizon_roll");
             else if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
             if (r.TryGetProperty("turn", out _)) turn = GetDouble(r, "turn");
+            if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
+            if (r.TryGetProperty("vne", out _)) vne = GetDouble(r, "vne");   // cockpit Vne, m/s
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");
             for (int i = 1; i <= 4; i++)
             {
@@ -104,6 +110,8 @@ public static class TelemetryParser
             IasKmh = ias,
             TasKmh = tas,
             Mach = mach,
+            RadioAltM = radioAlt,
+            VneMs = vne,
             AltM = alt,
             VyMs = vy,
             AoaDeg = inFlight ? aoa : 0,
@@ -147,6 +155,7 @@ public static class TelemetryParser
         return e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
     }
 }
+
 
 
 

@@ -89,7 +89,7 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.RegisterHotKey(_hwnd, 10, NativeMethods.MOD_NOREPEAT, NativeMethods.VK_F12);
         NativeMethods.RegisterHotKey(_hwnd, 11, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_R);
         NativeMethods.RegisterHotKey(_hwnd, 12, NativeMethods.MOD_NOREPEAT, NativeMethods.VK_F1);
-        NativeMethods.RegisterHotKey(_hwnd, 13, NativeMethods.MOD_NOREPEAT, NativeMethods.VK_F5);
+        // reset key is polled from config instead of RegisterHotKey, so it no longer steals F5 from the game
         NativeMethods.RegisterHotKey(_hwnd, 14, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_H);
 
         NativeMethods.ShowWindow(_hwnd, NativeMethods.SW_SHOWNOACTIVATE);
@@ -111,6 +111,42 @@ public sealed class OverlayWindow : IDisposable
 
     /// <summary>Half-size in pixels of the transparent centre hole (0 = no hole).</summary>
     public int CursorHoleHalfPx { get; private set; } = 70;
+
+    /// <summary>
+    /// (Re)registers every configurable HUD hotkey from the config. Movement, FOV and roll
+    /// coupling stay fixed on their own combinations.
+    /// </summary>
+    public void ApplyHotkeys(HudConfig cfg)
+    {
+        for (int id = 1; id <= 14; id++) NativeMethods.UnregisterHotKey(_hwnd, id);
+
+        void Bind(int id, string text, uint fallbackVk, string fallbackName, uint forcedMods = 0)
+        {
+            var b = WtHud.Input.KeyBinding.Parse(text, fallbackVk, fallbackName);
+            uint mods = forcedMods | NativeMethods.MOD_NOREPEAT;
+            if (b.Ctrl) mods |= NativeMethods.MOD_CONTROL_KEY;
+            if (b.Shift) mods |= NativeMethods.MOD_SHIFT_KEY;
+            if (b.Alt) mods |= NativeMethods.MOD_ALT_KEY;
+            if (!NativeMethods.RegisterHotKey(_hwnd, id, mods, b.VirtualKey))
+                Console.WriteLine($"hotkey {id} ({b.Text}) could not be registered (already in use?)");
+        }
+
+        Bind(1, cfg.ShowKey, 0x79, "F10");            // show / hide HUD
+        Bind(2, cfg.BodyFixedKey, 0x78, "F9");        // body-fixed mode
+        Bind(3, cfg.ExitKey, 0x7A, "F11");            // exit (double press)
+        Bind(6, cfg.PitchZeroKey, 0x76, "F7");        // pitch zero
+        Bind(7, cfg.BankFlipKey, 0x77, "F8");         // bank flip
+        Bind(10, cfg.SaveKey, 0x7B, "CTRL+F12");      // save config (plain F12 is Steam screenshots)
+        Bind(12, cfg.SettingsKey, 0x70, "F1");        // settings dialog
+        Bind(14, cfg.CursorHoleKey, 0x48, "H", NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY);
+
+        // Fixed combinations: layout offset, FOV and roll coupling.
+        NativeMethods.RegisterHotKey(_hwnd, 4, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_UP);
+        NativeMethods.RegisterHotKey(_hwnd, 5, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_DOWN);
+        NativeMethods.RegisterHotKey(_hwnd, 8, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_PRIOR);
+        NativeMethods.RegisterHotKey(_hwnd, 9, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_NEXT);
+        NativeMethods.RegisterHotKey(_hwnd, 11, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_R);
+    }
 
     /// <summary>Re-assert the invisible cursor right after a region change (Windows re-evaluates
     /// the cursor owner whenever the window shape changes, which flashes the arrow).</summary>
@@ -366,6 +402,9 @@ public sealed class OverlayWindow : IDisposable
         }
     }
 }
+
+
+
 
 
 

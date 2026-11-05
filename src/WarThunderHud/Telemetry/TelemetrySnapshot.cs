@@ -48,6 +48,12 @@ public sealed class TelemetrySnapshot
     public double NyG { get; init; }
     public double RollRateDegS { get; init; }
 
+    /// <summary>Cockpit Vne (never-exceed speed) in m/s when the aircraft exposes it (null otherwise).</summary>
+    public double? VneMs { get; init; }
+
+    /// <summary>Real radio altimeter reading when the aircraft exposes one (null otherwise).</summary>
+    public double? RadioAltM { get; init; }
+
     /// <summary>Airbrake position, 0..100 % (from /state "airbrake, %").</summary>
     public double AirbrakePercent { get; init; }
 
@@ -92,6 +98,8 @@ public sealed class TelemetrySnapshot
         $"Vy {VyMs,6:F1}  AoA {AoaDeg,5:F1}  Ny {NyG,4:F1}  Hdg {HeadingDeg,5:F1}  " +
         $"pitch={(PitchDeg.HasValue ? PitchDeg.Value.ToString("F1") : "n/a"),6}  bank={(BankDeg.HasValue ? BankDeg.Value.ToString("F1") : "n/a"),6}  fuel {FuelKg:F0}/{Fuel0Kg:F0}";
 }
+
+
 
 
 

@@ -99,9 +99,16 @@ public readonly struct KeyBinding
         return true;
     }
 
+    /// <summary>True while the key itself is down, ignoring modifier state.</summary>
+    public bool IsKeyDownIgnoringModifiers() => VirtualKey != 0 && Down(VirtualKey);
+
+    /// <summary>Raw virtual-key state (used for mouse buttons such as VK_RBUTTON = 0x02).</summary>
+    public static bool IsVirtualKeyDown(uint vk) => vk != 0 && Down(vk);
+
     /// <summary>True if the key was pressed since the previous call (catches very short taps).</summary>
     public bool PressedSinceLastPoll() => VirtualKey != 0 && PressedSince(VirtualKey);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(uint vKey);
 }
+

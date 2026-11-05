@@ -215,6 +215,26 @@ public static class Program
                     if (!string.IsNullOrWhiteSpace(form.ZoomKey)) cfg.ZoomKey = form.ZoomKey.Trim().ToUpperInvariant();
                     if (!string.IsNullOrWhiteSpace(form.MapKey)) cfg.MapKey = form.MapKey.Trim().ToUpperInvariant();
                     if (!string.IsNullOrWhiteSpace(form.ScoreboardKey)) cfg.ScoreboardKey = form.ScoreboardKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.HoldHideKey)) cfg.HoldHideKey = form.HoldHideKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.SettingsKey)) cfg.SettingsKey = form.SettingsKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.PitchZeroKey)) cfg.PitchZeroKey = form.PitchZeroKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.BankFlipKey)) cfg.BankFlipKey = form.BankFlipKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.BodyFixedKey)) cfg.BodyFixedKey = form.BodyFixedKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.ShowKey)) cfg.ShowKey = form.ShowKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.ExitKey)) cfg.ExitKey = form.ExitKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.SaveKey)) cfg.SaveKey = form.SaveKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.CursorHoleKey)) cfg.CursorHoleKey = form.CursorHoleKey.Trim().ToUpperInvariant();
+                    if (!string.IsNullOrWhiteSpace(form.ResetKey)) cfg.ResetKey = form.ResetKey.Trim().ToUpperInvariant();
+                    cfg.AimOnRightMouse = form.AimOnRightMouse;
+                    cfg.HideOnGround = form.HideOnGround;
+                    cfg.GroundHideDelayMs = form.GroundHideDelayMs;
+                    cfg.TapeRadarAltitude = form.TapeRadarAltitude;
+                    cfg.AoaWarnDeg = form.AoaWarnDeg;
+                    cfg.BingoFuelSeconds = form.BingoFuelMinutes * 60.0;
+                    cfg.ShowPitchLadder = form.ShowPitchLadder;
+                    cfg.ShowFpm = form.ShowFpm;
+                    RebindeKeys(cfg);
+                    overlayRef?.ApplyHotkeys(cfg);
                     cfg.VerticalFovDeg = form.Fov;
                     cfg.LayoutOffsetYDeg = form.OffsetY;
                     cfg.PitchZeroDeg = form.PitchZero;
@@ -276,6 +296,8 @@ public static class Program
             lastAttitude = fusion.Update(s);
         };
         telemetry.Start();
+        using var mapData = new WtHud.Telemetry.MapData();
+        mapData.Start();
 
         var opt = new HudOptions();
         var cfg = HudConfig.Load();
@@ -290,8 +312,10 @@ public static class Program
         // Windows paint the arrow cursor over the game. Redirect output to a log file and
         // hide the console, then give focus back to the game.
         var logPath = Path.Combine(AppContext.BaseDirectory, "wthud-overlay.log");
-        try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false) { AutoFlush = true })); } catch { }
+        try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true })); } catch { }
         Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {w}x{h}");
+        overlayRef = overlay;
+        overlay.ApplyHotkeys(cfg);
         overlay.SetCursorHole(cfg.CursorHoleHalfPx);
         overlay.NudgeForegroundCursor();
         var console = NativeMethods.GetConsoleWindow();
@@ -391,10 +415,7 @@ public static class Program
         {
             bool prevZoom = false;
             bool prevView = false;
-            var zoomKey = WtHud.Input.KeyBinding.Parse(cfg.ZoomKey, 0x5A, "Z");
-            var viewKey = WtHud.Input.KeyBinding.Parse(cfg.ViewKey, 0x56, "V");
-            var mapKey = WtHud.Input.KeyBinding.Parse(cfg.MapKey, 0x4D, "M");
-            var scoreKey = WtHud.Input.KeyBinding.Parse(cfg.ScoreboardKey, 0x09, "TAB");
+            RebindeKeys(cfg);   // parse from config at startup (and again after F1 saves)
             long lastViewToggleTicks = 0;
             long lastToggleTicks = 0;
             bool wasForeground = false;
@@ -453,35 +474,78 @@ public static class Program
                 }
                 bool armed = foreground && !settingsOpen;
 
-                bool zoomNow = zoomKey.IsDown();
-                bool zoomEdge = (zoomNow && !prevZoom) || zoomKey.PressedSinceLastPoll();
+                // Aiming layout: Z/key toggles it, holding the right mouse button forces it on
+                // for as long as it is held (momentary), which matches how most players look
+                // through the sight.
+                bool zoomNow = _zoomKeyBinding.IsDown();
+                bool zoomEdge = (zoomNow && !prevZoom) || _zoomKeyBinding.PressedSinceLastPoll();
                 if (zoomEdge && armed && now - lastToggleTicks > 180)
                 {
                     lastToggleTicks = now;
-                    opt.ZoomLayout = !opt.ZoomLayout;
-                    Console.WriteLine($"aim key -> layout {(opt.ZoomLayout ? "on" : "off")}");
+                    zoomLatched = !zoomLatched;
+                    Console.WriteLine($"aim key -> layout {(zoomLatched ? "on" : "off")}");
                 }
                 prevZoom = zoomNow;
 
-                bool viewNow = viewKey.IsDown();
-                bool viewEdge = (viewNow && !prevView) || viewKey.PressedSinceLastPoll();
+                bool rightHeld = cfg.AimOnRightMouse && WtHud.Input.KeyBinding.IsVirtualKeyDown(0x02);
+                opt.ZoomLayout = zoomLatched || (armed && rightHeld);
+
+                bool viewNow = _viewKeyBinding.IsDown();
+                bool viewEdge = (viewNow && !prevView) || _viewKeyBinding.PressedSinceLastPoll();
                 if (viewEdge && armed && now - lastViewToggleTicks > 180)
                 {
                     lastViewToggleTicks = now;
                     viewState = (viewState + 1) % 3;   // 0 third person, 1 cockpit, 2 nose
-                    if (opt.ZoomLayout)
+                    if (zoomLatched)
                     {
-                        opt.ZoomLayout = false;
+                        zoomLatched = false;
                         Console.WriteLine("view key -> aiming layout reset");
                     }
                     Console.WriteLine($"view key -> view state {viewState} ({ViewName(viewState)})");
                 }
                 prevView = viewNow;
 
-                // Both the map and the scoreboard are hold-to-show in this setup: the HUD is
-                // hidden exactly while the key is down.
-                mapHeld = armed && mapKey.IsDown();
-                scoreboardHeld = armed && scoreKey.IsDown();
+                // Both the map and the scoreboard are hold-to-hide in this setup. The map key
+                // ignores modifier state: pressing M together with another key used to fall
+                // through and let the HUD pop back up.
+                // Single-key map binding ignores modifier state (pressing M with Shift held used
+                // to fall through and pop the HUD back up); a real combo binding stays strict.
+                bool mapHasMods = _mapKeyBinding.Ctrl || _mapKeyBinding.Shift || _mapKeyBinding.Alt;
+                mapHeld = armed && (mapHasMods ? _mapKeyBinding.IsDown() : _mapKeyBinding.IsKeyDownIgnoringModifiers());
+
+                // Scoreboard is a toggle rather than hold-to-show: press once to hide the HUD,
+                // press again to bring it back.
+                bool scoreNow = _scoreKeyBinding.IsDown();
+                bool scoreEdge = (scoreNow && !prevScore) || _scoreKeyBinding.PressedSinceLastPoll();
+                if (scoreEdge && armed && now - lastScoreToggle > 200)
+                {
+                    lastScoreToggle = now;
+                    scoreboardLatched = !scoreboardLatched;
+                    Console.WriteLine($"scoreboard key -> hidden {(scoreboardLatched ? "on" : "off")}");
+                }
+                prevScore = scoreNow;
+                scoreboardHeld = armed && scoreboardLatched;
+
+                // Reset key (default F5, configurable): clear view counter / map / scoreboard state.
+                if (armed && _resetKeyBinding.PressedSinceLastPoll())
+                {
+                    viewState = 0;
+                    mapHeld = false;
+                    scoreboardLatched = false;
+                    Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> view/map/scoreboard state cleared");
+                }
+
+                // Long-press hide key (default U): hold it to blank the HUD.
+                bool holdKeyDown = armed && _holdHideKeyBinding.IsKeyDownIgnoringModifiers();
+                if (holdKeyDown)
+                {
+                    if (holdKeyStart == 0) holdKeyStart = now;
+                }
+                else
+                {
+                    holdKeyStart = 0;
+                }
+                holdKeyHidden = holdKeyStart != 0 && now - holdKeyStart > HoldHideDelayMs;
 
                 Thread.Sleep(5);
             }
@@ -525,9 +589,13 @@ public static class Program
             opt.ZoomBlend = zoomBlend;
 
             bool flying = snap.Valid;   // ground counts too: tapes/gear/flaps are useful while taxiing
+            bool onGround = snap.Valid && !snap.InFlight;
             bool hiddenByView = (viewState == 1 && cfg.HideInCockpit) || (viewState == 2 && cfg.HideInNose);
-            bool hiddenByPanels = mapHeld || scoreboardHeld;
-            bool draw = show && !hiddenByView && !hiddenByPanels && (flying || demo);
+            bool hiddenByPanels = mapHeld || scoreboardHeld || holdKeyHidden;
+            // Only hide once the aircraft has actually stopped: taxiing still shows the HUD.
+            bool stationary = snap.IasKmh < cfg.GroundHideSpeedKmh;
+            bool hiddenOnGround = cfg.HideOnGround && onGround && stationary && !demo;
+            bool draw = show && !hiddenByView && !hiddenByPanels && !hiddenOnGround && (flying || demo);
 
             // Apply the live calibration on top of the raw solution.
             var shown = new AttitudeSolution
@@ -569,7 +637,68 @@ public static class Program
             accelLastTas = tasMsNow;
             accelLastTime = tNow;
             opt.AccelMs2 = accelMs2;
+            // Overspeed threshold: use the aircraft's own Vne when the cockpit exposes it
+            // (m/s -> km/h); fall back to the configured fixed value otherwise.
+            if (snap.VneMs is double vneMs && vneMs > 10)
+            {
+                opt.OverspeedKmh = vneMs * 3.6;
+                if (vneLogged != snap.VehicleType)
+                {
+                    vneLogged = snap.VehicleType;
+                    Console.WriteLine($"Vne from cockpit on {snap.VehicleType}: {vneMs:F1} m/s = {vneMs * 3.6:F0} km/h");
+                }
+            }
+            else
+            {
+                opt.FpmAosSign = cfg.FpmAosSign != 0 ? Math.Sign(cfg.FpmAosSign) : -1;
+            opt.AoaWarnAlert = snap.InFlight && snap.AoaDeg > cfg.AoaWarnDeg;
+            opt.BingoFuelAlert = opt.EnduranceSeconds >= 0 && opt.EnduranceSeconds < cfg.BingoFuelSeconds;
             opt.OverspeedKmh = cfg.OverspeedKmh;
+            }
+            // Radar altitude only when the aircraft actually reports one: the API exposes no
+            // terrain data, so an estimate was hopeless over hilly maps. Everything else shows
+            // barometric altitude, exactly like before.
+            bool hasRadioAlt = snap.RadioAltM.HasValue;
+            if (hasRadioAlt && !radioAltLogged)
+            {
+                radioAltLogged = true;
+                Console.WriteLine($"radio altimeter available on {snap.VehicleType}: {snap.RadioAltM:F0} m (native)");
+            }
+            bool showRadarAlt = cfg.TapeRadarAltitude && hasRadioAlt;
+            opt.AltTapeIsRadar = showRadarAlt;
+            opt.AltTapeM = showRadarAlt ? snap.RadioAltM!.Value : snap.AltM;
+            UpdateNavigation(opt, mapData, snap, cfg);
+
+            // Terrain warnings.
+            //   precise: only when the aircraft reports a radio altimeter
+            //   estimate: sustained high sink rate below 500 m (altitude above sea level)
+            long alertTicks = Environment.TickCount64;
+
+            // PULL UP: only with a real radio altimeter, and the trigger altitude grows with the
+            // sink rate - what matters is the time to impact, so a fast dive warns higher up.
+            double ralt = snap.RadioAltM ?? double.NaN;
+            bool hasRalt = !double.IsNaN(ralt);
+            double tti = hasRalt && snap.VyMs < -5 ? ralt / -snap.VyMs : double.MaxValue;
+            bool pullUpCond = snap.InFlight && hasRalt && ralt < 1500 && snap.VyMs < -10 && tti < 3.5;
+
+            // SINK RATE: estimate-based fallback for every aircraft (sea-level altitude, no terrain).
+            bool sinkCond = snap.InFlight && snap.AltM < 500 && snap.VyMs < -40;
+
+            if (pullUpCond) { if (pullUpSince == 0) pullUpSince = alertTicks; } else pullUpSince = 0;
+            if (sinkCond) { if (sinkRateSince == 0) sinkRateSince = alertTicks; } else sinkRateSince = 0;
+
+            bool pullUpNow = pullUpSince != 0 && alertTicks - pullUpSince > 250;
+            bool sinkNow = sinkRateSince != 0 && alertTicks - sinkRateSince > 1000;
+
+            if (pullUpNow != opt.PullUpAlert)
+                Console.WriteLine($"PULL UP {(pullUpNow ? "ON" : "off")}: ralt={snap.RadioAltM:F0} m vy={snap.VyMs:F0} m/s tti={tti:F1} s");
+            if (sinkNow != opt.SinkRateAlert)
+                Console.WriteLine($"SINK RATE {(sinkNow ? "ON" : "off")}: alt={snap.AltM:F0} m vy={snap.VyMs:F0} m/s");
+
+            opt.PullUpAlert = pullUpNow;
+            opt.SinkRateAlert = !pullUpNow && sinkNow;
+            opt.ShowPitchLadder = cfg.ShowPitchLadder;
+            opt.ShowFpm = cfg.ShowFpm;
 
             // Full roll angle for the upright / inverted indicator. The bank estimate used by
             // the ladder is clamped to +/-80 deg, so it can never detect an inverted attitude;
@@ -698,6 +827,9 @@ public static class Program
                                   $"cursor[{NativeMethods.DescribeCursor()}] " +
                                   $"snap={(latest?.ToString() ?? "none")}");
                 Console.WriteLine($"      att={att}");
+                Console.WriteLine($"      map self={mapData.Self?.ToString() ?? "null"} size={mapData.MapSizeM.X:F0}x{mapData.MapSizeM.Y:F0} airfields={mapData.Airfields.Count}");
+                if (!string.IsNullOrEmpty(opt.GridText) || !string.IsNullOrEmpty(opt.NavFriendly) || !string.IsNullOrEmpty(opt.NavEnemy))
+                    Console.WriteLine($"      nav({gridDebug}) grid={opt.GridText} friendly='{opt.NavFriendly}' enemy='{opt.NavEnemy}' edge={opt.EdgeWarning}");
             }
 
             // Only spin fast while the aiming layout is animating; otherwise a 30 Hz loop is
@@ -720,6 +852,73 @@ public static class Program
         return 0;
     }
 
+
+    // ---------------------------------------------------------------- navigation
+    private static readonly string[] Arrows =
+        { "↑", "↗", "→", "↘", "↓", "↙", "←", "↖" };
+
+    /// <summary>
+    /// Grid cell, airfield distances and the map-edge warning. Only the player icon and static
+    /// airfields are used - enemy and ground entries are filtered out inside MapData.
+    /// </summary>
+    private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
+    {
+        opt.GridText = "";
+        opt.EdgeWarning = false;
+        opt.NavFriendly = "";
+        opt.NavEnemy = "";
+
+        if (map.Self is not { } self || !snap.Valid) return;
+
+        double sizeX = map.MapSizeM.X > 1 ? map.MapSizeM.X : 52719;
+        double sizeY = map.MapSizeM.Y > 1 ? map.MapSizeM.Y : 55385;
+
+        // --- grid cell (letters = east axis, numbers = north axis) ---
+        double colF = (self.X * sizeX - map.GridZeroM.X) / map.GridStepM.X;
+        double rowF = (self.Y * sizeY - map.GridZeroM.Y) / map.GridStepM.Y;
+        // NOTE: the flip only applies to bearings; the grid row already counts from the map origin.
+        int col = (int)Math.Floor(colF);
+        int row = (int)Math.Floor(rowF);
+        if (col >= 0 && col < 26 && row >= -1 && row < 40)
+            opt.GridText = $"{(char)('A' + col)}{row + 1}";
+
+        // --- map edge warning (approximation of the battle area) ---
+        double margin = Math.Min(Math.Min(self.X, 1 - self.X), Math.Min(self.Y, 1 - self.Y));
+        if (snap.InFlight && margin < cfg.EdgeMarginFraction)
+        {
+            opt.EdgeWarning = true;
+            double dEast = (0.5 - self.X) * sizeX;
+            double dNorth = (0.5 - self.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
+            double bearingToCentre = Math.Atan2(dEast, dNorth) * 180.0 / Math.PI;
+            double rel = bearingToCentre - snap.HeadingDeg;
+            while (rel < 0) rel += 360;
+            while (rel >= 360) rel -= 360;
+            opt.EdgeArrow = Arrows[(int)Math.Round(rel / 45.0) % 8];
+        }
+
+        // --- nearest friendly / enemy airfield ---
+        double bestFriendly = double.MaxValue, bestEnemy = double.MaxValue;
+        double relFriendly = 0, relEnemy = 0;
+        foreach (var af in map.Airfields)
+        {
+            double dEast = (af.X - self.X) * sizeX;
+            double dNorth = (af.Y - self.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
+            double dist = Math.Sqrt(dEast * dEast + dNorth * dNorth);
+            double bearing = Math.Atan2(dEast, dNorth) * 180.0 / Math.PI;
+            double rel = bearing - snap.HeadingDeg;
+            while (rel < 0) rel += 360;
+            while (rel >= 360) rel -= 360;
+
+            if (af.Friendly && dist < bestFriendly) { bestFriendly = dist; relFriendly = rel; }
+            else if (!af.Friendly && dist < bestEnemy) { bestEnemy = dist; relEnemy = rel; }
+        }
+
+        string Arrow(double rel) => Arrows[(int)Math.Round(rel / 45.0) % 8];
+        if (bestFriendly < double.MaxValue)
+            opt.NavFriendly = $"AF  {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km";
+        if (bestEnemy < double.MaxValue)
+            opt.NavEnemy = $"AF! {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km";
+    }
     private static bool IsForegroundProcess(int pid)
     {
         var h = NativeMethods.GetForegroundWindow();
@@ -759,6 +958,27 @@ public static class Program
             Mix(s.VyMs, 0.5); Mix(s.AoaDeg, 0.1); Mix(s.AosDeg, 0.1); Mix(s.NyG, 0.05);
             Mix(s.HeadingDeg, 0.1); Mix(s.FuelKg, 5); Mix(a.PitchDeg, 0.05); Mix(a.BankDeg, 0.1);
             Mix((int)a.Source, 1);
+
+            // Navigation text and the altitude-tape value must be able to trigger a repaint on
+            // their own, otherwise the grid cell / bearing arrows only refresh when some other
+            // number happens to move.
+            void MixStr(string? str)
+            {
+                int h = 0;
+                if (str != null) foreach (char ch in str) h = unchecked(h * 31 + ch);
+                Mix(h, 1);
+            }
+            MixStr(o.GridText);
+            MixStr(o.NavFriendly);
+            MixStr(o.NavEnemy);
+            MixStr(o.EdgeArrow);
+            Mix(o.EdgeWarning ? 1 : 0, 1);
+            Mix(o.PullUpAlert ? 1 : 0, 1);
+            Mix(o.AoaWarnAlert ? 1 : 0, 1);
+            Mix(o.BingoFuelAlert ? 1 : 0, 1);
+            Mix(o.SinkRateAlert ? 1 : 0, 1);
+            Mix(o.AltTapeM, 0.5);
+            Mix(o.AltTapeIsRadar ? 1 : 0, 1);
             return k;
         }
     }
@@ -817,6 +1037,41 @@ public static class Program
     private static volatile bool settingsOpen;
     private static long lastExitPress;
     private static bool lastCursorShowing = true;
+    private static WtHud.Input.KeyBinding _zoomKeyBinding = WtHud.Input.KeyBinding.Parse("Z", 0x5A, "Z");
+    private static WtHud.Input.KeyBinding _viewKeyBinding = WtHud.Input.KeyBinding.Parse("V", 0x56, "V");
+    private static WtHud.Input.KeyBinding _mapKeyBinding = WtHud.Input.KeyBinding.Parse("M", 0x4D, "M");
+    private static WtHud.Input.KeyBinding _scoreKeyBinding = WtHud.Input.KeyBinding.Parse("TAB", 0x09, "TAB");
+    private static WtHud.Input.KeyBinding _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse("U", 0x55, "U");
+    private static WtHud.Input.KeyBinding _resetKeyBinding = WtHud.Input.KeyBinding.Parse("F5", 0x74, "F5");
+
+    /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
+    private static void RebindeKeys(HudConfig c)
+    {
+        _zoomKeyBinding = WtHud.Input.KeyBinding.Parse(c.ZoomKey, 0x5A, "Z");
+        _viewKeyBinding = WtHud.Input.KeyBinding.Parse(c.ViewKey, 0x56, "V");
+        _mapKeyBinding = WtHud.Input.KeyBinding.Parse(c.MapKey, 0x4D, "M");
+        _scoreKeyBinding = WtHud.Input.KeyBinding.Parse(c.ScoreboardKey, 0x09, "TAB");
+        _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse(c.HoldHideKey, 0x55, "U");
+        _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
+        Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
+                          $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
+    }
+
+    private static bool prevScore;
+    private static long lastScoreToggle;
+    private static bool scoreboardLatched;
+    private static bool radioAltLogged;
+    private static string gridDebug = "";
+    private static OverlayWindow? overlayRef;
+    private static long groundStopSince;
+    private static string vneLogged = "";
+    private static long pullUpSince;
+    private static long sinkRateSince;
+
+    private static bool zoomLatched;          // Z key toggle state (RMB adds momentary aiming)
+    private static long holdKeyStart;         // long-press hide timer
+    private static bool holdKeyHidden;
+    private const long HoldHideDelayMs = 220;
     private static long lastCursorNudge;
     private static int cursorNudges;
 
@@ -917,6 +1172,17 @@ public static class Program
         var opt = new HudOptions();
         if (variant == "zoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }
+        opt.AltTapeM = snap.AltM;   // previews default to barometric altitude on the tape
+        opt.GridText = "F6";
+        opt.NavFriendly = "AF  " + (char)0x2193 + " 4.2km";
+        opt.NavEnemy = "AF! " + (char)0x2197 + " 9.8km";
+        if (variant == "edge") { opt.EdgeWarning = true; opt.EdgeArrow = "↑"; opt.ForceTransitVisible = true; }
+        if (variant == "pullup") { opt.PullUpAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "sink") { opt.SinkRateAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "aoa") { opt.AoaWarnAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "bingo") { opt.BingoFuelAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "ra") { opt.AltTapeIsRadar = true; opt.AltTapeM = 35; }
+        if (variant == "ra10") { opt.AltTapeIsRadar = true; opt.AltTapeM = 8; }
         if (variant == "gear" || variant == "flaps" || variant == "gearzoom") opt.ForceTransitVisible = true;
         if (variant == "gear" || variant == "gearzoom")
         {
@@ -945,6 +1211,52 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

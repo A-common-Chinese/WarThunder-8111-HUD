@@ -87,6 +87,40 @@ public sealed class HudOptions
     /// <summary>Preview helper: keep the transit boxes visible instead of blinking.</summary>
     public bool ForceTransitVisible { get; set; }
 
+    /// <summary>Blink an AOA-over-limit warning.</summary>
+    public bool AoaWarnAlert { get; set; }
+
+    /// <summary>Blink a bingo-fuel warning.</summary>
+    public bool BingoFuelAlert { get; set; }
+
+    /// <summary>Sign convention for the lateral flight-path offset (+1 / -1).</summary>
+    public int FpmAosSign { get; set; } = -1;
+
+    /// <summary>True when the aircraft reports a radio altimeter and is about to hit the ground.</summary>
+    public bool PullUpAlert { get; set; }
+
+    /// <summary>True for a sustained high descent rate at low altitude (estimate-based warning).</summary>
+    public bool SinkRateAlert { get; set; }
+
+    /// <summary>Map grid cell under the aircraft, e.g. "F6" (empty when unknown).</summary>
+    public string GridText { get; set; } = "";
+
+    /// <summary>True when the aircraft is close to the playable map edge.</summary>
+    public bool EdgeWarning { get; set; }
+
+    /// <summary>Arrow pointing back towards the map centre (relative to the nose).</summary>
+    public string EdgeArrow { get; set; } = "";
+
+    /// <summary>Navigation readouts for the nearest friendly / enemy airfield.</summary>
+    public string NavFriendly { get; set; } = "";
+    public string NavEnemy { get; set; } = "";
+
+    /// <summary>Value shown on the altitude tape (barometric or radar altitude, chosen by the app).</summary>
+    public double AltTapeM { get; set; }
+
+    /// <summary>True when <see cref="AltTapeM"/> is a radar (above-ground) altitude.</summary>
+    public bool AltTapeIsRadar { get; set; }
+
     /// <summary>Degraded mode: hide everything that depends on attitude.</summary>
     public bool BodyFixedOnly { get; set; }
 
@@ -170,6 +204,8 @@ public sealed class HudGeometry
         if (_opt.ShowDataBlock) AddDataBlock(prims, s, cx, cy, pxDeg, font);
         if (_opt.ShowSourceLabel) AddSourceLabel(prims, att, cx, cy, pxDeg, fontSmall);
         AddGearFlaps(prims, cx, cy, pxDeg, font);
+        AddNavigation(prims, cx, cy, pxDeg, font, fontSmall);
+        AddTerrainAlerts(prims, cx, cy, pxDeg, font);
 
         return prims;
     }
@@ -346,19 +382,19 @@ public sealed class HudGeometry
             Kind = HudPrimKind.Text, Text = "ACC " + _opt.AccelMs2.ToString("+0.0;-0.0"),
             Align = HudAlign.Left, FontSize = fontSmall,
             Color = Math.Abs(_opt.AccelMs2) > 5 ? _opt.WarnColor : Fade(col, 0.9),
-            Points = { (x + 1.5 * pxDeg, cy + 2.6 * pxDeg) },
+            Points = { (x + 2.0 * pxDeg, cy + 2.6 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = "M " + s.Mach.ToString("0.00"),
             Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(col, 0.9),
-            Points = { (x + 1.5 * pxDeg, cy + 4.1 * pxDeg) },
+            Points = { (x + 2.0 * pxDeg, cy + 4.1 * pxDeg) },
         });
 
         // Acceleration trend bar, mirroring the vertical-speed bar on the altitude tape.
         // Both bars share the same baseline (cy) and get a short tick so the zero is readable.
         double accLen = Math.Clamp(Math.Abs(_opt.AccelMs2) * 0.50 * pxDeg, 0, 5.0 * pxDeg);   // 0-10 m/s^2 maps to 0-5 deg
-        double accBarX = x + 5.2 * pxDeg;   // clear of the "ACC +x.x" text
+        double accBarX = x + 1.3 * pxDeg;   // between the tape and the readouts
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.55),
@@ -387,15 +423,16 @@ public sealed class HudGeometry
         double x = cx + _tapeOffsetDeg * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
         double pxPerM = 1.5 * pxDeg / 100.0;    // 100 m per 1.5 deg
+        double tapeAlt = _opt.AltTapeM;
         var col = _opt.Color;
 
         prims.Add(new HudPrim { Kind = HudPrimKind.Line, Width = line, Color = col, Points = { (x, cy - span), (x, cy + span) } });
 
-        double startV = Math.Floor((s.AltM - span / pxPerM) / 100) * 100;
-        for (double v = startV; v <= s.AltM + span / pxPerM; v += 100)
+        double startV = Math.Floor((tapeAlt - span / pxPerM) / 100) * 100;
+        for (double v = startV; v <= tapeAlt + span / pxPerM; v += 100)
         {
             if (v < 0) continue;
-            double y = cy + (s.AltM - v) * pxPerM;
+            double y = cy + (tapeAlt - v) * pxPerM;
             if (Math.Abs(y - cy) > span) continue;
             bool major = Math.Abs(v % 200) < 0.01;
             prims.Add(new HudPrim
@@ -414,11 +451,27 @@ public sealed class HudGeometry
             }
         }
 
-        AddBoxedText(prims, x + 0.6 * pxDeg, cy, s.AltM.ToString("0"), font, HudAlign.Left, col, line, pxDeg);
+                // Radar altitude on the tape turns amber below 50 m and red below 10 m.
+        HudColor tapeColor = col;
+        if (_opt.AltTapeIsRadar)
+        {
+            if (tapeAlt < 10) tapeColor = _opt.DangerColor;
+            else if (tapeAlt < 50) tapeColor = _opt.WarnColor;
+        }
+        AddBoxedText(prims, x + 0.6 * pxDeg, cy, tapeAlt.ToString("0"), font, HudAlign.Left, tapeColor, line, pxDeg);
+        if (_opt.AltTapeIsRadar)
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = "RA",
+                Align = HudAlign.Left, FontSize = fontSmall * 0.85, Color = Fade(tapeColor, 0.8),
+                Points = { (x + 2.2 * pxDeg, cy - 2.4 * pxDeg) },
+            });
+        }
 
         // Vertical-speed trend bar: same baseline (cy) as the acceleration bar, with a tick.
         double vyLen = Math.Clamp(Math.Abs(s.VyMs) * 0.05 * pxDeg, 0, 5.0 * pxDeg);   // 0-100 m/s maps to 0-5 deg
-        double vyBarX = x - 3.2 * pxDeg;
+        double vyBarX = x - 1.3 * pxDeg;   // between the tape and the V/S readout
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.55),
@@ -438,7 +491,7 @@ public sealed class HudGeometry
         {
             Kind = HudPrimKind.Text, Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + s.VyMs.ToString("0.0"),
             Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.9),
-            Points = { (x - 1.5 * pxDeg, cy + 2.6 * pxDeg) },
+            Points = { (x - 2.0 * pxDeg, cy + 2.6 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
@@ -505,7 +558,7 @@ public sealed class HudGeometry
     private void AddFpm(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg, double line)
     {
         // Body-fixed: no attitude needed. AoA moves the velocity vector down, AoS sideways.
-        double fx = cx + s.AosDeg * pxDeg;
+        double fx = cx + s.AosDeg * _opt.FpmAosSign * pxDeg;   // sign is a convention, see config
         double fy = cy + (s.AoaDeg + _opt.FpmTrimDeg) * pxDeg;
         double r = 0.7 * pxDeg;
         var col = _opt.Color;
@@ -562,6 +615,7 @@ public sealed class HudGeometry
             Row("FUEL", "--:--", col);
         }
         Row("ALT", s.AltM.ToString("0"), col);
+        if (!string.IsNullOrEmpty(_opt.GridText)) Row("GRID", _opt.GridText, col);
     }
 
 
@@ -572,51 +626,115 @@ public sealed class HudGeometry
     /// </summary>
     private void AddGearFlaps(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
     {
-        // Only the "moving" boxes blink. Steady boxes (deployed flaps / airbrake) must be drawn
-        // on every frame, otherwise they inherit the blink and appear to flicker.
+        // Fixed slots, never stacked: GEAR / FLAPS / AIRBRAKE (and the two alert slots) always live
+        // on the same row so the position itself carries the meaning. All boxes share one width so
+        // the column edges line up; the text is centred inside.
         bool phaseOn = _opt.ForceTransitVisible || (Environment.TickCount64 / 260) % 2 == 0;
 
-        double x = cx - 6.5 * pxDeg;
-        double y = cy + 10.2 * pxDeg + 2.0 * _blend * pxDeg;   // same 2 deg sink as the data block
-        double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
         const double rowStepDeg = 1.9;
+        const double boxWidthDeg = 5.0;
+        double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
+        double leftX = cx - 7.2 * pxDeg;
+        double rightX = cx - 1.8 * pxDeg;
+        double baseY = cy + 8.3 * pxDeg + 2.0 * _blend * pxDeg;
 
+        double gearY = baseY;
+        double flapsY = baseY + rowStepDeg * pxDeg;
+        double brakeY = baseY + 2 * rowStepDeg * pxDeg;
+
+        // ---- left column: GEAR / FLAPS / AIRBRAKE ----
         if (_opt.GearTransitActive && !string.IsNullOrEmpty(_opt.GearTransitText))
         {
             if (phaseOn)
-                AddBoxedText(prims, x, y, _opt.GearTransitText, font, HudAlign.Left, _opt.WarnColor, lineWidth, pxDeg);
-            y += rowStepDeg * pxDeg;
+                AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, _opt.GearTransitText, font, _opt.WarnColor, lineWidth, pxDeg);
         }
         else if (_opt.GearConfirmActive && !string.IsNullOrEmpty(_opt.GearConfirmText))
         {
-            // Green "STAND BY" style confirmation for ~1.8 s after the gear settles, then gone.
-            AddBoxedText(prims, x, y, _opt.GearConfirmText, font, HudAlign.Left, Fade(_opt.Color, 0.95), lineWidth, pxDeg);
-            y += rowStepDeg * pxDeg;
+            AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, _opt.GearConfirmText, font, Fade(_opt.Color, 0.95), lineWidth, pxDeg);
         }
 
         if (_opt.FlapsTransitActive && !string.IsNullOrEmpty(_opt.FlapsTransitText))
         {
             if (phaseOn)
-                AddBoxedText(prims, x, y, _opt.FlapsTransitText, font, HudAlign.Left, _opt.WarnColor, lineWidth, pxDeg);
-            y += rowStepDeg * pxDeg;
+                AddBoxedTextFixed(prims, leftX, flapsY, boxWidthDeg, _opt.FlapsTransitText, font, _opt.WarnColor, lineWidth, pxDeg);
         }
         else if (_opt.FlapsDeployed)
         {
-            // Settled at a non-zero flap setting: steady box with the position, never blinks.
-            AddBoxedText(prims, x, y, "FLAPS " + _opt.FlapsSteadyText, font, HudAlign.Left,
+            AddBoxedTextFixed(prims, leftX, flapsY, boxWidthDeg, "FLAPS " + _opt.FlapsSteadyText, font,
                 Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
-            y += rowStepDeg * pxDeg;
         }
 
         if (_opt.AirbrakeTransitActive && !string.IsNullOrEmpty(_opt.AirbrakeTransitText))
         {
             if (phaseOn)
-                AddBoxedText(prims, x, y, _opt.AirbrakeTransitText, font, HudAlign.Left, _opt.WarnColor, lineWidth, pxDeg);
+                AddBoxedTextFixed(prims, leftX, brakeY, boxWidthDeg, _opt.AirbrakeTransitText, font, _opt.WarnColor, lineWidth, pxDeg);
         }
         else if (_opt.AirbrakeDeployed)
         {
-            // Fully deployed and settled: steady reminder that the brake is still out.
-            AddBoxedText(prims, x, y, "AIRBRAKE", font, HudAlign.Left, Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
+            AddBoxedTextFixed(prims, leftX, brakeY, boxWidthDeg, "AIRBRAKE", font, Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
+        }
+
+        // ---- right column: BINGO (row 1) / AOA (row 2) ----
+        if (_opt.BingoFuelAlert && phaseOn)
+            AddBoxedTextFixed(prims, rightX, gearY, boxWidthDeg, "BINGO", font, _opt.WarnColor, lineWidth, pxDeg);
+        if (_opt.AoaWarnAlert && phaseOn)
+            AddBoxedTextFixed(prims, rightX, flapsY, boxWidthDeg, "AOA", font, _opt.DangerColor, lineWidth, pxDeg);
+    }
+
+    private void AddTerrainAlerts(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
+    {
+        if (!_opt.PullUpAlert && !_opt.SinkRateAlert) return;
+        if (!(_opt.ForceTransitVisible || (Environment.TickCount64 / 250) % 2 == 0)) return;
+
+        double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
+
+        if (_opt.PullUpAlert)
+        {
+            // Same height as the ACC / V/S readouts, centred between them.
+            AddBoxedText(prims, cx, cy + 2.6 * pxDeg, "PULL UP", font, HudAlign.Center,
+                _opt.DangerColor, lineWidth, pxDeg);
+        }
+        if (_opt.SinkRateAlert)
+        {
+            AddBoxedText(prims, cx, cy + 4.8 * pxDeg, "SINK RATE", font, HudAlign.Center,
+                _opt.WarnColor, lineWidth, pxDeg);
+        }
+    }
+
+    private void AddNavigation(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double fontSmall)
+    {
+        double sink = 2.0 * _blend * pxDeg;
+
+
+        double navX = cx + 5.4 * pxDeg;
+        double navY = cy + 10.4 * pxDeg + sink;
+        if (!string.IsNullOrEmpty(_opt.NavFriendly))
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.NavFriendly,
+                Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(_opt.Color, 0.85),
+                Points = { (navX, navY) },
+            });
+            navY += 1.55 * pxDeg;
+        }
+        if (!string.IsNullOrEmpty(_opt.NavEnemy))
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.NavEnemy,
+                Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(_opt.WarnColor, 0.9),
+                Points = { (navX, navY) },
+            });
+        }
+
+        // "Return to battle area" sits at the lower edge of the pitch ladder and deliberately does
+        // NOT follow the aiming layout, so it stays put when Z is engaged.
+        if (_opt.EdgeWarning && (_opt.ForceTransitVisible || (Environment.TickCount64 / 320) % 2 == 0))
+        {
+            double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
+            AddBoxedText(prims, cx, cy + 9.4 * pxDeg,
+                "RETURN " + _opt.EdgeArrow, font, HudAlign.Center, _opt.DangerColor, lineWidth, pxDeg);
         }
     }
 
@@ -688,6 +806,25 @@ public sealed class HudGeometry
     private static (double X, double Y) Rot(double cx, double cy, double x, double y, double cos, double sin) =>
         (cx + x * cos - y * sin, cy + x * sin + y * cos);
 
+    /// <summary>Box with a fixed width so a whole column of alerts lines up; text stays centred.</summary>
+    private void AddBoxedTextFixed(List<HudPrim> prims, double left, double y, double widthDeg,
+        string text, double font, HudColor color, double line, double pxDeg)
+    {
+        double w = widthDeg * pxDeg;
+        double h = font * 1.45;
+        double top = y - h / 2;
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Polyline, Width = line, Color = color,
+            Points = { (left, top), (left + w, top), (left + w, top + h), (left, top + h), (left, top) },
+        });
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = text, Align = HudAlign.Center, FontSize = font, Color = color,
+            Points = { (left + w / 2, y) },
+        });
+    }
+
     private void AddBoxedText(List<HudPrim> prims, double x, double y, string text, double font, HudAlign align,
         HudColor color, double line, double pxDeg)
     {
@@ -708,6 +845,17 @@ public sealed class HudGeometry
         _ = pxDeg;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 

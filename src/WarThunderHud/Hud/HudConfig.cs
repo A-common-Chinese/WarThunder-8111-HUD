@@ -39,6 +39,65 @@ public sealed class HudConfig
     [JsonPropertyName("mapKey")] public string MapKey { get; set; } = "M";
     [JsonPropertyName("scoreboardKey")] public string ScoreboardKey { get; set; } = "TAB";
 
+    /// <summary>Settings dialog key.</summary>
+    [JsonPropertyName("settingsKey")] public string SettingsKey { get; set; } = "F1";
+    /// <summary>Pitch-zero calibration key.</summary>
+    [JsonPropertyName("pitchZeroKey")] public string PitchZeroKey { get; set; } = "F7";
+    /// <summary>Bank-flip key.</summary>
+    [JsonPropertyName("bankFlipKey")] public string BankFlipKey { get; set; } = "F8";
+    /// <summary>Body-fixed mode key.</summary>
+    [JsonPropertyName("bodyFixedKey")] public string BodyFixedKey { get; set; } = "F9";
+    /// <summary>Show / hide HUD key.</summary>
+    [JsonPropertyName("showKey")] public string ShowKey { get; set; } = "F10";
+    /// <summary>Exit key (press twice within 0.7 s).</summary>
+    [JsonPropertyName("exitKey")] public string ExitKey { get; set; } = "F11";
+    /// <summary>Save config key.</summary>
+    [JsonPropertyName("saveKey")] public string SaveKey { get; set; } = "CTRL+F12";   // plain F12 is taken by Steam screenshots
+    /// <summary>Cursor-hole cycle key.</summary>
+    [JsonPropertyName("cursorHoleKey")] public string CursorHoleKey { get; set; } = "CTRL+ALT+H";
+
+    /// <summary>Custom key: reset the internal view / map state (default F5).</summary>
+    [JsonPropertyName("resetKey")] public string ResetKey { get; set; } = "F5";
+
+    /// <summary>Long-press this key to hide the HUD (default U).</summary>
+    [JsonPropertyName("holdHideKey")] public string HoldHideKey { get; set; } = "U";
+
+    /// <summary>Height tape shows radar (above-ground) altitude instead of barometric.</summary>
+    [JsonPropertyName("tapeRadarAltitude")] public bool TapeRadarAltitude { get; set; } = true;
+
+    /// <summary>Flip the map Y axis when converting to bearings/grid (depends on the map).</summary>
+    [JsonPropertyName("mapYFlip")] public bool MapYFlip { get; set; } = true;   // map image Y grows southwards
+
+    /// <summary>Warn when closer than this fraction of the map size to the map edge.</summary>
+    [JsonPropertyName("edgeMarginFraction")] public double EdgeMarginFraction { get; set; } = 0.06;
+
+    /// <summary>Hide the whole HUD while the aircraft sits on the ground.</summary>
+    [JsonPropertyName("hideOnGround")] public bool HideOnGround { get; set; } = true;
+
+    /// <summary>Delay (ms) before the HUD hides after the aircraft stops on the ground.</summary>
+    [JsonPropertyName("groundHideDelayMs")] public double GroundHideDelayMs { get; set; } = 500;
+
+    /// <summary>Below this IAS (km/h) the aircraft counts as stopped for the ground hide.</summary>
+    [JsonPropertyName("groundHideSpeedKmh")] public double GroundHideSpeedKmh { get; set; } = 5;
+
+    /// <summary>AOA above this (deg) blinks the AOA warning.</summary>
+    [JsonPropertyName("aoaWarnDeg")] public double AoaWarnDeg { get; set; } = 18;
+
+    /// <summary>Endurance below this (seconds) blinks the BINGO fuel warning.</summary>
+    [JsonPropertyName("bingoFuelSeconds")] public double BingoFuelSeconds { get; set; } = 180;
+
+    /// <summary>Sign of the lateral flight-path offset: -1 mirrors the AoS-based marker.</summary>
+    [JsonPropertyName("fpmAosSign")] public int FpmAosSign { get; set; } = -1;
+
+    /// <summary>Show the pitch ladder.</summary>
+    [JsonPropertyName("showPitchLadder")] public bool ShowPitchLadder { get; set; } = true;
+
+    /// <summary>Show the flight path marker (velocity vector).</summary>
+    [JsonPropertyName("showFpm")] public bool ShowFpm { get; set; } = true;
+
+    /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
+    [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
+
     /// <summary>
     /// Multiplies the measured fuel flow before computing endurance. The game shows its own
     /// FM-table estimate, which runs ~1.25-1.3x higher than the measured mass flow at altitude;
@@ -100,6 +159,21 @@ public sealed class HudConfig
 
     public HudConfig Clone() => (HudConfig)MemberwiseClone();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

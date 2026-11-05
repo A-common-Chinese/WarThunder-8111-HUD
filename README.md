@@ -1,4 +1,4 @@
-# War Thunder HUD (8111)
+﻿# War Thunder HUD (8111)
 
 用官方 `localhost:8111` 接口驱动的**战争雷霆平视显示器（HUD）叠加层**，反作弊安全：**不注入、不读内存、不改文件、不拦截网络、不自动操作**。
 
@@ -6,7 +6,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.1** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.1.2** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -47,6 +47,7 @@ no packet interception, no automation.
 | `AOA` | 迎角 | 绿 |
 | `FUEL` | **剩余续航时间**（`mm:ss`） | <5 min 黄，<2 min 红；无油耗数据时 `--:--` |
 | `ALT` | 气压高度 | 绿 |
+| `GRID` | 地图网格坐标（如 F2） | 绿 |
 
 > `FUEL` 是"按当前油耗还能飞多久"，用 12 秒滑动窗口最小二乘估计油耗，可在设置里用标定系数对齐游戏内显示。
 
@@ -60,11 +61,18 @@ no packet interception, no automation.
 
 三者共用同一列、随 `Z` 瞄准布局一起下沉。
 
-### 告警
+### 告警（原有）
 
 - **超速**：IAS 超过阈值（默认 1400 km/h，可调）时速度数字变红
 - **过载**：见上表 G 值配色
 - **油量**：续航低于 2 分钟变红
+
+### 导航与告警
+
+- **导航**：`GRID` 网格坐标；最近友方 / 敌方机场的相对方位与距离（`AF ↗ 4.2km`）；距地图边缘过近时闪烁红色 `RETURN ↑`
+- **地形告警**：`SINK RATE`（低空 + 大下降率，全机型）；有机型雷达高度表时升级为 `PULL UP`（触发高度随下降率提高）
+- **其它告警**：`AOA` 过大、`BINGO` 油量见底、超速（有 `vne` 的机型自动用该值）、`RETURN` 边界警示
+- **只读且只取自身/机场数据**：不读取、不绘制任何敌方单位（见合规说明）
 
 ### 布局与交互
 
@@ -101,26 +109,36 @@ no packet interception, no automation.
 
 ## 快捷键
 
+除下面三个固定组合外，**其余键位都可以在 F1 设置面板里逐项自定义**（支持 `CTRL+N`、`SHIFT+TAB`、`ALT+F1` 这类组合键）。
+
+### 固定（不可改）
+
 | 热键 | 功能 |
 |---|---|
-| `F1` | 设置面板（所有参数 + 全部快捷键一览） |
-| `F5` | 视角/地图状态复位 |
-| `F7` | 俯仰零位校准（平飞时按下，把当前俯仰记为 0） |
-| `F8` | 反转坡度方向 |
-| `F9` | 纯机体固连模式（隐藏姿态类符号） |
-| `F10` | HUD 显示 / 隐藏 |
-| `F11` **连按两次** | 退出 |
-| `F12` | 保存配置 |
 | `Ctrl+Alt+↑ / ↓` | HUD 整体上移 / 下移 0.5° |
 | `Ctrl+Alt+PgUp / PgDn` | 垂直视场角（角度尺度）∓1° |
 | `Ctrl+Alt+R` | 相机滚转耦合 0/1 |
-| `Ctrl+Alt+H` | 循环光标洞尺寸（0/32/48/64/80/112/140 px） |
-| `Z` | 瞄准布局切换（跟随游戏放大键） |
-| `V` | 视角切换计数（座舱隐藏 HUD） |
 
-以上 `V` / `Z` / 地图键 / 计分板键**均可在设置面板自定义**，支持 `CTRL+N`、`SHIFT+TAB` 这类组合键。
-所有按键都是**被动轮询**，不会吞掉游戏输入。
+### 可自定义（括号内为默认值）
 
+| 功能 | 默认键 |
+|---|---|
+| 显示 / 隐藏 HUD | `F10` |
+| 纯机体固连模式 | `F9` |
+| 退出（连按两次） | `F11` |
+| 设置面板 | `F1` |
+| 俯仰零位校准 | `F7` |
+| 坡度方向翻转 | `F8` |
+| 保存配置 | `CTRL+F12`（F12 被 Steam 截图占用） |
+| 光标洞尺寸循环 | `CTRL+ALT+H` |
+| 视角切换计数 | `V` |
+| 瞄准布局切换 | `Z` |
+| 地图（按住隐藏 HUD） | `M` |
+| 计分板（单击切换隐藏） | `CTRL+N` |
+| 长按隐藏 HUD | `U` |
+| 状态复位（视角/地图/计分板） | `F5` |
+
+所有按键要么是被动轮询、要么是系统热键注册；轮询的键**不会吞掉游戏输入**，热键被其他程序占用时会在日志里提示。
 ## 配置项（`hud-config.json`）
 
 | 字段 | 含义 | 默认 |
@@ -129,16 +147,21 @@ no packet interception, no automation.
 | `layoutOffsetYDeg` | HUD 整体垂直偏移（度） | 1.8 |
 | `pitchZeroDeg` | 俯仰零位 | 0 |
 | `bankSign` / `bankTrimDeg` | 坡度方向 / 微调 | 1 / 0 |
-| `fpmTrimDeg` | 飞行矢量偏置 | 0 |
+| `fpmTrimDeg` / `fpmAosSign` | 飞行矢量纵向偏置 / 横向符号 | 0 / -1 |
 | `rollCoupling` | 相机滚转耦合 | 0 |
 | `extrapolate` | 速度/高度预测（默认关） | false |
 | `hudVisible` | HUD 总开关 | true |
-| `cursorHoleHalfPx` | 光标洞半径（px，0 = 关闭） | 16 |
-| `overspeedKmh` | 超速阈值（IAS km/h） | 1400 |
-| `enduranceScale` | 续航标定系数（对齐游戏读数） | 1.30 |
+| `showPitchLadder` / `showFpm` | 显示俯仰梯 / 飞行矢量 | true / true |
 | `hideInCockpit` / `hideInNose` | 座舱 / 机头视角隐藏 | true / false |
-| `viewKey` / `zoomKey` / `mapKey` / `scoreboardKey` | 自定义按键（支持组合键） | `V` / `Z` / `M` / `TAB` |
-
+| `hideOnGround` / `groundHideSpeedKmh` / `groundHideDelayMs` | 地面隐藏 / 判定速度 / 延迟 | true / 5 / 500 |
+| `tapeRadarAltitude` | 高度带优先显示雷达高度（机型支持时） | true |
+| `cursorHoleHalfPx` | 光标洞半径（px，0 = 关闭） | 16 |
+| `overspeedKmh` | 超速阈值（机型无 `vne` 时使用） | 1400 |
+| `aoaWarnDeg` | AOA 告警阈值（度） | 18 |
+| `bingoFuelSeconds` | BINGO 油量阈值（秒） | 180 |
+| `enduranceScale` | 续航标定系数（对齐游戏读数） | 1.30 |
+| `mapYFlip` / `edgeMarginFraction` | 地图 Y 轴翻转 / 边界告警范围 | true / 0.06 |
+| `viewKey` `zoomKey` `mapKey` `scoreboardKey` `holdHideKey` `resetKey` `settingsKey` `pitchZeroKey` `bankFlipKey` `bodyFixedKey` `showKey` `exitKey` `saveKey` `cursorHoleKey` | 全部可自定义键位 | 见上表 |
 ## 从源码构建
 
 需要 **.NET 8 SDK**：
@@ -211,3 +234,7 @@ docs/          设计文档、接口调研、视角实验
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
+
+
+

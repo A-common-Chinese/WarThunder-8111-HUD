@@ -18,12 +18,30 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _bodyFixed = new() { Text = "纯机体固连模式（等同 F9）", AutoSize = true };
     private readonly CheckBox _rollCoupling = new() { Text = "相机随滚转转动（第三人称请勿勾选）", AutoSize = true };
     private readonly CheckBox _bankFlip = new() { Text = "反转坡度方向", AutoSize = true };
+    private readonly CheckBox _hideGround = new() { Text = "停在地面时隐藏 HUD", AutoSize = true };
+    private readonly NumericUpDown _groundDelay = new() { Minimum = 0, Maximum = 3000, DecimalPlaces = 0, Increment = 100, Width = 80 };
     private readonly CheckBox _hideCockpit = new() { Text = "座舱视角隐藏 HUD（按一次 V）", AutoSize = true };
     private readonly CheckBox _hideNose = new() { Text = "机头视角隐藏 HUD（按两次 V）", AutoSize = true };
     private readonly TextBox _viewKey = new() { Width = 90 };
     private readonly TextBox _zoomKey = new() { Width = 90 };
     private readonly TextBox _mapKey = new() { Width = 90 };
     private readonly TextBox _scoreKey = new() { Width = 90 };
+    private readonly TextBox _holdKey = new() { Width = 90 };
+    private readonly TextBox _resetKey = new() { Width = 90 };
+    private readonly TextBox _settingsKey = new() { Width = 90 };
+    private readonly TextBox _pitchZeroKey = new() { Width = 90 };
+    private readonly TextBox _bankFlipKey = new() { Width = 90 };
+    private readonly TextBox _bodyFixedKey = new() { Width = 90 };
+    private readonly TextBox _showKey = new() { Width = 90 };
+    private readonly TextBox _exitKey = new() { Width = 90 };
+    private readonly TextBox _saveKey = new() { Width = 90 };
+    private readonly TextBox _holeKey = new() { Width = 90 };
+    private readonly CheckBox _aimRmb = new() { Text = "长按鼠标右键进入瞄准布局", AutoSize = true };
+    private readonly CheckBox _tapeRadar = new() { Text = "高度带显示雷达高度（仅机型支持时；否则显示海拔）", AutoSize = true };
+    private readonly NumericUpDown _aoaWarn = new() { Minimum = 5, Maximum = 45, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
+    private readonly NumericUpDown _bingoMin = new() { Minimum = 1, Maximum = 60, DecimalPlaces = 0, Increment = 1, Width = 80 };
+    private readonly CheckBox _showLadder = new() { Text = "显示俯仰梯", AutoSize = true };
+    private readonly CheckBox _showFpm = new() { Text = "显示飞行矢量（速度矢量）", AutoSize = true };
     private readonly NumericUpDown _hole = new() { Minimum = 0, Maximum = 240, DecimalPlaces = 0, Increment = 8, Width = 80 };
     private readonly NumericUpDown _endScale = new() { Minimum = 0.5m, Maximum = 3.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
     private readonly NumericUpDown _overspeed = new() { Minimum = 200, Maximum = 3000, DecimalPlaces = 0, Increment = 10, Width = 80 };
@@ -45,6 +63,24 @@ public sealed class SettingsForm : Form
     public string ZoomKey => _zoomKey.Text;
     public string MapKey => _mapKey.Text;
     public string ScoreboardKey => _scoreKey.Text;
+    public string HoldHideKey => _holdKey.Text;
+    public string ResetKey => _resetKey.Text;
+    public string SettingsKey => _settingsKey.Text;
+    public string PitchZeroKey => _pitchZeroKey.Text;
+    public string BankFlipKey => _bankFlipKey.Text;
+    public string BodyFixedKey => _bodyFixedKey.Text;
+    public string ShowKey => _showKey.Text;
+    public string ExitKey => _exitKey.Text;
+    public string SaveKey => _saveKey.Text;
+    public string CursorHoleKey => _holeKey.Text;
+    public bool AimOnRightMouse => _aimRmb.Checked;
+    public bool HideOnGround => _hideGround.Checked;
+    public double GroundHideDelayMs => (double)_groundDelay.Value;
+    public bool TapeRadarAltitude => _tapeRadar.Checked;
+    public double AoaWarnDeg => (double)_aoaWarn.Value;
+    public double BingoFuelMinutes => (double)_bingoMin.Value;
+    public bool ShowPitchLadder => _showLadder.Checked;
+    public bool ShowFpm => _showFpm.Checked;
     public double OverspeedKmh => (double)_overspeed.Value;
     public double EnduranceScale => (double)_endScale.Value;
     public int CursorHoleHalfPx => (int)_hole.Value;
@@ -76,6 +112,24 @@ public sealed class SettingsForm : Form
         _zoomKey.Text = cfg.ZoomKey;
         _mapKey.Text = cfg.MapKey;
         _scoreKey.Text = cfg.ScoreboardKey;
+        _holdKey.Text = cfg.HoldHideKey;
+        _resetKey.Text = cfg.ResetKey;
+        _settingsKey.Text = cfg.SettingsKey;
+        _pitchZeroKey.Text = cfg.PitchZeroKey;
+        _bankFlipKey.Text = cfg.BankFlipKey;
+        _bodyFixedKey.Text = cfg.BodyFixedKey;
+        _showKey.Text = cfg.ShowKey;
+        _exitKey.Text = cfg.ExitKey;
+        _saveKey.Text = cfg.SaveKey;
+        _holeKey.Text = cfg.CursorHoleKey;
+        _aimRmb.Checked = cfg.AimOnRightMouse;
+        _hideGround.Checked = cfg.HideOnGround;
+        _groundDelay.Value = (decimal)Math.Clamp(cfg.GroundHideDelayMs, 0, 3000);
+        _tapeRadar.Checked = cfg.TapeRadarAltitude;
+        _aoaWarn.Value = (decimal)Math.Clamp(cfg.AoaWarnDeg, 5, 45);
+        _bingoMin.Value = (decimal)Math.Clamp(cfg.BingoFuelSeconds / 60.0, 1, 60);
+        _showLadder.Checked = cfg.ShowPitchLadder;
+        _showFpm.Checked = cfg.ShowFpm;
         _overspeed.Value = (decimal)Math.Clamp(cfg.OverspeedKmh, 200, 3000);
         _endScale.Value = (decimal)Math.Clamp(cfg.EnduranceScale, 0.5, 3.0);
         _hole.Value = Math.Clamp(cfg.CursorHoleHalfPx, 0, 240);
@@ -109,9 +163,27 @@ public sealed class SettingsForm : Form
         AddRow(new Label { Text = "垂直视场角 FOV（度）", AutoSize = true }, _fov);
         AddRow(new Label { Text = "HUD 垂直偏移（度，正=上移）", AutoSize = true }, _offsetY);
         AddRow(new Label { Text = "俯仰零位（度，F7 自动填入）", AutoSize = true }, _pitchZero);
-        AddRow(new Label { Text = "超速阈值（IAS km/h，超过则变红）", AutoSize = true }, _overspeed);
+        AddRow(new Label { Text = "AOA 告警阈值（度，超过则闪 AOA）", AutoSize = true }, _aoaWarn);
+        AddRow(new Label { Text = "BINGO 油量阈值（分钟，低于则闪 BINGO）", AutoSize = true }, _bingoMin);
+        AddRow(new Label { Text = "超速阈值（IAS km/h，超过则变红；有 vne 的机型自动用 vne）", AutoSize = true }, _overspeed);
         AddRow(new Label { Text = "续航标定系数（对齐游戏读数，1.3≈实测）", AutoSize = true }, _endScale);
         AddRow(new Label { Text = "光标洞半径 px（0=关闭，越小越不挡图标）", AutoSize = true }, _hole);
+        AddRow(new Label { Text = "长按隐藏键（默认 U）", AutoSize = true }, _holdKey);
+        AddRow(new Label { Text = "状态复位键（默认 F5）", AutoSize = true }, _resetKey);
+        AddRow(new Label { Text = "设置面板键（默认 F1）", AutoSize = true }, _settingsKey);
+        AddRow(new Label { Text = "俯仰零位键（默认 F7）", AutoSize = true }, _pitchZeroKey);
+        AddRow(new Label { Text = "坡度翻转键（默认 F8）", AutoSize = true }, _bankFlipKey);
+        AddRow(new Label { Text = "纯机体固连键（默认 F9）", AutoSize = true }, _bodyFixedKey);
+        AddRow(new Label { Text = "显示/隐藏键（默认 F10）", AutoSize = true }, _showKey);
+        AddRow(new Label { Text = "退出键（默认 F11，连按两次）", AutoSize = true }, _exitKey);
+        AddRow(new Label { Text = "保存配置键（默认 F12）", AutoSize = true }, _saveKey);
+        AddRow(new Label { Text = "光标洞循环键（默认 CTRL+ALT+H）", AutoSize = true }, _holeKey);
+        AddRow(_aimRmb);
+        AddRow(_hideGround);
+        AddRow(new Label { Text = "地面隐藏延迟（毫秒，0=立即）", AutoSize = true }, _groundDelay);
+        AddRow(_tapeRadar);
+        AddRow(_showLadder);
+        AddRow(_showFpm);
         AddRow(new Label { Text = "视角切换键（默认 V）", AutoSize = true }, _viewKey);
         AddRow(new Label { Text = "瞄准/放大键（默认 Z）", AutoSize = true }, _zoomKey);
         AddRow(new Label { Text = "地图键（默认 M）", AutoSize = true }, _mapKey);
@@ -120,13 +192,15 @@ public sealed class SettingsForm : Form
         var hotkeys = new Label
         {
             AutoSize = true,
-            MaximumSize = new System.Drawing.Size(420, 0),
+            MaximumSize = new System.Drawing.Size(440, 0),
             Margin = new Padding(3, 12, 3, 3),
-            Text = "快捷键：" + Environment.NewLine +
-                   "F1 设置面板   F7 俯仰零位   F8 反转坡度   F9 纯机体固连   F10 显示/隐藏   F11 连按两次退出   F12 保存" + Environment.NewLine +
-                   "Ctrl+Alt+↑/↓ 整体上下移   Ctrl+Alt+PgUp/PgDn 视场角   Ctrl+Alt+R 相机滚转" + Environment.NewLine +
-                                      "按键支持组合，如 CTRL+N / SHIFT+TAB / ALT+F1；不会吞掉游戏按键" + Environment.NewLine +
-                   "Z 瞄准布局（两侧数据带外推、俯仰梯下移、航向带置顶、滚转圆弧放大）",
+            Text = "固定快捷键（不可改）：" + Environment.NewLine +
+                   "  Ctrl+Alt+↑ / ↓         HUD 整体上移 / 下移" + Environment.NewLine +
+                   "  Ctrl+Alt+PgUp / PgDn   垂直视场角（角度尺度）" + Environment.NewLine +
+                   "  Ctrl+Alt+R             相机滚转耦合" + Environment.NewLine +
+                   Environment.NewLine +
+                   "其余键位在上方逐项可改，支持组合键（如 CTRL+N / SHIFT+TAB / ALT+F1）；" + Environment.NewLine +
+                   "按键均为被动轮询或系统热键，不会吞掉游戏里的按键。",
         };
         AddRow(hotkeys);
 
@@ -152,6 +226,15 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

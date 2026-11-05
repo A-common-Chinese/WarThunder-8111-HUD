@@ -292,7 +292,12 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    public const uint MOD_ALT_KEY = 0x0001;
+    public const uint MOD_CONTROL_KEY = 0x0002;
+    public const uint MOD_SHIFT_KEY = 0x0004;
 }
+
 
 
 
