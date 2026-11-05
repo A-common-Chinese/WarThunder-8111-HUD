@@ -80,6 +80,15 @@ public sealed class HudConfig
     /// <summary>Below this IAS (km/h) the aircraft counts as stopped for the ground hide.</summary>
     [JsonPropertyName("groundHideSpeedKmh")] public double GroundHideSpeedKmh { get; set; } = 5;
 
+    /// <summary>Stall warning key: records the current AOA as this vehicle's stall AOA.</summary>
+    [JsonPropertyName("stallKey")] public string StallKey { get; set; } = "CTRL+ALT+S";
+
+    /// <summary>Generic stall AOA used before a per-vehicle calibration exists (deg).</summary>
+    [JsonPropertyName("stallAoaDeg")] public double StallAoaDeg { get; set; } = 22;
+
+    /// <summary>Per-vehicle calibrated stall AOA, keyed by the API vehicle id.</summary>
+    [JsonPropertyName("stallAoaByVehicle")] public System.Collections.Generic.Dictionary<string, double> StallAoaByVehicle { get; set; } = new();
+
     /// <summary>AOA above this (deg) blinks the AOA warning.</summary>
     [JsonPropertyName("aoaWarnDeg")] public double AoaWarnDeg { get; set; } = 18;
 
@@ -103,13 +112,19 @@ public sealed class HudConfig
     /// FM-table estimate, which runs ~1.25-1.3x higher than the measured mass flow at altitude;
     /// set this to match the in-game readout.
     /// </summary>
-    [JsonPropertyName("enduranceScale")] public double EnduranceScale { get; set; } = 1.30;
+    [JsonPropertyName("enduranceScale")] public double EnduranceScale { get; set; } = 1.00;
 
     /// <summary>
     /// Half-size (px) of the transparent hole at screen centre that lets the game draw its cursor.
     /// Smaller = less HUD occlusion near the boresight; 0 disables the hole.
     /// </summary>
     [JsonPropertyName("cursorHoleHalfPx")] public int CursorHoleHalfPx { get; set; } = 16;   // 32 px hole: hides the game cursor, keeps the FPM ring visible
+
+    /// <summary>Use Mach instead of IAS for the manual overspeed warning.</summary>
+    [JsonPropertyName("overspeedByMach")] public bool OverspeedByMach { get; set; }
+
+    /// <summary>Mach number above which the speed readout turns red (manual mode).</summary>
+    [JsonPropertyName("overspeedMach")] public double OverspeedMach { get; set; } = 1.80;
 
     /// <summary>IAS above which the speed readout turns red (km/h). No Vne in the API.</summary>
     [JsonPropertyName("overspeedKmh")] public double OverspeedKmh { get; set; } = 1400;
@@ -159,6 +174,10 @@ public sealed class HudConfig
 
     public HudConfig Clone() => (HudConfig)MemberwiseClone();
 }
+
+
+
+
 
 
 

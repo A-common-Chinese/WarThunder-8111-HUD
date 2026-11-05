@@ -6,7 +6,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.2** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.1.3** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -75,7 +75,10 @@ no packet interception, no automation.
 
 - **导航**：`GRID` 网格坐标；最近友方 / 敌方机场的相对方位与距离（`AF ↗ 4.2km`）；距地图边缘过近时闪烁红色 `RETURN ↑`
 - **地形告警**：`SINK RATE`（低空 + 大下降率，全机型）；有机型雷达高度表时升级为 `PULL UP`（触发高度随下降率提高）
-- **其它告警**：`AOA` 过大、`BINGO` 油量见底、超速（有 `vne` 的机型自动用该值）、`RETURN` 边界警示
+- **超速**：速度数字变红 + 左右各一个闪烁红框 `REDUCE SPEED`；阈值可用 IAS(km/h) 或 Mach，机型有 `vne` 时自动用 vne
+- **失速**：闪烁 `STALL`（琥珀=预失速，红=失速）。判定优先用**按机型校准值**（飞行中按 `Ctrl+Alt+S` 记录临界迎角），
+  其次用座舱迎角指示灯，最后用通用阈值（默认 22°）；且要求机翼卸载（Ny < 2.5）才告警，避免高速大过载误报
+- **其它告警**：`AOA` 过大、`BINGO` 油量见底、`RETURN` 边界警示
 - **只读且只取自身/机场数据**：不读取、不绘制任何敌方单位（见合规说明）
 
 ### 布局与交互
@@ -160,7 +163,9 @@ no packet interception, no automation.
 | `hideOnGround` / `groundHideSpeedKmh` / `groundHideDelayMs` | 地面隐藏 / 判定速度 / 延迟 | true / 5 / 500 |
 | `tapeRadarAltitude` | 高度带优先显示雷达高度（机型支持时） | true |
 | `cursorHoleHalfPx` | 光标洞半径（px，0 = 关闭） | 16 |
-| `overspeedKmh` | 超速阈值（机型无 `vne` 时使用） | 1400 |
+| `overspeedKmh` | 超速阈值（IAS，机型无 `vne` 时使用） | 1400 |
+| `overspeedByMach` / `overspeedMach` | 改用马赫判定 / 马赫阈值 | false / 1.80 |
+| `stallKey` / `stallAoaDeg` / `stallAoaByVehicle` | 失速校准键 / 通用阈值 / 每机型校准表 | CTRL+ALT+S / 22 / {} |
 | `aoaWarnDeg` | AOA 告警阈值（度） | 18 |
 | `bingoFuelSeconds` | BINGO 油量阈值（秒） | 180 |
 | `enduranceScale` | 续航标定系数（对齐游戏读数） | 1.30 |
@@ -238,6 +243,7 @@ docs/          设计文档、接口调研、视角实验
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 

@@ -239,6 +239,8 @@ public static class Program
                     cfg.LayoutOffsetYDeg = form.OffsetY;
                     cfg.PitchZeroDeg = form.PitchZero;
                     cfg.OverspeedKmh = form.OverspeedKmh;
+                    cfg.OverspeedMach = form.OverspeedMach;
+                    cfg.OverspeedByMach = form.OverspeedByMach;
                     cfg.EnduranceScale = form.EnduranceScale;
                     cfg.CursorHoleHalfPx = form.CursorHoleHalfPx;
 
@@ -526,6 +528,15 @@ public static class Program
                 prevScore = scoreNow;
                 scoreboardHeld = armed && scoreboardLatched;
 
+                // Stall calibration: press while the aircraft is at the buffet to remember this
+                // vehicle's stall AOA (per-vehicle table in hud-config.json).
+                if (armed && _stallKeyBinding.PressedSinceLastPoll() && latest is { } cur && cur.AoaDeg > 1)
+                {
+                    cfg.StallAoaByVehicle[cur.VehicleType] = Math.Round(cur.AoaDeg, 1);
+                    cfg.Save();
+                    Console.WriteLine($"stall key -> {cur.VehicleType} stall AOA = {cur.AoaDeg:F1} deg (saved)");
+                }
+
                 // Reset key (default F5, configurable): clear view counter / map / scoreboard state.
                 if (armed && _resetKeyBinding.PressedSinceLastPoll())
                 {
@@ -607,6 +618,73 @@ public static class Program
             };
             opt.FpmTrimDeg = cfg.FpmTrimDeg;
 
+            // ---- stall warning ----
+            //   calibrated per vehicle (B) > cockpit AOA indexer (C) > generic rule (A)
+            // High-speed pulls reach a high AOA without stalling, so the AOA test alone is not
+            // enough: require that the wing is also unloaded OR the aircraft is decelerating,
+            // i.e. the classic approach to a stall rather than a hard turn.
+            opt.StallWarnLevel = 0;
+            if (snap.InFlight && !string.IsNullOrEmpty(snap.VehicleType))
+            {
+                // Calibrations below 12 deg are meaningless for a wing stall (they come from pressing the
+// key while cruising); ignore them instead of spamming false warnings.
+                bool hasCal = cfg.StallAoaByVehicle.TryGetValue(snap.VehicleType, out double calibratedAoa)
+                              && calibratedAoa >= 12;
+                if (cfg.StallAoaByVehicle.TryGetValue(snap.VehicleType, out double storedAoa) && storedAoa < 12 && stallCalWarned != snap.VehicleType)
+                {
+                    stallCalWarned = snap.VehicleType;
+                    Console.WriteLine($"stall calibration for {snap.VehicleType} ignored ({storedAoa:F1} deg < 12); recalibrate in a buffet");
+                }
+                double threshold = hasCal ? calibratedAoa : cfg.StallAoaDeg;
+                double aoa = snap.AoaDeg;
+                bool decel = accelMs2 < -0.6;                 // losing speed
+                // A hard pull at high speed reaches a big AOA while still loaded (Ny well above 1).
+                // A real stall approach is *unloaded*: the wing cannot give more than ~2.5 G at that
+                // AOA any more. Requiring that removes the high-speed-pull false alarms.
+                bool unloaded = snap.NyG < 2.5;
+                bool sinking = snap.VyMs < -1.0;
+                bool cond = aoa >= threshold && unloaded && (decel || sinking || aoa >= threshold + 3);
+                if (cond)
+                {
+                    if (stallSince == 0) stallSince = Environment.TickCount64;
+                }
+                else
+                {
+                    stallSince = 0;
+                }
+
+                if (stallSince != 0 && Environment.TickCount64 - stallSince > 350)
+                {
+                    bool hardStall = aoa >= threshold + 4.0 || snap.NyG < 1.2;
+                    opt.StallWarnLevel = hardStall ? 2 : 1;
+                }
+
+                if (snap.AoaIndexer is double idx && idx > 0.9 && opt.StallWarnLevel == 0)
+                    opt.StallWarnLevel = idx > 0.97 ? 2 : 1;
+
+                if (opt.StallWarnLevel != stallLogged)
+                {
+                    stallLogged = opt.StallWarnLevel;
+                    Console.WriteLine($"stall level {opt.StallWarnLevel}: AoA={aoa:F1} thr={threshold:F1} Ny={snap.NyG:F1} accel={accelMs2:F1} vy={snap.VyMs:F0}");
+                }
+            }
+            else
+            {
+                stallSince = 0;
+            }
+
+            opt.OverspeedAlert = opt.OverspeedByMach
+                ? opt.OverspeedMach > 0.05 && snap.Mach > opt.OverspeedMach
+                : opt.OverspeedKmh > 0 && snap.IasKmh > opt.OverspeedKmh;
+
+            if (opt.OverspeedAlert != overspeedLogged)
+            {
+                overspeedLogged = opt.OverspeedAlert;
+                Console.WriteLine(opt.OverspeedAlert
+                    ? $"overspeed ON: M={snap.Mach:F2} IAS={snap.IasKmh:F0} km/h (byMach={opt.OverspeedByMach} thr={opt.OverspeedMach:F2}M/{opt.OverspeedKmh:F0}kmh)"
+                    : "overspeed off");
+            }
+
             // Longitudinal acceleration: least-squares slope of TAS over a 3 s window. The raw
             // per-sample derivative of an integer km/h counter is mostly quantisation noise,
             // which made the trend bar jump around.
@@ -642,6 +720,7 @@ public static class Program
             if (snap.VneMs is double vneMs && vneMs > 10)
             {
                 opt.OverspeedKmh = vneMs * 3.6;
+                opt.OverspeedByMach = false;
                 if (vneLogged != snap.VehicleType)
                 {
                     vneLogged = snap.VehicleType;
@@ -650,11 +729,15 @@ public static class Program
             }
             else
             {
-                opt.FpmAosSign = cfg.FpmAosSign != 0 ? Math.Sign(cfg.FpmAosSign) : -1;
+                // Manual threshold: IAS (km/h) or Mach, whichever the user selected.
+                opt.OverspeedKmh = cfg.OverspeedKmh;
+                opt.OverspeedByMach = cfg.OverspeedByMach;
+                opt.OverspeedMach = cfg.OverspeedMach;
+            }
+
+            opt.FpmAosSign = cfg.FpmAosSign != 0 ? Math.Sign(cfg.FpmAosSign) : -1;
             opt.AoaWarnAlert = snap.InFlight && snap.AoaDeg > cfg.AoaWarnDeg;
             opt.BingoFuelAlert = opt.EnduranceSeconds >= 0 && opt.EnduranceSeconds < cfg.BingoFuelSeconds;
-            opt.OverspeedKmh = cfg.OverspeedKmh;
-            }
             // Radar altitude only when the aircraft actually reports one: the API exposes no
             // terrain data, so an estimate was hopeless over hilly maps. Everything else shows
             // barometric altitude, exactly like before.
@@ -719,6 +802,11 @@ public static class Program
             double fuelNow = snap.FuelKg;
             if (fuelNow > 0.5)
             {
+                // Refuelling / rearming makes the fuel mass jump upwards; drop the window so the
+                // regression does not average a rise into a bogus consumption rate.
+                if (fuelLastSample > 1 && fuelNow > fuelLastSample + 3) fuelWindow.Clear();
+                fuelLastSample = fuelNow;
+
                 fuelWindow.Enqueue((tNow, fuelNow));
                 while (fuelWindow.Count > 2 && tNow - fuelWindow.Peek().T > 12.0) fuelWindow.Dequeue();
                 while (fuelWindow.Count > 400) fuelWindow.Dequeue();
@@ -736,11 +824,21 @@ public static class Program
                     {
                         double slope = (n * sxy - sx * sy) / denom;   // kg/s, negative while burning
                         double flow = -slope;
-                        if (flow > 0.02 && flow < 200) fuelFlow = flow;
+                        // Only a genuine decrease counts: a positive slope means fuel was added.
+                        if (flow > 0.02 && flow < 200)
+                        {
+                            fuelFlow = flow;
+                            fuelFlowAt = tNow;
+                        }
                     }
                 }
             }
-            opt.EnduranceSeconds = fuelFlow > 0.05 && fuelNow > 1 ? fuelNow / (fuelFlow * Math.Max(0.2, cfg.EnduranceScale)) : -1;
+
+            // A stale estimate produces nonsense endurance, so expire it quickly.
+            bool freshFlow = fuelFlow > 0.05 && tNow - fuelFlowAt < 8.0;
+            opt.EnduranceSeconds = freshFlow && fuelNow > 1
+                ? fuelNow / (fuelFlow * Math.Max(0.2, cfg.EnduranceScale))
+                : -1;
 
             // Landing gear in transit: 0..100 % in /state, blink the direction.
             double gearNow = snap.GearPercent;
@@ -827,6 +925,12 @@ public static class Program
                                   $"cursor[{NativeMethods.DescribeCursor()}] " +
                                   $"snap={(latest?.ToString() ?? "none")}");
                 Console.WriteLine($"      att={att}");
+                if (snap.Valid && fuelFlow > 0.01 && clock.Elapsed.TotalSeconds - fuelLogAt > 10)
+                {
+                    fuelLogAt = clock.Elapsed.TotalSeconds;
+                    int secs = (int)Math.Max(0, opt.EnduranceSeconds);
+                    Console.WriteLine($"      fuel: flow={fuelFlow:F2} kg/s scale={cfg.EnduranceScale:F2} fuel={snap.FuelKg:F0} kg -> endurance={secs / 60}:{secs % 60:00}");
+                }
                 Console.WriteLine($"      map self={mapData.Self?.ToString() ?? "null"} size={mapData.MapSizeM.X:F0}x{mapData.MapSizeM.Y:F0} airfields={mapData.Airfields.Count}");
                 if (!string.IsNullOrEmpty(opt.GridText) || !string.IsNullOrEmpty(opt.NavFriendly) || !string.IsNullOrEmpty(opt.NavEnemy))
                     Console.WriteLine($"      nav({gridDebug}) grid={opt.GridText} friendly='{opt.NavFriendly}' enemy='{opt.NavEnemy}' edge={opt.EdgeWarning}");
@@ -973,6 +1077,10 @@ public static class Program
             MixStr(o.NavEnemy);
             MixStr(o.EdgeArrow);
             Mix(o.EdgeWarning ? 1 : 0, 1);
+            Mix(o.OverspeedAlert ? 1 : 0, 1);
+            Mix(o.StallWarnLevel, 1);
+            Mix(o.OverspeedByMach ? 1 : 0, 1);
+            Mix(o.OverspeedMach, 0.01);
             Mix(o.PullUpAlert ? 1 : 0, 1);
             Mix(o.AoaWarnAlert ? 1 : 0, 1);
             Mix(o.BingoFuelAlert ? 1 : 0, 1);
@@ -1043,6 +1151,7 @@ public static class Program
     private static WtHud.Input.KeyBinding _scoreKeyBinding = WtHud.Input.KeyBinding.Parse("TAB", 0x09, "TAB");
     private static WtHud.Input.KeyBinding _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse("U", 0x55, "U");
     private static WtHud.Input.KeyBinding _resetKeyBinding = WtHud.Input.KeyBinding.Parse("F5", 0x74, "F5");
+    private static WtHud.Input.KeyBinding _stallKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+S", 0x53, "CTRL+ALT+S");
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
@@ -1053,6 +1162,7 @@ public static class Program
         _scoreKeyBinding = WtHud.Input.KeyBinding.Parse(c.ScoreboardKey, 0x09, "TAB");
         _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse(c.HoldHideKey, 0x55, "U");
         _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
+        _stallKeyBinding = WtHud.Input.KeyBinding.Parse(c.StallKey, 0x53, "CTRL+ALT+S");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
                           $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
     }
@@ -1062,6 +1172,13 @@ public static class Program
     private static bool scoreboardLatched;
     private static bool radioAltLogged;
     private static string gridDebug = "";
+    private static double fuelLogAt;
+    private static bool overspeedLogged;
+    private static long stallSince;
+    private static int stallLogged = -1;
+    private static string stallCalWarned = "";
+    private static double fuelLastSample = -1;
+    private static double fuelFlowAt;
     private static OverlayWindow? overlayRef;
     private static long groundStopSince;
     private static string vneLogged = "";
@@ -1180,8 +1297,32 @@ public static class Program
         if (variant == "pullup") { opt.PullUpAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "sink") { opt.SinkRateAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "aoa") { opt.AoaWarnAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "speed") { opt.OverspeedAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "stall") { opt.StallWarnLevel = 2; opt.ForceTransitVisible = true; }
         if (variant == "bingo") { opt.BingoFuelAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "ra") { opt.AltTapeIsRadar = true; opt.AltTapeM = 35; }
+        if (variant == "all")
+        {
+            // Everything at once, for the README screenshot.
+            opt.ForceTransitVisible = true;
+            opt.GridText = "F6";
+            opt.NavFriendly = "AF " + (char)0x2196 + " 4.2km";
+            opt.NavEnemy = "AF! " + (char)0x2197 + " 9.8km";
+            opt.EdgeWarning = true;
+            opt.EdgeArrow = (char)0x2190 + "";
+            opt.PullUpAlert = true;
+            opt.AoaWarnAlert = true;
+            opt.BingoFuelAlert = true;
+            opt.GearConfirmActive = true;
+            opt.GearConfirmText = "STB";
+            opt.FlapsDeployed = true;
+            opt.FlapsSteadyText = "50";
+            opt.AirbrakeDeployed = true;
+            opt.AltTapeIsRadar = true;
+            opt.AltTapeM = 128;
+            opt.EnduranceSeconds = 368;    // 6:08 for the showcase
+            opt.AccelMs2 = 3.2;
+        }
         if (variant == "ra10") { opt.AltTapeIsRadar = true; opt.AltTapeM = 8; }
         if (variant == "gear" || variant == "flaps" || variant == "gearzoom") opt.ForceTransitVisible = true;
         if (variant == "gear" || variant == "gearzoom")
@@ -1211,6 +1352,22 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -45,6 +45,8 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _hole = new() { Minimum = 0, Maximum = 240, DecimalPlaces = 0, Increment = 8, Width = 80 };
     private readonly NumericUpDown _endScale = new() { Minimum = 0.5m, Maximum = 3.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
     private readonly NumericUpDown _overspeed = new() { Minimum = 200, Maximum = 3000, DecimalPlaces = 0, Increment = 10, Width = 80 };
+    private readonly NumericUpDown _overspeedMach = new() { Minimum = 0.3m, Maximum = 5.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
+    private readonly CheckBox _overspeedMachMode = new() { Text = "超速按马赫数判定（取消则按 IAS）", AutoSize = true };
     private readonly NumericUpDown _fov = new() { Minimum = 15, Maximum = 120, DecimalPlaces = 0, Increment = 1, Width = 80 };
     private readonly NumericUpDown _offsetY = new() { Minimum = -10, Maximum = 10, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
     private readonly NumericUpDown _pitchZero = new() { Minimum = -40, Maximum = 40, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
@@ -82,6 +84,8 @@ public sealed class SettingsForm : Form
     public bool ShowPitchLadder => _showLadder.Checked;
     public bool ShowFpm => _showFpm.Checked;
     public double OverspeedKmh => (double)_overspeed.Value;
+    public double OverspeedMach => (double)_overspeedMach.Value;
+    public bool OverspeedByMach => _overspeedMachMode.Checked;
     public double EnduranceScale => (double)_endScale.Value;
     public int CursorHoleHalfPx => (int)_hole.Value;
 
@@ -131,6 +135,8 @@ public sealed class SettingsForm : Form
         _showLadder.Checked = cfg.ShowPitchLadder;
         _showFpm.Checked = cfg.ShowFpm;
         _overspeed.Value = (decimal)Math.Clamp(cfg.OverspeedKmh, 200, 3000);
+        _overspeedMach.Value = (decimal)Math.Clamp(cfg.OverspeedMach, 0.3, 5.0);
+        _overspeedMachMode.Checked = cfg.OverspeedByMach;
         _endScale.Value = (decimal)Math.Clamp(cfg.EnduranceScale, 0.5, 3.0);
         _hole.Value = Math.Clamp(cfg.CursorHoleHalfPx, 0, 240);
 
@@ -165,7 +171,9 @@ public sealed class SettingsForm : Form
         AddRow(new Label { Text = "俯仰零位（度，F7 自动填入）", AutoSize = true }, _pitchZero);
         AddRow(new Label { Text = "AOA 告警阈值（度，超过则闪 AOA）", AutoSize = true }, _aoaWarn);
         AddRow(new Label { Text = "BINGO 油量阈值（分钟，低于则闪 BINGO）", AutoSize = true }, _bingoMin);
-        AddRow(new Label { Text = "超速阈值（IAS km/h，超过则变红；有 vne 的机型自动用 vne）", AutoSize = true }, _overspeed);
+        AddRow(new Label { Text = "超速阈值（IAS km/h，有 vne 的机型自动用 vne）", AutoSize = true }, _overspeed);
+        AddRow(new Label { Text = "超速阈值（马赫数 M）", AutoSize = true }, _overspeedMach);
+        AddRow(_overspeedMachMode);
         AddRow(new Label { Text = "续航标定系数（对齐游戏读数，1.3≈实测）", AutoSize = true }, _endScale);
         AddRow(new Label { Text = "光标洞半径 px（0=关闭，越小越不挡图标）", AutoSize = true }, _hole);
         AddRow(new Label { Text = "长按隐藏键（默认 U）", AutoSize = true }, _holdKey);
@@ -226,6 +234,7 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 }
+
 
 
 

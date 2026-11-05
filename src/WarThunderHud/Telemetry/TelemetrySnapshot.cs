@@ -48,6 +48,9 @@ public sealed class TelemetrySnapshot
     public double NyG { get; init; }
     public double RollRateDegS { get; init; }
 
+    /// <summary>Cockpit AOA indexer value when the aircraft exposes one (normalised, null otherwise).</summary>
+    public double? AoaIndexer { get; init; }
+
     /// <summary>Cockpit Vne (never-exceed speed) in m/s when the aircraft exposes it (null otherwise).</summary>
     public double? VneMs { get; init; }
 
@@ -98,6 +101,7 @@ public sealed class TelemetrySnapshot
         $"Vy {VyMs,6:F1}  AoA {AoaDeg,5:F1}  Ny {NyG,4:F1}  Hdg {HeadingDeg,5:F1}  " +
         $"pitch={(PitchDeg.HasValue ? PitchDeg.Value.ToString("F1") : "n/a"),6}  bank={(BankDeg.HasValue ? BankDeg.Value.ToString("F1") : "n/a"),6}  fuel {FuelKg:F0}/{Fuel0Kg:F0}";
 }
+
 
 
 

@@ -20,6 +20,7 @@ public static class TelemetryParser
         // Some aircraft expose a real radio altimeter; most do not (the API has no terrain data).
         double? radioAlt = null;
         double? vne = null;
+        double? aoaIndexer = null;
         bool stateValid = false;
 
         if (!string.IsNullOrWhiteSpace(stateJson))
@@ -74,6 +75,7 @@ public static class TelemetryParser
             else if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
             if (r.TryGetProperty("turn", out _)) turn = GetDouble(r, "turn");
             if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
+            if (r.TryGetProperty("aoa_indexer1", out _)) aoaIndexer = GetDouble(r, "aoa_indexer1");
             if (r.TryGetProperty("vne", out _)) vne = GetDouble(r, "vne");   // cockpit Vne, m/s
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");
             for (int i = 1; i <= 4; i++)
@@ -112,6 +114,7 @@ public static class TelemetryParser
             Mach = mach,
             RadioAltM = radioAlt,
             VneMs = vne,
+            AoaIndexer = aoaIndexer,
             AltM = alt,
             VyMs = vy,
             AoaDeg = inFlight ? aoa : 0,
@@ -155,6 +158,7 @@ public static class TelemetryParser
         return e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
     }
 }
+
 
 
 

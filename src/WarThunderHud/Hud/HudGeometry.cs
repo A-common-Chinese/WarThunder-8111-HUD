@@ -78,6 +78,18 @@ public sealed class HudOptions
     /// <summary>Estimated fuel endurance in seconds (-1 = unknown).</summary>
     public double EnduranceSeconds { get; set; } = -1;
 
+    /// <summary>0 = no stall warning, 1 = approaching stall (amber), 2 = stalled (red).</summary>
+    public int StallWarnLevel { get; set; }
+
+    /// <summary>True while the speed exceeds the active limit (drives the red readout and boxes).</summary>
+    public bool OverspeedAlert { get; set; }
+
+    /// <summary>Overspeed warning by Mach number instead of IAS.</summary>
+    public bool OverspeedByMach { get; set; }
+
+    /// <summary>Mach threshold for the manual overspeed warning.</summary>
+    public double OverspeedMach { get; set; } = 1.8;
+
     /// <summary>IAS above which the speed readout turns red (km/h).</summary>
     public double OverspeedKmh { get; set; } = 1400;
 
@@ -206,6 +218,8 @@ public sealed class HudGeometry
         AddGearFlaps(prims, cx, cy, pxDeg, font);
         AddNavigation(prims, cx, cy, pxDeg, font, fontSmall);
         AddTerrainAlerts(prims, cx, cy, pxDeg, font);
+        AddOverspeedAlert(prims, cx, cy, pxDeg, font);
+        AddStallAlert(prims, cx, cy, pxDeg, font);
 
         return prims;
     }
@@ -371,7 +385,7 @@ public sealed class HudGeometry
             }
         }
 
-        bool overspeed = _opt.OverspeedKmh > 0 && s.IasKmh > _opt.OverspeedKmh;
+        bool overspeed = _opt.OverspeedAlert;
         AddBoxedText(prims, x - 0.6 * pxDeg, cy, s.IasKmh.ToString("0"), font, HudAlign.Right,
             overspeed ? _opt.DangerColor : col, line, pxDeg);
 
@@ -701,6 +715,43 @@ public sealed class HudGeometry
         }
     }
 
+    /// <summary>Blinking STALL boxes, same column as REDUCE SPEED but one row higher.</summary>
+    private void AddStallAlert(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
+    {
+        if (_opt.StallWarnLevel <= 0) return;
+        if (!(_opt.ForceTransitVisible || (Environment.TickCount64 / 220) % 2 == 0)) return;
+
+        double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
+        const double boxWidthDeg = 5.4;
+        double textEdge = 10.0 * pxDeg;
+        double y = cy - 1.5 * pxDeg;                 // one row above the REDUCE SPEED boxes
+        var col = _opt.StallWarnLevel >= 2 ? _opt.DangerColor : _opt.WarnColor;
+        string text = _opt.StallWarnLevel >= 2 ? "STALL" : "STALL";
+
+        AddBoxedTextFixed(prims, cx - textEdge, y, boxWidthDeg, text, font * 0.92, col, lineWidth, pxDeg);
+        AddBoxedTextFixed(prims, cx + textEdge - boxWidthDeg * pxDeg, y, boxWidthDeg, text, font * 0.92, col, lineWidth, pxDeg);
+    }
+
+
+    /// <summary>Blinking "REDUCE SPEED" boxes above the ACC and V/S readouts.</summary>
+    private void AddOverspeedAlert(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
+    {
+        if (!_opt.OverspeedAlert) return;
+        if (!(_opt.ForceTransitVisible || (Environment.TickCount64 / 250) % 2 == 0)) return;
+
+        double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
+        const double boxWidthDeg = 5.4;
+        double y = cy + 0.9 * pxDeg;
+
+        // Left box: its left edge lines up with the ACC text left edge (cx - 10.0 deg).
+        // Right box: its right edge lines up with the V/S text right edge (cx + 10.0 deg).
+        double textEdge = 10.0 * pxDeg;
+        AddBoxedTextFixed(prims, cx - textEdge, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
+            _opt.DangerColor, lineWidth, pxDeg);
+        AddBoxedTextFixed(prims, cx + textEdge - boxWidthDeg * pxDeg, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
+            _opt.DangerColor, lineWidth, pxDeg);
+    }
+
     private void AddNavigation(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double fontSmall)
     {
         double sink = 2.0 * _blend * pxDeg;
@@ -733,7 +784,7 @@ public sealed class HudGeometry
         if (_opt.EdgeWarning && (_opt.ForceTransitVisible || (Environment.TickCount64 / 320) % 2 == 0))
         {
             double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
-            AddBoxedText(prims, cx, cy + 9.4 * pxDeg,
+            AddBoxedText(prims, cx, cy + 6.5 * pxDeg,
                 "RETURN " + _opt.EdgeArrow, font, HudAlign.Center, _opt.DangerColor, lineWidth, pxDeg);
         }
     }
@@ -845,6 +896,12 @@ public sealed class HudGeometry
         _ = pxDeg;
     }
 }
+
+
+
+
+
+
 
 
 
