@@ -20,6 +20,12 @@ public sealed class HudConfig
     /// <summary>Added to the displayed pitch; F7 sets it so the ladder reads 0 while level.</summary>
     [JsonPropertyName("pitchZeroDeg")] public double PitchZeroDeg { get; set; }
 
+    /// <summary>
+    /// Native pitch sign: 0 = auto detect from flight data, +1 / -1 = force it. Some aircraft
+    /// (F/A-18E, MiG-19) report the horizon pitch inverted.
+    /// </summary>
+    [JsonPropertyName("pitchSign")] public int PitchSign { get; set; }
+
     /// <summary>+1 or -1; flips the bank direction if the ladder rotates the wrong way.</summary>
     [JsonPropertyName("bankSign")] public int BankSign { get; set; } = 1;
 
@@ -80,7 +86,10 @@ public sealed class HudConfig
     /// <summary>Below this IAS (km/h) the aircraft counts as stopped for the ground hide.</summary>
     [JsonPropertyName("groundHideSpeedKmh")] public double GroundHideSpeedKmh { get; set; } = 5;
 
-    /// <summary>Stall warning key: records the current AOA as this vehicle's stall AOA.</summary>
+    /// <summary>Blink the enemy-airfield readout when closer than this many km.</summary>
+    [JsonPropertyName("enemyAirfieldAlertKm")] public double EnemyAirfieldAlertKm { get; set; } = 12;
+
+    /// <summary>Stall warning key: records the current AOA as this vehicle''s stall AOA.</summary>
     [JsonPropertyName("stallKey")] public string StallKey { get; set; } = "CTRL+ALT+S";
 
     /// <summary>Generic stall AOA used before a per-vehicle calibration exists (deg).</summary>
@@ -174,6 +183,8 @@ public sealed class HudConfig
 
     public HudConfig Clone() => (HudConfig)MemberwiseClone();
 }
+
+
 
 
 

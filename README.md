@@ -6,7 +6,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.3** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.1.4** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -73,7 +73,8 @@ no packet interception, no automation.
 
 ### 导航与告警
 
-- **导航**：`GRID` 网格坐标；最近友方 / 敌方机场的相对方位与距离（`AF ↗ 4.2km`）；距地图边缘过近时闪烁红色 `RETURN ↑`
+- **导航**：`GRID` 网格坐标；最近友方 / 敌方机场的相对方位与距离（`AF ↗ 4.2km`）；距地图边缘过近时闪烁红色 `RETURN ↑`；
+  距**敌方机场**小于设定距离（默认 12 km，可调）时 `AF!` 变为闪烁框
 - **地形告警**：`SINK RATE`（低空 + 大下降率，全机型）；有机型雷达高度表时升级为 `PULL UP`（触发高度随下降率提高）
 - **超速**：速度数字变红 + 左右各一个闪烁红框 `REDUCE SPEED`；阈值可用 IAS(km/h) 或 Mach，机型有 `vne` 时自动用 vne
 - **失速**：闪烁 `STALL`（琥珀=预失速，红=失速）。判定优先用**按机型校准值**（飞行中按 `Ctrl+Alt+S` 记录临界迎角），
@@ -166,6 +167,8 @@ no packet interception, no automation.
 | `overspeedKmh` | 超速阈值（IAS，机型无 `vne` 时使用） | 1400 |
 | `overspeedByMach` / `overspeedMach` | 改用马赫判定 / 马赫阈值 | false / 1.80 |
 | `stallKey` / `stallAoaDeg` / `stallAoaByVehicle` | 失速校准键 / 通用阈值 / 每机型校准表 | CTRL+ALT+S / 22 / {} |
+| `enemyAirfieldAlertKm` | 敌机场告警距离（km，0=关闭） | 12 |
+| `pitchSign` | 原生俯仰符号（0=自动判定） | 0 |
 | `aoaWarnDeg` | AOA 告警阈值（度） | 18 |
 | `bingoFuelSeconds` | BINGO 油量阈值（秒） | 180 |
 | `enduranceScale` | 续航标定系数（对齐游戏读数） | 1.30 |
@@ -243,6 +246,7 @@ docs/          设计文档、接口调研、视角实验
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -122,6 +122,9 @@ public sealed class HudOptions
 
     /// <summary>Arrow pointing back towards the map centre (relative to the nose).</summary>
     public string EdgeArrow { get; set; } = "";
+
+    /// <summary>True when the nearest enemy airfield is inside the alert radius (blinking box).</summary>
+    public bool EnemyAirfieldAlert { get; set; }
 
     /// <summary>Navigation readouts for the nearest friendly / enemy airfield.</summary>
     public string NavFriendly { get; set; } = "";
@@ -771,12 +774,25 @@ public sealed class HudGeometry
         }
         if (!string.IsNullOrEmpty(_opt.NavEnemy))
         {
-            prims.Add(new HudPrim
+            if (_opt.EnemyAirfieldAlert)
             {
-                Kind = HudPrimKind.Text, Text = _opt.NavEnemy,
-                Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(_opt.WarnColor, 0.9),
-                Points = { (navX, navY) },
-            });
+                // Inside the warning radius: blinking box so it cannot be missed.
+                if ((Environment.TickCount64 / 300) % 2 == 0)
+                {
+                    double lw = Math.Max(1.0, 0.045 * pxDeg);
+                    AddBoxedText(prims, navX, navY, _opt.NavEnemy, fontSmall * 0.95, HudAlign.Left,
+                        _opt.WarnColor, lw, pxDeg);
+                }
+            }
+            else
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text, Text = _opt.NavEnemy,
+                    Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(_opt.WarnColor, 0.9),
+                    Points = { (navX, navY) },
+                });
+            }
         }
 
         // "Return to battle area" sits at the lower edge of the pitch ladder and deliberately does

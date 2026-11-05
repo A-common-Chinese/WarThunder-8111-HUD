@@ -67,6 +67,16 @@ public sealed class AttitudeFusion
     private double _nativeDot;       // correlation between native pitch and synthesis
     private int _nativeSamples;
     private int _nativeSign = 1;
+
+    /// <summary>0 = auto-detect the native pitch sign, +1 / -1 = forced by the user.</summary>
+    public int ForcedPitchSign { get; set; }
+
+    /// <summary>-1 when the aircraft reports its horizon pitch inverted.</summary>
+    public int DetectedPitchSign { get; private set; } = 1;
+
+    private string _lastVehicle = "";
+    private double _pitchDot;
+    private int _pitchVotes;
     private double _nativeTrust = 1.0;
     private double _nativeDissentSec;
 
@@ -116,12 +126,36 @@ public sealed class AttitudeFusion
         bankSynth = Math.Clamp(bankSynth, -80, 80);
 
         // ---- native path ----
-        // Pass the game values straight through, no correction: on this simulation the native
-        // artificial horizon is what the player expects to see, and every "improvement" we tried
-        // (sign detection, bias learning, roll-rate fusion) made it worse after a full roll.
+        // The game value is used directly, except for its sign: some aircraft (F/A-18E, MiG-19)
+        // report the horizon pitch inverted. Vote on the sign against the physical estimate
+        // instead of trusting one convention; the user can force it with the pitchSign config.
         if (s.PitchDeg.HasValue && s.BankDeg.HasValue)
         {
-            _pitchSmooth = s.PitchDeg.Value;
+            if (s.VehicleType != _lastVehicle)
+            {
+                _lastVehicle = s.VehicleType;
+                _pitchDot = 0;
+                _pitchVotes = 0;
+                DetectedPitchSign = 1;
+            }
+
+            if (ForcedPitchSign != 0)
+            {
+                DetectedPitchSign = ForcedPitchSign;
+            }
+            else if (_pitchVotes < 40 && Math.Abs(pitchSynth) > 3.0 && Math.Abs(s.PitchDeg.Value) > 1.0)
+            {
+                _pitchDot += s.PitchDeg.Value * pitchSynth;
+                _pitchVotes++;
+                if (_pitchVotes == 40)
+                {
+                    DetectedPitchSign = _pitchDot >= 0 ? 1 : -1;
+                    Console.WriteLine($"native pitch sign for {_lastVehicle}: {DetectedPitchSign} " +
+                                      "(auto-detected; override via pitchSign in hud-config.json)");
+                }
+            }
+
+            _pitchSmooth = DetectedPitchSign * s.PitchDeg.Value;
             _bankSmooth = s.BankDeg.Value;
             _confidence = 1.0;
             return new AttitudeSolution
@@ -172,6 +206,7 @@ public sealed class AttitudeFusion
     /// <summary>Current low-passed turn rate, deg/s (exposed for testing/logging).</summary>
     public double TurnRateDegS => _turnRateDegS;
 }
+
 
 
 

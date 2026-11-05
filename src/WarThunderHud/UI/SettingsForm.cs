@@ -45,6 +45,7 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _hole = new() { Minimum = 0, Maximum = 240, DecimalPlaces = 0, Increment = 8, Width = 80 };
     private readonly NumericUpDown _endScale = new() { Minimum = 0.5m, Maximum = 3.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
     private readonly NumericUpDown _overspeed = new() { Minimum = 200, Maximum = 3000, DecimalPlaces = 0, Increment = 10, Width = 80 };
+    private readonly NumericUpDown _enemyAfKm = new() { Minimum = 0, Maximum = 50, DecimalPlaces = 0, Increment = 1, Width = 80 };
     private readonly NumericUpDown _overspeedMach = new() { Minimum = 0.3m, Maximum = 5.0m, DecimalPlaces = 2, Increment = 0.05m, Width = 80 };
     private readonly CheckBox _overspeedMachMode = new() { Text = "超速按马赫数判定（取消则按 IAS）", AutoSize = true };
     private readonly NumericUpDown _fov = new() { Minimum = 15, Maximum = 120, DecimalPlaces = 0, Increment = 1, Width = 80 };
@@ -79,6 +80,7 @@ public sealed class SettingsForm : Form
     public bool HideOnGround => _hideGround.Checked;
     public double GroundHideDelayMs => (double)_groundDelay.Value;
     public bool TapeRadarAltitude => _tapeRadar.Checked;
+    public double EnemyAirfieldAlertKm => (double)_enemyAfKm.Value;
     public double AoaWarnDeg => (double)_aoaWarn.Value;
     public double BingoFuelMinutes => (double)_bingoMin.Value;
     public bool ShowPitchLadder => _showLadder.Checked;
@@ -130,6 +132,7 @@ public sealed class SettingsForm : Form
         _hideGround.Checked = cfg.HideOnGround;
         _groundDelay.Value = (decimal)Math.Clamp(cfg.GroundHideDelayMs, 0, 3000);
         _tapeRadar.Checked = cfg.TapeRadarAltitude;
+        _enemyAfKm.Value = (decimal)Math.Clamp(cfg.EnemyAirfieldAlertKm, 0, 50);
         _aoaWarn.Value = (decimal)Math.Clamp(cfg.AoaWarnDeg, 5, 45);
         _bingoMin.Value = (decimal)Math.Clamp(cfg.BingoFuelSeconds / 60.0, 1, 60);
         _showLadder.Checked = cfg.ShowPitchLadder;
@@ -169,6 +172,7 @@ public sealed class SettingsForm : Form
         AddRow(new Label { Text = "垂直视场角 FOV（度）", AutoSize = true }, _fov);
         AddRow(new Label { Text = "HUD 垂直偏移（度，正=上移）", AutoSize = true }, _offsetY);
         AddRow(new Label { Text = "俯仰零位（度，F7 自动填入）", AutoSize = true }, _pitchZero);
+        AddRow(new Label { Text = "敌机场告警距离（km，0=关闭）", AutoSize = true }, _enemyAfKm);
         AddRow(new Label { Text = "AOA 告警阈值（度，超过则闪 AOA）", AutoSize = true }, _aoaWarn);
         AddRow(new Label { Text = "BINGO 油量阈值（分钟，低于则闪 BINGO）", AutoSize = true }, _bingoMin);
         AddRow(new Label { Text = "超速阈值（IAS km/h，有 vne 的机型自动用 vne）", AutoSize = true }, _overspeed);
@@ -234,6 +238,7 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 }
+
 
 
 

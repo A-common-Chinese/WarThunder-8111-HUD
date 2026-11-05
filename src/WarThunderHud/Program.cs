@@ -229,6 +229,7 @@ public static class Program
                     cfg.HideOnGround = form.HideOnGround;
                     cfg.GroundHideDelayMs = form.GroundHideDelayMs;
                     cfg.TapeRadarAltitude = form.TapeRadarAltitude;
+                    cfg.EnemyAirfieldAlertKm = form.EnemyAirfieldAlertKm;
                     cfg.AoaWarnDeg = form.AoaWarnDeg;
                     cfg.BingoFuelSeconds = form.BingoFuelMinutes * 60.0;
                     cfg.ShowPitchLadder = form.ShowPitchLadder;
@@ -608,6 +609,8 @@ public static class Program
             bool hiddenOnGround = cfg.HideOnGround && onGround && stationary && !demo;
             bool draw = show && !hiddenByView && !hiddenByPanels && !hiddenOnGround && (flying || demo);
 
+            fusion.ForcedPitchSign = cfg.PitchSign;   // 0 = auto-detect the native pitch sign
+
             // Apply the live calibration on top of the raw solution.
             var shown = new AttitudeSolution
             {
@@ -924,7 +927,7 @@ public static class Program
                 Console.WriteLine($"t={clock.Elapsed.TotalSeconds:F1}s loop={frames / clock.Elapsed.TotalSeconds:F0}fps presents={presents} draw={draw} " +
                                   $"cursor[{NativeMethods.DescribeCursor()}] " +
                                   $"snap={(latest?.ToString() ?? "none")}");
-                Console.WriteLine($"      att={att}");
+                Console.WriteLine($"      att={att}  pitchSign={fusion.DetectedPitchSign}");
                 if (snap.Valid && fuelFlow > 0.01 && clock.Elapsed.TotalSeconds - fuelLogAt > 10)
                 {
                     fuelLogAt = clock.Elapsed.TotalSeconds;
@@ -1020,9 +1023,15 @@ public static class Program
         string Arrow(double rel) => Arrows[(int)Math.Round(rel / 45.0) % 8];
         if (bestFriendly < double.MaxValue)
             opt.NavFriendly = $"AF  {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km";
+        opt.EnemyAirfieldAlert = false;
         if (bestEnemy < double.MaxValue)
+        {
             opt.NavEnemy = $"AF! {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km";
+            double alertKm = cfg.EnemyAirfieldAlertKm;
+            opt.EnemyAirfieldAlert = alertKm > 0 && bestEnemy / 1000.0 < alertKm;
+        }
     }
+
     private static bool IsForegroundProcess(int pid)
     {
         var h = NativeMethods.GetForegroundWindow();
@@ -1077,6 +1086,7 @@ public static class Program
             MixStr(o.NavEnemy);
             MixStr(o.EdgeArrow);
             Mix(o.EdgeWarning ? 1 : 0, 1);
+            Mix(o.EnemyAirfieldAlert ? 1 : 0, 1);
             Mix(o.OverspeedAlert ? 1 : 0, 1);
             Mix(o.StallWarnLevel, 1);
             Mix(o.OverspeedByMach ? 1 : 0, 1);
@@ -1352,6 +1362,10 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
 
 
 
