@@ -20,6 +20,10 @@ no packet interception, no automation.
 
 ![近距离视角](docs/screenshots/hud-02-close-view.jpg)
 
+全部要素示意（模拟渲染，非游戏截图）：
+
+![HUD 全部要素](docs/screenshots/hud-all-elements.jpg)
+
 ## 特性
 
 ### 姿态与基准符号
@@ -234,6 +238,7 @@ docs/          设计文档、接口调研、视角实验
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 
