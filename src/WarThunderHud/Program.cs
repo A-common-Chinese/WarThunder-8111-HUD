@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -927,7 +927,7 @@ public static class Program
                 Console.WriteLine($"t={clock.Elapsed.TotalSeconds:F1}s loop={frames / clock.Elapsed.TotalSeconds:F0}fps presents={presents} draw={draw} " +
                                   $"cursor[{NativeMethods.DescribeCursor()}] " +
                                   $"snap={(latest?.ToString() ?? "none")}");
-                Console.WriteLine($"      att={att}  pitchSign={fusion.DetectedPitchSign}");
+                Console.WriteLine($"      att={att}  pitchSign={fusion.DetectedPitchSign} hasHdg={snap.HasHeading} wx={snap.RollRateDegS:F0}");
                 if (snap.Valid && fuelFlow > 0.01 && clock.Elapsed.TotalSeconds - fuelLogAt > 10)
                 {
                     fuelLogAt = clock.Elapsed.TotalSeconds;
@@ -977,6 +977,16 @@ public static class Program
 
         if (map.Self is not { } self || !snap.Valid) return;
 
+        // Heading used for the bearing arrows: the aircraft compass when available, otherwise the
+        // course over ground derived from map position changes (compass-less types like Rafale C).
+        double navHeading = snap.HeadingDeg;
+        bool hasHeading = snap.HasHeading;
+        if (!hasHeading && map.CourseDeg is double compasslessCog)
+        {
+            navHeading = compasslessCog;
+            hasHeading = true;
+        }
+
         double sizeX = map.MapSizeM.X > 1 ? map.MapSizeM.X : 52719;
         double sizeY = map.MapSizeM.Y > 1 ? map.MapSizeM.Y : 55385;
 
@@ -997,10 +1007,10 @@ public static class Program
             double dEast = (0.5 - self.X) * sizeX;
             double dNorth = (0.5 - self.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
             double bearingToCentre = Math.Atan2(dEast, dNorth) * 180.0 / Math.PI;
-            double rel = bearingToCentre - snap.HeadingDeg;
+            double rel = bearingToCentre - navHeading;
             while (rel < 0) rel += 360;
             while (rel >= 360) rel -= 360;
-            opt.EdgeArrow = Arrows[(int)Math.Round(rel / 45.0) % 8];
+            opt.EdgeArrow = hasHeading ? Arrows[(int)Math.Round(rel / 45.0) % 8] : "";
         }
 
         // --- nearest friendly / enemy airfield ---
@@ -1012,7 +1022,7 @@ public static class Program
             double dNorth = (af.Y - self.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
             double dist = Math.Sqrt(dEast * dEast + dNorth * dNorth);
             double bearing = Math.Atan2(dEast, dNorth) * 180.0 / Math.PI;
-            double rel = bearing - snap.HeadingDeg;
+            double rel = bearing - navHeading;
             while (rel < 0) rel += 360;
             while (rel >= 360) rel -= 360;
 
@@ -1021,12 +1031,19 @@ public static class Program
         }
 
         string Arrow(double rel) => Arrows[(int)Math.Round(rel / 45.0) % 8];
+
+        // Without a compass the "relative to nose" bearing is meaningless (heading reads 0), so
+        // show the distance only - the arrow would point the wrong way (Rafale C etc.).
         if (bestFriendly < double.MaxValue)
-            opt.NavFriendly = $"AF  {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km";
+            opt.NavFriendly = hasHeading
+                ? $"AF  {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km"
+                : $"AF  {bestFriendly / 1000.0:F1}km";
         opt.EnemyAirfieldAlert = false;
         if (bestEnemy < double.MaxValue)
         {
-            opt.NavEnemy = $"AF! {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km";
+            opt.NavEnemy = hasHeading
+                ? $"AF! {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km"
+                : $"AF! {bestEnemy / 1000.0:F1}km";
             double alertKm = cfg.EnemyAirfieldAlertKm;
             opt.EnemyAirfieldAlert = alertKm > 0 && bestEnemy / 1000.0 < alertKm;
         }
@@ -1362,6 +1379,10 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
 
 
 

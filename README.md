@@ -6,7 +6,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.4** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.1.5** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -207,6 +207,8 @@ dotnet publish src/WarThunderHud/WarThunderHud.csproj -c Release -r win-x64 `
 已知限制：
 
 - **顶级喷气无原生姿态**：俯仰/坡度靠 `航迹角 + AoA` 与转弯率合成，稳态可用、剧烈机动有偏差，HUD 会标注 `AHRS EST`
+- **少数机型（如阵风 C）连航向都没有**：坡度改用滚转速率积分（停止滚转后缓慢回平），
+  导航方位改用地图位置推算的航迹（COG）；航迹不可用时只显示机场距离
 - **原生姿态是座舱陀螺仪读数**：`AHRS GAME` 机型按游戏数据直通显示，极端姿态下与真实姿态可能有偏差（这是仪表本身的特性）
 - 接口更新率约 17–25 Hz（游戏侧节流），HUD 用预测/插值补偿但仍有轻微滞后
 - 续航、襟翼档位等为**推算值**，可能与游戏内显示不同（续航可用标定系数对齐）
@@ -246,6 +248,7 @@ docs/          设计文档、接口调研、视角实验
 ---
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
+
 
 
 

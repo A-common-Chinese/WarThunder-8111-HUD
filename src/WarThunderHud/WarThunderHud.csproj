@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <LangVersion>latest</LangVersion>
     <AssemblyName>WtHud</AssemblyName>
     <RootNamespace>WtHud</RootNamespace>
@@ -23,6 +23,7 @@
   </ItemGroup>
 
 </Project>
+
 
 
 

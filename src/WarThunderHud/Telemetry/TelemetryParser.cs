@@ -47,6 +47,7 @@ public static class TelemetryParser
 
         string vehicle = "";
         double heading = 0;
+        bool hasHeading = false;
         double? pitch = null, bank = null, turn = null;
         double fuelInd = 0;
         bool indValid = false;
@@ -62,6 +63,7 @@ public static class TelemetryParser
             indKeyCount = r.EnumerateObject().Count();
             vehicle = GetString(r, "type");
             heading = GetDouble(r, "compass");
+            hasHeading = r.TryGetProperty("compass", out _);
             hasAttitude = r.TryGetProperty("aviahorizon_pitch", out _) || r.TryGetProperty("bank", out _);
             hasAltInd = r.TryGetProperty("altitude_hour", out _);
             hasVario = r.TryGetProperty("vario", out _);
@@ -125,6 +127,7 @@ public static class TelemetryParser
             FlapsPercent = flapsPct,
             AirbrakePercent = airbrakePct,
             HeadingDeg = heading,
+            HasHeading = hasHeading,
             FuelKg = mfuel,
             Fuel0Kg = mfuel0,
             PitchDeg = hasAttitude ? pitch : null,
@@ -158,6 +161,7 @@ public static class TelemetryParser
         return e.ValueKind == JsonValueKind.String ? (e.GetString() ?? "") : "";
     }
 }
+
 
 
 

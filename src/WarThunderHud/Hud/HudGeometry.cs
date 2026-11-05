@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -726,13 +726,15 @@ public sealed class HudGeometry
 
         double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
         const double boxWidthDeg = 5.4;
-        double textEdge = 10.0 * pxDeg;
         double y = cy - 1.5 * pxDeg;                 // one row above the REDUCE SPEED boxes
         var col = _opt.StallWarnLevel >= 2 ? _opt.DangerColor : _opt.WarnColor;
-        string text = _opt.StallWarnLevel >= 2 ? "STALL" : "STALL";
 
-        AddBoxedTextFixed(prims, cx - textEdge, y, boxWidthDeg, text, font * 0.92, col, lineWidth, pxDeg);
-        AddBoxedTextFixed(prims, cx + textEdge - boxWidthDeg * pxDeg, y, boxWidthDeg, text, font * 0.92, col, lineWidth, pxDeg);
+        // Same (animating) tape offset as the readouts, so it stays aligned in the aiming layout.
+        double tapeLeft = cx - _tapeOffsetDeg * pxDeg;
+        double tapeRight = cx + _tapeOffsetDeg * pxDeg;
+        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, boxWidthDeg, "STALL", font * 0.92, col, lineWidth, pxDeg);
+        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - boxWidthDeg * pxDeg, y, boxWidthDeg, "STALL",
+            font * 0.92, col, lineWidth, pxDeg);
     }
 
 
@@ -746,13 +748,14 @@ public sealed class HudGeometry
         const double boxWidthDeg = 5.4;
         double y = cy + 0.9 * pxDeg;
 
-        // Left box: its left edge lines up with the ACC text left edge (cx - 10.0 deg).
-        // Right box: its right edge lines up with the V/S text right edge (cx + 10.0 deg).
-        double textEdge = 10.0 * pxDeg;
-        AddBoxedTextFixed(prims, cx - textEdge, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
+        // The readouts sit 2 deg inside the tapes, so the boxes use the same (animating) tape
+        // offset - otherwise they would drift away from ACC / V-S when the aiming layout is on.
+        double tapeLeft = cx - _tapeOffsetDeg * pxDeg;
+        double tapeRight = cx + _tapeOffsetDeg * pxDeg;
+        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
             _opt.DangerColor, lineWidth, pxDeg);
-        AddBoxedTextFixed(prims, cx + textEdge - boxWidthDeg * pxDeg, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
-            _opt.DangerColor, lineWidth, pxDeg);
+        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - boxWidthDeg * pxDeg, y, boxWidthDeg, "REDUCE SPEED",
+            font * 0.92, _opt.DangerColor, lineWidth, pxDeg);
     }
 
     private void AddNavigation(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double fontSmall)

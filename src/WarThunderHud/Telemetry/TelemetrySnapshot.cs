@@ -48,6 +48,9 @@ public sealed class TelemetrySnapshot
     public double NyG { get; init; }
     public double RollRateDegS { get; init; }
 
+    /// <summary>True when the aircraft reports a compass (needed for the coordinated-turn bank).</summary>
+    public bool HasHeading { get; init; }
+
     /// <summary>Cockpit AOA indexer value when the aircraft exposes one (normalised, null otherwise).</summary>
     public double? AoaIndexer { get; init; }
 
@@ -101,6 +104,7 @@ public sealed class TelemetrySnapshot
         $"Vy {VyMs,6:F1}  AoA {AoaDeg,5:F1}  Ny {NyG,4:F1}  Hdg {HeadingDeg,5:F1}  " +
         $"pitch={(PitchDeg.HasValue ? PitchDeg.Value.ToString("F1") : "n/a"),6}  bank={(BankDeg.HasValue ? BankDeg.Value.ToString("F1") : "n/a"),6}  fuel {FuelKg:F0}/{Fuel0Kg:F0}";
 }
+
 
 
 

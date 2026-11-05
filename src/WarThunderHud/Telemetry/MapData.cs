@@ -24,9 +24,16 @@ public sealed class MapData : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
     private int _infoTick;
+    private static readonly DateTime _epoch = DateTime.UtcNow;
 
     /// <summary>Player position in normalised map space (0..1) or null when unknown.</summary>
     public (double X, double Y)? Self { get; private set; }
+
+    /// <summary>Course over ground (deg, 0 = north) derived from position changes; null when slow.</summary>
+    public double? CourseDeg { get; private set; }
+
+    private readonly Queue<(double T, double X, double Y)> _track = new();
+    private DateTime _lastSample = DateTime.MinValue;
 
     /// <summary>Airfields on this map (friendly + enemy), static positions.</summary>
     public List<MapPoint> Airfields { get; private set; } = new();
@@ -123,6 +130,41 @@ public sealed class MapData : IDisposable
 
         Self = self;
         Airfields = fields;
+
+        // Course over ground: some aircraft expose no compass, but the map position still moves.
+        // Compare against the oldest sample in a ~2.5 s window so the bearing is stable.
+        if (self is { } pos)
+        {
+            double now = (DateTime.UtcNow - _epoch).TotalSeconds;
+            _track.Enqueue((now, pos.Item1, pos.Item2));
+            while (_track.Count > 2 && now - _track.Peek().T > 2.5) _track.Dequeue();
+            while (_track.Count > 200) _track.Dequeue();
+
+            if (_track.Count >= 3)
+            {
+                var first = _track.Peek();
+                double dx = (pos.Item1 - first.X) * MapSizeM.X;
+                double dy = (pos.Item2 - first.Y) * MapSizeM.Y;
+                double flown = Math.Sqrt(dx * dx + dy * dy);
+                double dtTrack = now - first.T;
+                if (flown > 250 && dtTrack > 0.8)
+                {
+                    // Map Y grows southwards: north is -y.
+                    double deg = Math.Atan2(dx, -dy) * 180.0 / Math.PI;
+                    if (deg < 0) deg += 360;
+                    CourseDeg = deg;
+                }
+                else
+                {
+                    CourseDeg = null;
+                }
+            }
+        }
+        else
+        {
+            CourseDeg = null;
+            _track.Clear();
+        }
     }
 
     private async Task PollInfoAsync(CancellationToken ct)
@@ -153,6 +195,7 @@ public sealed class MapData : IDisposable
         _cts.Dispose();
     }
 }
+
 
 
 

@@ -63,6 +63,7 @@ public sealed class AttitudeFusion
     private double _turnRateDegS;   // low-passed
     private double _confidence = 1;
     private double _bankIntegrated; // from Wx roll rate
+    private double _rollSmooth;     // low-passed roll rate used by the compass-less fallback
     private double _lastTime = double.NaN;
     private double _nativeDot;       // correlation between native pitch and synthesis
     private int _nativeSamples;
@@ -179,10 +180,28 @@ public sealed class AttitudeFusion
         // value decays to level instead of accumulating error.
         double stepDt = double.IsNaN(_lastTime) ? 0.04 : Math.Clamp(s.ElapsedSeconds - _lastTime, 0.0, 0.2);
         _lastTime = s.ElapsedSeconds;
-        double bankTarget = Math.Abs(bankSynth) > 6.0 ? bankSynth : 0.0;
-        double slew = 140.0 * stepDt;   // deg per step
-        _bankSmooth += Math.Clamp(bankTarget - _bankSmooth, -slew, slew);
-        _bankIntegrated = _bankSmooth;
+
+        if (!s.HasHeading)
+        {
+            // No compass at all (e.g. Rafale C): the turn-rate estimate is always zero, so the
+            // bank pointer would never move. Integrate the roll rate instead and decay slowly
+            // back to level once the aircraft stops rolling.
+            _bankIntegrated += s.RollRateDegS * stepDt;
+            Normalize(ref _bankIntegrated);
+            if (Math.Abs(s.RollRateDegS) < 2.0)
+            {
+                double decay = 40.0 * stepDt;             // deg per step back towards level (~4 s to settle)
+                _bankIntegrated += Math.Clamp(-_bankIntegrated, -decay, decay);
+            }
+            _bankSmooth = _bankIntegrated;
+        }
+        else
+        {
+            double bankTarget = Math.Abs(bankSynth) > 6.0 ? bankSynth : 0.0;
+            double slew = 140.0 * stepDt;   // deg per step
+            _bankSmooth += Math.Clamp(bankTarget - _bankSmooth, -slew, slew);
+            _bankIntegrated = _bankSmooth;
+        }
 
         // Confidence drops when the aircraft is manoeuvring hard or the data looks noisy.
         double noise = Math.Abs(s.NyG - 1.0) > 4 ? 0.75 : 1.0;
@@ -206,6 +225,9 @@ public sealed class AttitudeFusion
     /// <summary>Current low-passed turn rate, deg/s (exposed for testing/logging).</summary>
     public double TurnRateDegS => _turnRateDegS;
 }
+
+
+
 
 
 
