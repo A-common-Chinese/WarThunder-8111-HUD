@@ -49,6 +49,12 @@ public sealed class HudOptions
     public string FlapsTransitText { get; set; } = "";
 
     /// <summary>True while the airbrake is moving.</summary>
+    /// <summary>A-10 family: split-aileron deceleron brake, so the box must not blink.</summary>
+    public bool DeceleronAirbrake { get; set; }
+
+    /// <summary>Text of the steady airbrake box ("AIRBRAKE" / "AIR BRAKE" for the A-10 family).</summary>
+    public string AirbrakeSteadyText { get; set; } = "AIRBRAKE";
+
     public bool AirbrakeTransitActive { get; set; }
 
     /// <summary>Text to blink: "AIRBRAKE OUT" or "AIRBRAKE IN".</summary>
@@ -56,6 +62,15 @@ public sealed class HudOptions
 
     /// <summary>Short green confirmation right after the gear reaches its position.</summary>
     public bool GearConfirmActive { get; set; }
+
+    /// <summary>Gear reports fully down: steady readout, no transition needed.</summary>
+    public bool GearDownSteady { get; set; }
+
+    /// <summary>Show the raw configuration channel values and derived flags.</summary>
+    public bool ConfigDebug { get; set; }
+
+    /// <summary>Lines of the configuration debug block (already formatted).</summary>
+    public string[] ConfigDebugLines { get; set; } = System.Array.Empty<string>();
 
     /// <summary>"GEAR DOWN" / "GEAR UP" for the confirmation box.</summary>
     public string GearConfirmText { get; set; } = "";
@@ -219,6 +234,7 @@ public sealed class HudGeometry
         if (_opt.ShowDataBlock) AddDataBlock(prims, s, cx, cy, pxDeg, font);
         if (_opt.ShowSourceLabel) AddSourceLabel(prims, att, cx, cy, pxDeg, fontSmall);
         AddGearFlaps(prims, cx, cy, pxDeg, font);
+        AddConfigDebug(prims, cx, cy, pxDeg, fontSmall);
         AddNavigation(prims, cx, cy, pxDeg, font, fontSmall);
         AddTerrainAlerts(prims, cx, cy, pxDeg, font);
         AddOverspeedAlert(prims, cx, cy, pxDeg, font);
@@ -641,6 +657,23 @@ public sealed class HudGeometry
     /// numeric block) but share the aiming layout's vertical offset so the whole cluster still
     /// travels together on Z.
     /// </summary>
+    /// <summary>Diagnostic block: raw configuration channel values and the derived flags.</summary>
+    private void AddConfigDebug(List<HudPrim> prims, double cx, double cy, double pxDeg, double fontSmall)
+    {
+        if (!_opt.ConfigDebug || _opt.ConfigDebugLines.Length == 0) return;
+
+        double x = cx + 9.0 * pxDeg;
+        double y = cy + 13.0 * pxDeg;
+        double line = 1.25 * pxDeg;
+        double lw = Math.Max(1.0, 0.035 * pxDeg);
+        foreach (string text in _opt.ConfigDebugLines)
+        {
+            AddBoxedTextFixed(prims, x, y, 11.0, text, fontSmall * 0.9, _opt.Color, lw, pxDeg);
+            y += line;
+        }
+    }
+
+
     private void AddGearFlaps(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
     {
         // Fixed slots, never stacked: GEAR / FLAPS / AIRBRAKE (and the two alert slots) always live
@@ -669,6 +702,10 @@ public sealed class HudGeometry
         {
             AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, _opt.GearConfirmText, font, Fade(_opt.Color, 0.95), lineWidth, pxDeg);
         }
+        else if (_opt.GearDownSteady)
+        {
+            AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, "GEAR DOWN", font, Fade(_opt.Color, 0.9), lineWidth, pxDeg);
+        }
 
         if (_opt.FlapsTransitActive && !string.IsNullOrEmpty(_opt.FlapsTransitText))
         {
@@ -683,12 +720,13 @@ public sealed class HudGeometry
 
         if (_opt.AirbrakeTransitActive && !string.IsNullOrEmpty(_opt.AirbrakeTransitText))
         {
-            if (phaseOn)
+            // A-10 decelerons wobble on every roll, so their box stays solid; others blink.
+            if (_opt.DeceleronAirbrake || phaseOn)
                 AddBoxedTextFixed(prims, leftX, brakeY, boxWidthDeg, _opt.AirbrakeTransitText, font, _opt.WarnColor, lineWidth, pxDeg);
         }
         else if (_opt.AirbrakeDeployed)
         {
-            AddBoxedTextFixed(prims, leftX, brakeY, boxWidthDeg, "AIRBRAKE", font, Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
+            AddBoxedTextFixed(prims, leftX, brakeY, boxWidthDeg, _opt.AirbrakeSteadyText, font, Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
         }
 
         // ---- right column: BINGO (row 1) / AOA (row 2) ----
@@ -915,6 +953,8 @@ public sealed class HudGeometry
         _ = pxDeg;
     }
 }
+
+
 
 
 

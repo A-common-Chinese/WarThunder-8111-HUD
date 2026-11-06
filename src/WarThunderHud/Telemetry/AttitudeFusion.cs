@@ -78,6 +78,9 @@ public sealed class AttitudeFusion
     private string _lastVehicle = "";
     private double _pitchDot;
     private int _pitchVotes;
+
+    /// <summary>True once the automatic sign vote produced a result for the current vehicle.</summary>
+    public bool SignDecided { get; private set; }
     private double _nativeTrust = 1.0;
     private double _nativeDissentSec;
 
@@ -137,6 +140,7 @@ public sealed class AttitudeFusion
                 _lastVehicle = s.VehicleType;
                 _pitchDot = 0;
                 _pitchVotes = 0;
+                SignDecided = false;
                 DetectedPitchSign = 1;
             }
 
@@ -144,15 +148,16 @@ public sealed class AttitudeFusion
             {
                 DetectedPitchSign = ForcedPitchSign;
             }
-            else if (_pitchVotes < 40 && Math.Abs(pitchSynth) > 3.0 && Math.Abs(s.PitchDeg.Value) > 1.0)
+            else if (!SignDecided && _pitchVotes < 60 && Math.Abs(pitchSynth) > 3.0 && Math.Abs(s.PitchDeg.Value) > 1.0)
             {
                 _pitchDot += s.PitchDeg.Value * pitchSynth;
                 _pitchVotes++;
-                if (_pitchVotes == 40)
+                if (_pitchVotes >= 60)
                 {
+                    SignDecided = true;
                     DetectedPitchSign = _pitchDot >= 0 ? 1 : -1;
                     Console.WriteLine($"native pitch sign for {_lastVehicle}: {DetectedPitchSign} " +
-                                      "(auto-detected; override via pitchSign in hud-config.json)");
+                                      "(auto-detected; persisted per vehicle)");
                 }
             }
 
@@ -225,6 +230,7 @@ public sealed class AttitudeFusion
     /// <summary>Current low-passed turn rate, deg/s (exposed for testing/logging).</summary>
     public double TurnRateDegS => _turnRateDegS;
 }
+
 
 
 

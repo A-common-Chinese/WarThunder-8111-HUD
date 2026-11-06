@@ -1,4 +1,7 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+
+
+
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -226,6 +229,8 @@ public static class Program
                     if (!string.IsNullOrWhiteSpace(form.CursorHoleKey)) cfg.CursorHoleKey = form.CursorHoleKey.Trim().ToUpperInvariant();
                     if (!string.IsNullOrWhiteSpace(form.ResetKey)) cfg.ResetKey = form.ResetKey.Trim().ToUpperInvariant();
                     cfg.AimOnRightMouse = form.AimOnRightMouse;
+                    cfg.HideWhenInactive = form.HideWhenInactive;
+                    cfg.ConfigDebug = form.ConfigDebug;
                     cfg.HideOnGround = form.HideOnGround;
                     cfg.GroundHideDelayMs = form.GroundHideDelayMs;
                     cfg.TapeRadarAltitude = form.TapeRadarAltitude;
@@ -244,6 +249,7 @@ public static class Program
                     cfg.OverspeedByMach = form.OverspeedByMach;
                     cfg.EnduranceScale = form.EnduranceScale;
                     cfg.CursorHoleHalfPx = form.CursorHoleHalfPx;
+                    if (!string.IsNullOrWhiteSpace(form.AirbrakeKey)) cfg.AirbrakeKey = form.AirbrakeKey.Trim().ToUpperInvariant();
 
                     cal.VerticalFovDeg = cfg.VerticalFovDeg;
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
@@ -296,7 +302,13 @@ public static class Program
             prevValid = s.Valid;
 
             latest = s;
+            // Pitch sign: manual config first, then the sign learned for this vehicle, then the
+            // automatic vote; the result is written back per vehicle so it never flips again.
+            fusion.ForcedPitchSign = pendingPitchSign;
             lastAttitude = fusion.Update(s);
+            detectedPitchSign = fusion.DetectedPitchSign;
+            pitchSignDecided = fusion.SignDecided;
+            pitchSignVehicle = s.VehicleType;
         };
         telemetry.Start();
         using var mapData = new WtHud.Telemetry.MapData();
@@ -430,7 +442,8 @@ public static class Program
                 // While another application owns the foreground, the overlay window is hidden
                 // entirely: a topmost window can still swallow clicks over its whole area even
                 // when it reports HTTRANSPARENT, which made the desktop unusable.
-                if (overlay.IsVisible != foreground) overlay.SetVisible(foreground);
+                bool wantVisible = foreground || !cfg.HideWhenInactive;
+                if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 if (foreground != wasForeground)
                 {
@@ -529,6 +542,15 @@ public static class Program
                 prevScore = scoreNow;
                 scoreboardHeld = armed && scoreboardLatched;
 
+                // A-10 family: airbrake box follows the key (deceleron telemetry is unusable).
+                if (armed && latest is { } abSnap
+                    && abSnap.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase)
+                    && _airbrakeKeyBinding.PressedSinceLastPoll())
+                {
+                    airbrakeKeyOn = !airbrakeKeyOn;
+                    Console.WriteLine("airbrake key (" + _airbrakeKeyBinding.Text + ") -> " + (airbrakeKeyOn ? "ON" : "off"));
+                }
+
                 // Stall calibration: press while the aircraft is at the buffet to remember this
                 // vehicle's stall AOA (per-vehicle table in hud-config.json).
                 if (armed && _stallKeyBinding.PressedSinceLastPoll() && latest is { } cur && cur.AoaDeg > 1)
@@ -609,7 +631,21 @@ public static class Program
             bool hiddenOnGround = cfg.HideOnGround && onGround && stationary && !demo;
             bool draw = show && !hiddenByView && !hiddenByPanels && !hiddenOnGround && (flying || demo);
 
-            fusion.ForcedPitchSign = cfg.PitchSign;   // 0 = auto-detect the native pitch sign
+            // Pitch sign for the next update: manual config wins, then the sign learned for this
+            // vehicle; whatever the detector decides is stored per vehicle so it never flips again.
+            pendingPitchSign = cfg.PitchSign;
+            if (pendingPitchSign == 0 && !string.IsNullOrEmpty(snap.VehicleType)
+                && cfg.PitchSignByVehicle.TryGetValue(snap.VehicleType, out int storedSign))
+            {
+                pendingPitchSign = storedSign;
+            }
+            if (cfg.PitchSign == 0 && pitchSignDecided && !string.IsNullOrEmpty(pitchSignVehicle)
+                && !cfg.PitchSignByVehicle.ContainsKey(pitchSignVehicle))
+            {
+                cfg.PitchSignByVehicle[pitchSignVehicle] = detectedPitchSign;
+                cfg.Save();
+                Console.WriteLine($"pitch sign for {pitchSignVehicle} = {detectedPitchSign} (saved to config)");
+            }
 
             // Apply the live calibration on top of the raw solution.
             var shown = new AttitudeSolution
@@ -867,6 +903,10 @@ public static class Program
             opt.GearTransitActive = gearTransitNow;
             opt.GearConfirmActive = gearTicks < gearConfirmUntil;
 
+            // Steady readout from the reported state: aircraft whose gear reaches 100 % instantly
+            // never show a transition, and the player still wants to see that it is down.
+            opt.GearDownSteady = snap.Valid && gearNow >= 99.5 && !opt.GearTransitActive;
+
             // Flaps: transit is detected from movement (they can stop at intermediate settings).
             double flapsNow = snap.FlapsPercent;
             long nowTicks = Environment.TickCount64;
@@ -879,19 +919,55 @@ public static class Program
             opt.FlapsTransitActive = snap.Valid && nowTicks - lastFlapsChangeTicks < 350 && !string.IsNullOrEmpty(opt.FlapsTransitText);
 
             // Airbrake: same movement-based detection; a deployed brake also gets a static box.
+            // The A-10 family is special: its split-aileron (deceleron) brake makes the reported
+            // percentage follow the ailerons, so those types follow the airbrake key instead.
             double abNow = snap.AirbrakePercent;
-            if (abNow >= 0 && lastAirbrake >= 0 && Math.Abs(abNow - lastAirbrake) > 1.0)
-            {
-                opt.AirbrakeTransitText = abNow > lastAirbrake ? "AIRBRAKE OUT" : "AIRBRAKE IN";
-                lastAirbrakeChangeTicks = nowTicks;
-            }
-            lastAirbrake = abNow;
-            opt.AirbrakeTransitActive = snap.Valid && nowTicks - lastAirbrakeChangeTicks < 350 && !string.IsNullOrEmpty(opt.AirbrakeTransitText);
+            bool deceleron = snap.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase);
+            opt.DeceleronAirbrake = deceleron;
 
-            // Flaps: blink only while moving; settled at a non-zero setting -> steady box.
-            opt.AirbrakeDeployed = snap.Valid && abNow > 5 && !opt.AirbrakeTransitActive;
+            if (deceleron)
+            {
+                opt.AirbrakeSteadyText = "AIR BRAKE";
+                opt.AirbrakeDeployed = airbrakeKeyOn;
+                opt.AirbrakeTransitActive = false;
+                lastAirbrake = abNow;
+            }
+            else
+            {
+                opt.AirbrakeSteadyText = "AIRBRAKE";
+                if (abNow >= 0 && lastAirbrake >= 0 && Math.Abs(abNow - lastAirbrake) > 1.0)
+                {
+                    opt.AirbrakeTransitText = abNow > lastAirbrake ? "AIRBRAKE OUT" : "AIRBRAKE IN";
+                    lastAirbrakeChangeTicks = nowTicks;
+                }
+                lastAirbrake = abNow;
+                opt.AirbrakeTransitActive = snap.Valid && nowTicks - lastAirbrakeChangeTicks < 350
+                                            && !string.IsNullOrEmpty(opt.AirbrakeTransitText);
+                // Flaps: blink only while moving; settled at a non-zero setting -> steady box.
+                opt.AirbrakeDeployed = snap.Valid && abNow > 5 && !opt.AirbrakeTransitActive;
+            }
             opt.FlapsDeployed = snap.Valid && !opt.FlapsTransitActive && flapsNow > 0.5;
             opt.FlapsSteadyText = flapsNow.ToString("0");
+
+            // ---- configuration debug block (toggled in F1) ----
+            opt.ConfigDebug = cfg.ConfigDebug;
+            if (cfg.ConfigDebug)
+            {
+                opt.ConfigDebugLines = new[]
+                {
+                    "CFG gear " + snap.GearPercent.ToString("F0") + "% t=" + B(opt.GearTransitActive)
+                        + " c=" + B(opt.GearConfirmActive) + " d=" + B(opt.GearDownSteady),
+                    "CFG flaps " + snap.FlapsPercent.ToString("F0") + "% t=" + B(opt.FlapsTransitActive)
+                        + " d=" + B(opt.FlapsDeployed) + " raw=" + opt.FlapsSteadyText,
+                    "CFG air " + snap.AirbrakePercent.ToString("F0") + "% t=" + B(opt.AirbrakeTransitActive)
+                        + " d=" + B(opt.AirbrakeDeployed) + " dec=" + B(opt.DeceleronAirbrake)
+                        + " key=" + B(airbrakeKeyOn),
+                };
+            }
+            else
+            {
+                opt.ConfigDebugLines = System.Array.Empty<string>();
+            }
 
             // Only submit a frame when something actually changed: the API updates at 17-25 Hz
             // while we would otherwise recompose the full 4K surface at 100+ Hz.
@@ -928,6 +1004,12 @@ public static class Program
                                   $"cursor[{NativeMethods.DescribeCursor()}] " +
                                   $"snap={(latest?.ToString() ?? "none")}");
                 Console.WriteLine($"      att={att}  pitchSign={fusion.DetectedPitchSign} hasHdg={snap.HasHeading} wx={snap.RollRateDegS:F0}");
+                Console.WriteLine("      cfgDiag gear=" + snap.GearPercent.ToString("F0") + " gt=" + opt.GearTransitActive
+                                  + " gc=" + opt.GearConfirmActive + " gd=" + opt.GearDownSteady
+                                  + " | flaps=" + snap.FlapsPercent.ToString("F0") + " ft=" + opt.FlapsTransitActive
+                                  + " fd=" + opt.FlapsDeployed
+                                  + " | air=" + snap.AirbrakePercent.ToString("F0") + " ad=" + opt.AirbrakeDeployed
+                                  + " at=" + opt.AirbrakeTransitActive + " dec=" + opt.DeceleronAirbrake);
                 if (snap.Valid && fuelFlow > 0.01 && clock.Elapsed.TotalSeconds - fuelLogAt > 10)
                 {
                     fuelLogAt = clock.Elapsed.TotalSeconds;
@@ -1114,9 +1196,31 @@ public static class Program
             Mix(o.SinkRateAlert ? 1 : 0, 1);
             Mix(o.AltTapeM, 0.5);
             Mix(o.AltTapeIsRadar ? 1 : 0, 1);
+            Mix(o.ConfigDebug ? 1 : 0, 1);
+            bool blinking = o.PullUpAlert || o.AoaWarnAlert || o.BingoFuelAlert || o.SinkRateAlert
+                            || o.EdgeWarning || o.OverspeedAlert || o.StallWarnLevel > 0
+                            || o.EnemyAirfieldAlert || o.GearTransitActive || o.FlapsTransitActive
+                            || (o.AirbrakeTransitActive && !o.DeceleronAirbrake);
+            Mix(blinking ? (Environment.TickCount64 / 32) % 20 : 0, 1);
+            foreach (string dbgLine in o.ConfigDebugLines) MixStr(dbgLine);
+            Mix(o.GearTransitActive ? 1 : 0, 1);
+            Mix(o.GearConfirmActive ? 1 : 0, 1);
+            Mix(o.GearDownSteady ? 1 : 0, 1);
+            Mix(o.FlapsTransitActive ? 1 : 0, 1);
+            Mix(o.FlapsDeployed ? 1 : 0, 1);
+            Mix(o.AirbrakeTransitActive ? 1 : 0, 1);
+            Mix(o.AirbrakeDeployed ? 1 : 0, 1);
+            Mix(o.DeceleronAirbrake ? 1 : 0, 1);
+            MixStr(o.GearTransitText);
+            MixStr(o.FlapsTransitText);
+            MixStr(o.FlapsSteadyText);
+            MixStr(o.AirbrakeTransitText);
+            MixStr(o.AirbrakeSteadyText);
             return k;
         }
     }
+
+    private static string B(bool v) => v ? "T" : "F";
 
     private static double Lerp(double a, double b, double f) => a + (b - a) * f;
 
@@ -1147,6 +1251,17 @@ public static class Program
             TurnRateDegS = curr.TurnRateDegS,
             Ammo = curr.Ammo,
             Caps = curr.Caps,
+
+            // Discrete / configuration channels are not interpolated, but they must still be
+            // carried over: omitting them made gear/flaps/airbrake read as 0 whenever
+            // extrapolation was on, so their boxes never appeared.
+            GearPercent = curr.GearPercent,
+            FlapsPercent = curr.FlapsPercent,
+            AirbrakePercent = curr.AirbrakePercent,
+            RadioAltM = curr.RadioAltM,
+            VneMs = curr.VneMs,
+            AoaIndexer = curr.AoaIndexer,
+            HasHeading = curr.HasHeading,
         };
     }
 
@@ -1179,6 +1294,8 @@ public static class Program
     private static WtHud.Input.KeyBinding _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse("U", 0x55, "U");
     private static WtHud.Input.KeyBinding _resetKeyBinding = WtHud.Input.KeyBinding.Parse("F5", 0x74, "F5");
     private static WtHud.Input.KeyBinding _stallKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+S", 0x53, "CTRL+ALT+S");
+    private static WtHud.Input.KeyBinding _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse("H", 0x48, "H");
+    private static bool airbrakeKeyOn;
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
@@ -1190,6 +1307,7 @@ public static class Program
         _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse(c.HoldHideKey, 0x55, "U");
         _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
         _stallKeyBinding = WtHud.Input.KeyBinding.Parse(c.StallKey, 0x53, "CTRL+ALT+S");
+        _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
                           $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
     }
@@ -1201,6 +1319,10 @@ public static class Program
     private static string gridDebug = "";
     private static double fuelLogAt;
     private static bool overspeedLogged;
+    private static int pendingPitchSign;        // fed to AttitudeFusion before each update
+    private static int detectedPitchSign = 1;
+    private static bool pitchSignDecided;
+    private static string pitchSignVehicle = "";
     private static long stallSince;
     private static int stallLogged = -1;
     private static string stallCalWarned = "";
@@ -1379,6 +1501,15 @@ public static class Program
         if (!ok) Environment.ExitCode = 1;
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

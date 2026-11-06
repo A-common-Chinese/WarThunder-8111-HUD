@@ -18,6 +18,8 @@ public sealed class SettingsForm : Form
     private readonly CheckBox _bodyFixed = new() { Text = "纯机体固连模式（等同 F9）", AutoSize = true };
     private readonly CheckBox _rollCoupling = new() { Text = "相机随滚转转动（第三人称请勿勾选）", AutoSize = true };
     private readonly CheckBox _bankFlip = new() { Text = "反转坡度方向", AutoSize = true };
+    private readonly CheckBox _configDebugBox = new() { Text = "显示构型调试块（gear/flaps/airbrake 原始值与标志）", AutoSize = true };
+    private readonly CheckBox _hideInactive = new() { Text = "切到其它窗口时隐藏 HUD", AutoSize = true };
     private readonly CheckBox _hideGround = new() { Text = "停在地面时隐藏 HUD", AutoSize = true };
     private readonly NumericUpDown _groundDelay = new() { Minimum = 0, Maximum = 3000, DecimalPlaces = 0, Increment = 100, Width = 80 };
     private readonly CheckBox _hideCockpit = new() { Text = "座舱视角隐藏 HUD（按一次 V）", AutoSize = true };
@@ -36,6 +38,8 @@ public sealed class SettingsForm : Form
     private readonly TextBox _exitKey = new() { Width = 90 };
     private readonly TextBox _saveKey = new() { Width = 90 };
     private readonly TextBox _holeKey = new() { Width = 90 };
+    private readonly TextBox _airbrakeKey = new() { Width = 90 };
+    private readonly Button _importWt = new() { Text = "从战雷按键文件(.blk)导入…", AutoSize = true };
     private readonly CheckBox _aimRmb = new() { Text = "长按鼠标右键进入瞄准布局", AutoSize = true };
     private readonly CheckBox _tapeRadar = new() { Text = "高度带显示雷达高度（仅机型支持时；否则显示海拔）", AutoSize = true };
     private readonly NumericUpDown _aoaWarn = new() { Minimum = 5, Maximum = 45, DecimalPlaces = 1, Increment = 0.5m, Width = 80 };
@@ -77,6 +81,8 @@ public sealed class SettingsForm : Form
     public string SaveKey => _saveKey.Text;
     public string CursorHoleKey => _holeKey.Text;
     public bool AimOnRightMouse => _aimRmb.Checked;
+    public bool ConfigDebug => _configDebugBox.Checked;
+    public bool HideWhenInactive => _hideInactive.Checked;
     public bool HideOnGround => _hideGround.Checked;
     public double GroundHideDelayMs => (double)_groundDelay.Value;
     public bool TapeRadarAltitude => _tapeRadar.Checked;
@@ -90,6 +96,7 @@ public sealed class SettingsForm : Form
     public bool OverspeedByMach => _overspeedMachMode.Checked;
     public double EnduranceScale => (double)_endScale.Value;
     public int CursorHoleHalfPx => (int)_hole.Value;
+    public string AirbrakeKey => _airbrakeKey.Text.Trim();
 
     public SettingsForm(HudConfig cfg, bool hudVisible, bool bodyFixedOnly)
     {
@@ -128,7 +135,10 @@ public sealed class SettingsForm : Form
         _exitKey.Text = cfg.ExitKey;
         _saveKey.Text = cfg.SaveKey;
         _holeKey.Text = cfg.CursorHoleKey;
+        _airbrakeKey.Text = cfg.AirbrakeKey;
         _aimRmb.Checked = cfg.AimOnRightMouse;
+        _configDebugBox.Checked = cfg.ConfigDebug;
+        _hideInactive.Checked = cfg.HideWhenInactive;
         _hideGround.Checked = cfg.HideOnGround;
         _groundDelay.Value = (decimal)Math.Clamp(cfg.GroundHideDelayMs, 0, 3000);
         _tapeRadar.Checked = cfg.TapeRadarAltitude;
@@ -190,7 +200,43 @@ public sealed class SettingsForm : Form
         AddRow(new Label { Text = "退出键（默认 F11，连按两次）", AutoSize = true }, _exitKey);
         AddRow(new Label { Text = "保存配置键（默认 F12）", AutoSize = true }, _saveKey);
         AddRow(new Label { Text = "光标洞循环键（默认 CTRL+ALT+H）", AutoSize = true }, _holeKey);
+        AddRow(new Label { Text = "减速板键（仅 A-10 家族用，默认 H）", AutoSize = true }, _airbrakeKey);
+        AddRow(_importWt);
+        _importWt.Click += (_, _) =>
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "选择战雷按键设置文件（controls .blk 导出）",
+                Filter = "战雷按键文件 (*.blk)|*.blk|所有文件 (*.*)|*.*",
+                CheckFileExists = true,
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                var map = WtHud.Input.WtControlsFile.Parse(File.ReadAllText(dlg.FileName));
+                var applied = new List<string>();
+                foreach (var (action, field, label) in WtHud.Input.WtControlsFile.Supported)
+                {
+                    if (!map.TryGetValue(action, out var codes)) continue;
+                    string? binding = WtHud.Input.WtControlsFile.BuildBinding(codes);
+                    if (binding == null) continue;
+                    if (field == "AirbrakeKey") { _airbrakeKey.Text = binding; applied.Add(label + " = " + binding); }
+                    else if (field == "ScoreboardKey") { _scoreKey.Text = binding; applied.Add(label + " = " + binding); }
+                }
+                MessageBox.Show(this,
+                    applied.Count > 0
+                        ? "已导入：" + Environment.NewLine + string.Join(Environment.NewLine, applied)
+                        : "没有在文件里找到可用的按键（该文件可能只导出了部分动作）。",
+                    "导入完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "导入失败：" + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
         AddRow(_aimRmb);
+        AddRow(_configDebugBox);
+        AddRow(_hideInactive);
         AddRow(_hideGround);
         AddRow(new Label { Text = "地面隐藏延迟（毫秒，0=立即）", AutoSize = true }, _groundDelay);
         AddRow(_tapeRadar);
@@ -238,6 +284,9 @@ public sealed class SettingsForm : Form
         CancelButton = cancel;
     }
 }
+
+
+
 
 
 

@@ -26,6 +26,9 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("pitchSign")] public int PitchSign { get; set; }
 
+    /// <summary>Per-vehicle native pitch sign learned automatically (vehicle id -> +/-1).</summary>
+    [JsonPropertyName("pitchSignByVehicle")] public System.Collections.Generic.Dictionary<string, int> PitchSignByVehicle { get; set; } = new();
+
     /// <summary>+1 or -1; flips the bank direction if the ladder rotates the wrong way.</summary>
     [JsonPropertyName("bankSign")] public int BankSign { get; set; } = 1;
 
@@ -89,6 +92,12 @@ public sealed class HudConfig
     /// <summary>Blink the enemy-airfield readout when closer than this many km.</summary>
     [JsonPropertyName("enemyAirfieldAlertKm")] public double EnemyAirfieldAlertKm { get; set; } = 12;
 
+    /// <summary>
+    /// Airbrake key. Used by the A-10 family only: their split-aileron (deceleron) brakes make the
+    /// reported percentage follow the ailerons, so the box follows the key instead.
+    /// </summary>
+    [JsonPropertyName("airbrakeKey")] public string AirbrakeKey { get; set; } = "H";
+
     /// <summary>Stall warning key: records the current AOA as this vehicle''s stall AOA.</summary>
     [JsonPropertyName("stallKey")] public string StallKey { get; set; } = "CTRL+ALT+S";
 
@@ -146,6 +155,12 @@ public sealed class HudConfig
 
     /// <summary>Hide the HUD without quitting (same as F10).</summary>
     [JsonPropertyName("hudVisible")] public bool HudVisible { get; set; } = true;
+
+    /// <summary>Hide the overlay while another window is focused (default true).</summary>
+    [JsonPropertyName("hideWhenInactive")] public bool HideWhenInactive { get; set; } = true;
+
+    /// <summary>Show raw gear/flaps/airbrake values and flags for diagnosis.</summary>
+    [JsonPropertyName("configDebug")] public bool ConfigDebug { get; set; }
 
     /// <summary>How much of the aircraft roll the camera performs (0 = horizon-stabilised chase cam).</summary>
     [JsonPropertyName("rollCoupling")] public double RollCoupling { get; set; }
