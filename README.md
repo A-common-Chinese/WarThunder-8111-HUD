@@ -1,12 +1,14 @@
 ﻿# War Thunder HUD (8111)
 
+**简体中文** | [English](#english)
+
 用官方 `localhost:8111` 接口驱动的**战争雷霆平视显示器（HUD）叠加层**，反作弊安全：**不注入、不读内存、不改文件、不拦截网络、不自动操作**。
 
 A military-style HUD overlay for **War Thunder**, driven entirely by the official local API on
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.6** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.1.7** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -25,6 +27,16 @@ no packet interception, no automation.
 ![HUD 全部要素](docs/screenshots/hud-all-elements.jpg)
 
 ## 特性
+
+### MFD 设置面板（F1）
+
+- 机框与 25 个实体按键为 Blender 建模渲染，按键与屏幕 10 行一一对应：**侧键 = 选择，CONFIRM = 执行**
+- 主菜单 → 模块页（显示/视角/告警/按键/语言/诊断）→ 二级页（数值输入 / 键位捕获 / 二次确认）
+- 数值可直接键入；键位**按住组合键实时显示**（Ctrl → `CTRL`，再按 Q → `CTRL+Q`）
+- 外板 / 屏幕 / 告警可分别设中英文；告警框宽度按当前语言的文本实测宽度自动重算
+- 诊断页显示 `/state`、`/indicators`、`/map_obj`、`/map_info` 的实时延迟与状态，并可检查 GitHub 最新版本
+- F1 可开关面板；面板按屏幕尺寸自适应缩放；机框轮廓做了窗口裁剪，无黑底
+
 
 ### 姿态与基准符号
 
@@ -252,12 +264,221 @@ docs/          设计文档、接口调研、视角实验
 
 *本项目与 Gaijin Entertainment 无关。War Thunder 是 Gaijin Entertainment 的商标。*
 
+---
 
+<a id="english"></a>
 
+# English
 
+A military-style HUD overlay for **War Thunder**, driven entirely by the official local API on
+`http://127.0.0.1:8111`.
 
+**Read-only by design**: no injection, no memory reads, no file modification, no packet
+interception, no automation. It never draws enemy positions (no ESP).
 
+Current version **v0.1.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
+## Screenshots
 
+| Third-person HUD | Close view |
+|---|---|
+| ![Third-person HUD](docs/screenshots/hud-01-third-person.jpg) | ![Close view](docs/screenshots/hud-02-close-view.jpg) |
 
+![All elements](docs/screenshots/hud-all-elements.jpg)
 
+## Features
+
+### MFD settings panel (F1)
+
+- Bezel and 25 physical buttons rendered from a **Blender model**, mapped 1:1 to the ten screen
+  rows: **side key = select, CONFIRM = apply**
+- Three levels: main menu → module page (Display / Camera / Alerts / Keys / Language / DIAG) →
+  second-level page (numeric entry / key capture / confirmation)
+- Numbers can be typed directly; key bindings are captured **live while the combo is held**
+  (hold `Ctrl` → `CTRL`, then press `Q` → `CTRL+Q`, release to freeze, press again to restart)
+- Bezel text, screen text and HUD alerts each have their own Chinese/English setting;
+  alert box widths are recomputed from the measured text width of the active language
+- DIAG page shows live latency/validity of `/state`, `/indicators`, `/map_obj`, `/map_info`
+  and can check the latest GitHub release
+- F1 toggles the panel; it scales to the screen and the window region is clipped to the bezel
+  silhouette (no black box)
+
+### Attitude symbols
+
+- Pitch ladder, horizon line and bank scale (ladder stays level in third-person view)
+- Bank pointer showing the roll angle and `+` / `-` (belly down / up)
+- Flight path marker (FPM) with adjustable trim
+
+### Data tapes
+
+| Position | Content |
+|---|---|
+| Left (speed) | IAS readout, Mach `M`, longitudinal `ACC` + trend bar |
+| Right (altitude) | Barometric altitude `H`, `V/S` + trend bar |
+| Top | Heading tape scrolling with the heading |
+
+### Data block
+
+| Row | Content |
+|---|---|
+| `G` | Normal load factor (colour coded) |
+| `AOA` | Angle of attack |
+| `FUEL` | Remaining endurance `mm:ss` |
+| `ALT` | Barometric altitude |
+| `GRID` | Map grid cell (e.g. `F2`) |
+
+`FUEL` is "how long you can still fly at the current burn rate", estimated over a 12 s window and
+scalable with a calibration factor.
+
+### Configuration hints (gear / flaps / airbrake)
+
+Motion states blink amber (`GEAR DOWN`, `FLAPS DOWN`, `AIRBRAKE OUT`) and settle to a steady
+confirmation (`STB`, `FLAPS 30`, `AIRBRAKE`). The A-10 family uses deceleron brakes, so their
+airbrake indication is driven by the key instead of the noisy telemetry value.
+
+### Navigation and alerts
+
+- `GRID` cell, nearest friendly/enemy airfield bearing and distance (`AF ↗ 4.2km`)
+- Blinking red `RETURN ↑` near the map edge; blinking `AF!` box inside the enemy-airfield radius
+- Terrain alerts: `SINK RATE`, upgraded to `PULL UP` when the aircraft exposes radar altitude
+- Overspeed: red speed readout plus blinking `REDUCE SPEED` boxes; threshold in IAS or Mach,
+  using the aircraft `vne` when available
+- Stall: blinking `STALL` (amber = pre-stall, red = stall), using a per-aircraft calibrated
+  angle first, then the cockpit indexer, then a generic threshold
+- `AOA`, `BINGO`, `RETURN` alerts
+- Only own aircraft and airfields are read; enemy units are never drawn
+
+### Layout
+
+- `Z` aiming layout: tapes move outboard, ladder drops, readouts sink, heading tape moves up,
+  bank arc grows — 0.28 s smooth transition
+- Cockpit view hides the HUD (nose view optional); view changes are counted with `V`
+- HUD hides while the map or scoreboard is held
+- Adjustable cursor hole (`Ctrl+Alt+H` cycles sizes) with a cursor watchdog
+
+## Requirements
+
+1. Windows 10/11 with a DX11 GPU
+2. Game display mode must be **Fullscreen Window (borderless)** — exclusive fullscreen cannot be
+   overlaid
+3. The game must be running (the 8111 service starts with the game)
+4. Custom battles / test flights need **"Allow web UI"** enabled in the custom settings
+
+## Install
+
+Download `WtHud.exe` (or the zip) from [Releases](../../releases) and unpack it into **any standalone
+folder** (not the game directory — the launcher deletes third-party executables). Run it; no .NET
+installation is required.
+
+- First run writes `hud-config.json` next to the exe
+- Press `F11` twice to exit (a single press is ignored to avoid accidents)
+- Press `F1` to open the settings panel
+
+## Hotkeys
+
+Everything except the three fixed combinations can be rebound in the F1 panel (combos such as
+`CTRL+N`, `SHIFT+TAB`, `ALT+F1` are supported).
+
+### Fixed
+
+| Hotkey | Action |
+|---|---|
+| `Ctrl+Alt+↑ / ↓` | Move the HUD up/down by 0.5° |
+| `Ctrl+Alt+PgUp / PgDn` | Vertical FoV (angular scale) ∓1° |
+| `Ctrl+Alt+R` | Camera roll coupling 0/1 |
+
+### Rebindable (default in brackets)
+
+| Function | Default |
+|---|---|
+| Show / hide HUD | `F10` |
+| Body-fixed mode | `F9` |
+| Exit (press twice) | `F11` |
+| Settings panel | `F1` |
+| Pitch zero calibration | `F7` |
+| Flip bank direction | `F8` |
+| Save config | `CTRL+F12` |
+| Cycle cursor hole size | `CTRL+ALT+H` |
+| View counter | `V` |
+| Aiming layout | `Z` |
+| Map (hold to hide HUD) | `M` |
+| Scoreboard (toggle hide) | `CTRL+N` |
+| Hold to hide HUD | `U` |
+| Reset state | `F5` |
+
+Keys are either polled passively or registered as system hotkeys; polled keys never swallow game
+input, and busy hotkeys are reported in the log.
+
+## Configuration (`hud-config.json`)
+
+See the table in the Chinese section above for every field; the file is written next to the
+executable and can also be edited from the MFD panel.
+
+## Build from source
+
+Requires the **.NET 8 SDK**:
+
+```powershell
+cd src/WarThunderHud
+./build.ps1          # build
+./run-hud.ps1        # run
+./run-hud.ps1 -Demo  # preview the HUD without the game
+```
+
+Single-file publish:
+
+```powershell
+dotnet publish src/WarThunderHud/WarThunderHud.csproj -c Release -r win-x64 `
+  --self-contained true -p:PublishSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true -o dist
+```
+
+Other CLI modes: `overlay`, `probe`, `selftest`, `fusiontest`, `preview out.png`,
+`replay <file.jsonl>`, `dumpgeo`, plus `mfd` (standalone panel) and `mapprobe` (map diagnostics).
+
+## Data sources and limitations
+
+| Data | Source | Notes |
+|---|---|---|
+| Speed / altitude / Mach / G / AoA / AoS / V-S / fuel / flaps / gear / airbrake | `/state` | Available on all aircraft |
+| Heading / native attitude / ammo | `/indicators` | Only on some aircraft |
+| Map objects, chat, kill log | `/map_obj.json` etc. | **Not used** (see compliance) |
+
+Known limitations:
+
+- **Top-tier jets expose no native attitude**: pitch and bank are synthesised from flight-path
+  angle + AoA and turn rate — fine in steady flight, less accurate in hard manoeuvres (marked
+  `AHRS EST`)
+- **A few aircraft (e.g. Rafale C) have no heading at all**: bank falls back to roll-rate
+  integration, navigation uses course over ground derived from map positions
+- Native attitude is the cockpit gyro reading, passed through as-is on `AHRS GAME` aircraft
+- The API updates at roughly 17–25 Hz; extrapolation hides part of the stepping but some lag
+  remains
+- Endurance, flap position and similar values are estimates and may differ from the in-game
+  readouts (endurance has a calibration factor)
+
+## Compliance (important)
+
+- The tool **only reads** the game's own local HTTP API. It does not modify the client, inject
+  into the process, read memory or alter rendering
+- **No enemy positions, no ESP.** `/map_obj.json` is never used to draw enemy units
+- Gaijin's forum position is that localhost-driven overlays are generally tolerated, but no
+  third-party tool is officially supported — **use at your own risk**
+- Follow the Gaijin Terms of Service and each server's rules; you are responsible for the
+  consequences of using this tool
+
+## License
+
+**[GNU AGPL-3.0](LICENSE)**
+
+- ✅ Free to use, modify and redistribute
+- ✅ Forking and publishing your own version is allowed
+- ⚠️ Derivative works must also be released under AGPL-3.0
+- ⚠️ If you expose a modified version as a network service, you must publish the source (AGPL §13)
+
+In short: **using it is fine; taking it, modifying it and shipping it closed-source is not.**
+For commercial licensing (waiving the above), contact the author.
+
+---
+
+*Not affiliated with Gaijin Entertainment. War Thunder is a trademark of Gaijin Entertainment.*
