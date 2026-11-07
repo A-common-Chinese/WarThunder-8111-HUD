@@ -1,0 +1,286 @@
+{
+  "_default": {
+    "zh": "暂无说明。可在 help-desc.json 中补充。",
+    "en": "No description yet. Add one in help-desc.json."
+  },
+  "L0": {
+    "zh": "主菜单：用两侧按键选择模块，CONFIRM 进入；PAGE 在本模块内翻页。",
+    "en": "Main menu: pick a module with the side keys, CONFIRM enters it; PAGE flips within a module."
+  },
+  "page.display": {
+    "zh": "显示设置：HUD 总开关、后台隐藏、视场角、整体偏移、俯仰零点、光标洞、俯仰梯与飞行矢量等。",
+    "en": "Display: HUD master switch, hide when background, FoV, vertical offset, pitch zero, cursor hole, ladder and FPM."
+  },
+  "page.camera": {
+    "zh": "视角与姿态：俯仰零点校准、俯仰梯显示、飞行矢量标记、坡度方向与微调、相机滚转耦合。",
+    "en": "Camera and attitude: pitch zero calibration, ladder, flight path marker, bank direction/trim, camera roll coupling."
+  },
+  "page.alerts": {
+    "zh": "告警设置：失速迎角、迎角告警阈值、极速判定方式与阈值、低油量时间、机场/边界告警距离。",
+    "en": "Alerts: stall AoA, AoA warning, overspeed mode and limits, bingo time, airfield and map-edge warning ranges."
+  },
+  "page.keys": {
+    "zh": "按键设置：显示隐藏、视角、地图、保存、光标洞等按键；选中后按 CONFIRM 进入捕获页重新绑定。",
+    "en": "Keys: show/hide, view, map, save, cursor hole. Press CONFIRM on a row to capture a new combination."
+  },
+  "page.panel": {
+    "zh": "面板设置：文本颜色、高亮颜色（各 5 个预设）、拟真按键操作（开启后只能用实体按键）。",
+    "en": "Panel: text colour, accent colour (five presets each), key-only mode."
+  },
+  "page.language": {
+    "zh": "语言设置：外板丝印 / 屏幕内容 / HUD 告警三处可分别选择中英文。",
+    "en": "Language: bezel silkscreen, screen text and HUD alerts can each be Chinese or English."
+  },
+  "page.diag": {
+    "zh": "诊断信息：各接口状态与延迟、机场数量、配置调试、更新检查与复制诊断文本。",
+    "en": "Diagnostics: endpoint status and latency, airfield count, config debug, update check and copy report."
+  },
+  "lang.panel": {
+    "zh": "外板语言：机框丝印按键文字使用的语言。",
+    "en": "Bezel language: the silk-screen labels printed on the physical buttons."
+  },
+  "lang.screen": {
+    "zh": "屏幕语言：屏幕里列表、数值与提示文字使用的语言。",
+    "en": "Screen language: every list, value and hint drawn on the MFD screen."
+  },
+  "lang.alerts": {
+    "zh": "告警语言：HUD 上 STALL / PULL UP / 返回战区 等告警文字使用的语言。",
+    "en": "Alert language: HUD texts such as STALL / PULL UP / RETURN."
+  },
+  "lang.follow": {
+    "zh": "跟随系统：开启后按 Windows 显示语言自动选择。",
+    "en": "Follow system: pick the language from the Windows display language."
+  },
+  "lang.reset": {
+    "zh": "恢复默认语言：外板英文、屏幕中文、告警英文。需要二次确认。",
+    "en": "Reset languages: bezel English, screen Chinese, alerts English. Asks for confirmation."
+  },
+  "row.accentColor": {
+    "zh": "高亮颜色：选中行、数值、发光条与按键描边使用的颜色。",
+    "en": "Accent colour: selected rows, values, glow strips and button outlines."
+  },
+  "row.inkColor": {
+    "zh": "文本颜色：屏幕正文（行名、提示、普通数值）使用的颜色。",
+    "en": "Text colour: normal screen text (row names, hints, plain values)."
+  },
+  "row.realisticKeys": {
+    "zh": "拟真按键操作：开启后屏幕行不响应鼠标，只能用两侧实体按键与方向键。",
+    "en": "Key-only mode: screen rows ignore the mouse; only the physical keys and arrow keys work."
+  },
+  "row.showHud": {
+    "zh": "显示 HUD：叠加层总开关，关闭后仍运行但不再绘制。",
+    "en": "Show HUD: master switch for the overlay; it keeps running but draws nothing when off."
+  },
+  "row.hideBg": {
+    "zh": "后台隐藏：游戏不在前台时自动隐藏叠加层。",
+    "en": "Hide in background: hide the overlay while the game is not the foreground window."
+  },
+  "row.fov": {
+    "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",
+    "en": "Field of view: vertical FoV used to convert degrees into screen pixels."
+  },
+  "row.yoff": {
+    "zh": "垂直偏移：整个 HUD 上下移动的度数，用来对齐视角。",
+    "en": "Vertical offset: moves the whole HUD up or down to match your view."
+  },
+  "row.pitchzero": {
+    "zh": "俯仰零点：校准 HUD 俯仰线与真实地平线重合。",
+    "en": "Pitch zero: calibrates the HUD pitch line onto the real horizon."
+  },
+  "row.hole": {
+    "zh": "光标洞半径：屏幕中心透明圆孔半径，越小越不遮挡飞行矢量。",
+    "en": "Cursor hole radius: transparent circle at screen centre; smaller hides less of the FPM."
+  },
+  "row.tapeRadar": {
+    "zh": "雷达高度带：机型支持时高度带优先显示雷达高度。",
+    "en": "Radar altitude tape: prefer radar altitude on aircraft that provide it."
+  },
+  "row.ladder": {
+    "zh": "俯仰梯：显示/隐藏俯仰刻度梯与地平线。",
+    "en": "Pitch ladder: show or hide the pitch ladder and horizon line."
+  },
+  "row.fpm": {
+    "zh": "飞行矢量：显示飞行轨迹标记（FPM）。",
+    "en": "Flight path marker: show the aircraft velocity vector symbol."
+  },
+  "row.extrapolate": {
+    "zh": "数据外推：在低频接口上做预测插值，画面更顺滑。",
+    "en": "Extrapolation: predict between the low-rate API samples for smoother motion."
+  },
+  "row.aimRmb": {
+    "zh": "右键瞄准布局：按住右键时数据带外推、俯仰梯下移。",
+    "en": "Right-button aiming layout: tapes move outboard and the ladder drops while held."
+  },
+  "row.rollCouple": {
+    "zh": "相机滚转耦合：补偿第三人称相机旋转。",
+    "en": "Camera roll coupling: compensate the third-person camera rotation."
+  },
+  "row.bankSign": {
+    "zh": "坡度方向：翻转坡度指针左右方向。",
+    "en": "Bank direction: flip the bank pointer left/right."
+  },
+  "row.bankTrim": {
+    "zh": "坡度微调：修正坡度读数固定偏差。",
+    "en": "Bank trim: correct a constant bank offset."
+  },
+  "row.fpmTrim": {
+    "zh": "飞行矢量纵向偏移：微调 FPM 垂直位置。",
+    "en": "FPM vertical trim: nudge the flight path marker up or down."
+  },
+  "row.pitchSign": {
+    "zh": "俯仰符号：原生俯仰数据正负方向，可手动强制。",
+    "en": "Pitch sign: force the sign of the native pitch data when auto-detection fails."
+  },
+  "row.hideCockpit": {
+    "zh": "座舱隐藏：进入座舱视角时自动隐藏 HUD。",
+    "en": "Hide in cockpit: hide the HUD in the cockpit view."
+  },
+  "row.hideNose": {
+    "zh": "机头视角隐藏：在机头/瞄准视角隐藏 HUD。",
+    "en": "Hide in nose view: hide the HUD in the nose/gunsight view."
+  },
+  "row.hideGround": {
+    "zh": "地面隐藏：停在地面时隐藏姿态类符号。",
+    "en": "Hide on ground: hide attitude symbols while parked."
+  },
+  "row.groundSpeed": {
+    "zh": "地面判定速度：低于该地速视为在地面。",
+    "en": "Ground speed threshold: below this ground speed the aircraft counts as parked."
+  },
+  "row.groundDelay": {
+    "zh": "地面隐藏延迟：达到速度后延迟多久显示。",
+    "en": "Ground hide delay: wait this long after gaining speed before showing."
+  },
+  "row.mapFlip": {
+    "zh": "地图 Y 轴翻转：纠正地图坐标系方向。",
+    "en": "Map Y flip: correct the map coordinate orientation."
+  },
+  "row.edgeMargin": {
+    "zh": "边界告警范围：距地图边缘多近开始闪烁 RETURN。",
+    "en": "Edge warning range: how close to the map edge RETURN starts blinking."
+  },
+  "row.stallAoa": {
+    "zh": "失速迎角：本机型临界迎角，超过触发 STALL。",
+    "en": "Stall AoA: critical angle for this aircraft; exceeding it triggers STALL."
+  },
+  "row.stallMem": {
+    "zh": "失速记忆：已记录的每机型临界迎角数量。",
+    "en": "Stall memory: number of per-aircraft calibrated stall angles stored."
+  },
+  "row.aoaWarn": {
+    "zh": "迎角告警：AOA 超过该角度时变色提示。",
+    "en": "AoA warning: highlight the AoA readout above this angle."
+  },
+  "row.bingo": {
+    "zh": "低油量时间：剩余续航低于该秒数时显示 BINGO。",
+    "en": "Bingo time: remaining endurance below this value raises BINGO."
+  },
+  "row.endurance": {
+    "zh": "续航标定：把估算续航对齐游戏读数。",
+    "en": "Endurance scale: align the estimated endurance with the in-game readout."
+  },
+  "row.afAlert": {
+    "zh": "机场告警距离：距敌方机场小于该距离时 AF! 闪烁。",
+    "en": "Airfield alert range: below this distance to an enemy airfield AF! blinks."
+  },
+  "row.overspeedMode": {
+    "zh": "超速判定方式：按 IAS 或按 Mach。",
+    "en": "Overspeed basis: use IAS or Mach."
+  },
+  "row.overspeedIas": {
+    "zh": "超速阈值（IAS）：超过后速度数字变红。",
+    "en": "Overspeed limit (IAS): the speed readout turns red above this value."
+  },
+  "row.overspeedMach": {
+    "zh": "超速阈值（Mach）：按马赫判定时的阈值。",
+    "en": "Overspeed limit (Mach): used when the Mach basis is selected."
+  },
+  "row.pitchMem": {
+    "zh": "俯仰记忆：已记录的每机型俯仰符号数量。",
+    "en": "Pitch memory: number of per-aircraft pitch signs stored."
+  },
+  "row.keyShow": {
+    "zh": "显示/隐藏 HUD 的按键（默认 F10）。",
+    "en": "Show/hide HUD key (default F10)."
+  },
+  "row.keyView": {
+    "zh": "视角循环计数按键（默认 V）。",
+    "en": "View-cycle counter key (default V)."
+  },
+  "row.keyZoom": {
+    "zh": "瞄准布局切换键（默认 Z）。",
+    "en": "Aiming layout key (default Z)."
+  },
+  "row.keyMap": {
+    "zh": "按住显示地图的按键（默认 M）。",
+    "en": "Hold-to-show-map key (default M)."
+  },
+  "row.keyScore": {
+    "zh": "计分板按键（默认 TAB）。",
+    "en": "Scoreboard key (default TAB)."
+  },
+  "row.keyBrake": {
+    "zh": "减速板指示键（默认 B）。",
+    "en": "Airbrake indication key (default B)."
+  },
+  "row.keySave": {
+    "zh": "保存配置键（默认 CTRL+F12）。",
+    "en": "Save configuration key (default CTRL+F12)."
+  },
+  "row.keyHole": {
+    "zh": "光标洞尺寸循环键（默认 CTRL+ALT+H）。",
+    "en": "Cursor hole size cycle key (default CTRL+ALT+H)."
+  },
+  "row.keySettings": {
+    "zh": "打开设置面板的键（默认 F1）。",
+    "en": "Open this panel key (default F1)."
+  },
+  "row.keyExit": {
+    "zh": "退出程序键（默认 F11，连按两次）。",
+    "en": "Exit the program key (default F11, press twice)."
+  },
+  "row.source": {
+    "zh": "数据来源：原生姿态或合成姿态的当前判定。",
+    "en": "Data source: whether native or synthesised attitude is in use."
+  },
+  "row.configDebug": {
+    "zh": "配置调试：显示配置来源与热键状态。",
+    "en": "Config debug: show the config source and hotkey state on screen."
+  },
+  "row.dupKeys": {
+    "zh": "重复键位检查：列出被多个功能占用的按键。",
+    "en": "Duplicate keys: list keys claimed by more than one function."
+  },
+  "row.copyDiag": {
+    "zh": "复制诊断信息：把诊断内容复制到剪贴板。",
+    "en": "Copy diagnostics: copy the current report to the clipboard."
+  },
+  "row.diagState": {
+    "zh": "接口 /state：飞行状态数据的延迟与有效性。",
+    "en": "Endpoint /state: latency and validity of the flight state feed."
+  },
+  "row.diagInd": {
+    "zh": "接口 /indicators：航向、姿态、弹药等数据状态。",
+    "en": "Endpoint /indicators: heading, native attitude and ammo availability."
+  },
+  "row.diagMap": {
+    "zh": "接口 /map_obj：字节数与机场数量，排查机场指示消失。",
+    "en": "Endpoint /map_obj: payload bytes and airfield count."
+  },
+  "row.diagInfo": {
+    "zh": "接口 /map_info：地图基本信息是否可用。",
+    "en": "Endpoint /map_info: whether the map metadata is available."
+  },
+  "row.update": {
+    "zh": "更新状态：检查结果显示在这里。",
+    "en": "Update status: the result of the last check."
+  },
+  "row.checkUpdate": {
+    "zh": "检查更新：查询 GitHub 最新版本，只提示不下载。",
+    "en": "Check for updates: read the latest GitHub release version; nothing is downloaded."
+  },
+  "row.version": {
+    "zh": "当前程序版本号。",
+    "en": "Current program version."
+  }
+}
