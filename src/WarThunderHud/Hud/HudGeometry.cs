@@ -252,7 +252,9 @@ public sealed class HudGeometry
         if (_opt.BodyFixedOnly) attAlpha = 0.0;
 
         if (_opt.ShowPitchLadder && attAlpha > 0.05) AddPitchLadder(prims, att, cx, cyLadder, pxDeg, line, font, attAlpha);
-        if (_opt.ShowHorizon && attAlpha > 0.05) AddHorizon(prims, att, cx, cyLadder, pxDeg, line, attAlpha);
+        // 地平线与俯仰梯同开关：关掉俯仰梯时一起隐藏，避免只剩一条孤线
+        if (_opt.ShowPitchLadder && _opt.ShowHorizon && attAlpha > 0.05)
+            AddHorizon(prims, att, cx, cyLadder, pxDeg, line, attAlpha);
         if (_opt.ShowBankScale && attAlpha > 0.05) AddBankScale(prims, att, cx, cy, pxDeg, line, fontSmall, attAlpha);
         if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
         if (_opt.ShowSpeedTape) AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
