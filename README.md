@@ -182,6 +182,8 @@ no packet interception, no automation.
 | `overspeedByMach` / `overspeedMach` | 改用马赫判定 / 马赫阈值 | false / 1.80 |
 | `stallKey` / `stallAoaDeg` / `stallAoaByVehicle` | 失速校准键 / 通用阈值 / 每机型校准表 | CTRL+ALT+S / 22 / {} |
 | `enemyAirfieldAlertKm` | 敌机场告警距离（km，0=关闭） | 12 |
+| `friendlySpaaKm` | 友军防空（SPAA）显示距离（km，0=关闭） | 60 |
+| `rollCouplingMode` | 坡度耦合方式：`auto` 自动 / `on` 开 / `off` 关 | auto |
 | `pitchSign` | 原生俯仰符号（0=自动判定，±1=强制） | 0 |
 | `pitchSignByVehicle` | 自动学习到的每机型俯仰符号表 | `{}` |
 | `aoaWarnDeg` | AOA 告警阈值（度） | 18 |
