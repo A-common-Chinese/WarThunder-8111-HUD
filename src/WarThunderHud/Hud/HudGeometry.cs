@@ -4,6 +4,8 @@
 
 using WtHud.Telemetry;
 
+using WtHud.UI;
+
 namespace WtHud.Hud;
 
 public sealed class HudOptions
@@ -49,6 +51,12 @@ public sealed class HudOptions
     public string FlapsTransitText { get; set; } = "";
 
     /// <summary>True while the airbrake is moving.</summary>
+    /// <summary>Preview helper: render only the alert boxes (STALL/AOA/BINGO/REDUCE SPEED/PULL UP).</summary>
+    public bool OnlyAlerts { get; set; }
+
+    /// <summary>Preview helper: render only the GEAR/FLAPS/AIRBRAKE boxes.</summary>
+    public bool OnlyConfigBoxes { get; set; }
+
     /// <summary>A-10 family: split-aileron deceleron brake, so the box must not blink.</summary>
     public bool DeceleronAirbrake { get; set; }
 
@@ -220,6 +228,21 @@ public sealed class HudGeometry
         double line = Math.Max(1.0, 0.050 * pxDeg);
         double font = 0.72 * pxDeg;
         double fontSmall = 0.55 * pxDeg;
+
+        if (_opt.OnlyAlerts)
+        {
+            AddGearFlaps(prims, cx, cy, pxDeg, font);
+            AddTerrainAlerts(prims, cx, cy, pxDeg, font);
+            AddStallAlert(prims, cx, cy, pxDeg, font);
+            AddOverspeedAlert(prims, cx, cy, pxDeg, font);
+            return prims;
+        }
+
+        if (_opt.OnlyConfigBoxes)
+        {
+            AddGearFlaps(prims, cx, cy, pxDeg, font);
+            return prims;
+        }
 
         double attAlpha = att.Source == AttitudeSource.Unavailable ? 0.0 : Math.Clamp(att.Confidence, 0, 1);
         if (_opt.BodyFixedOnly) attAlpha = 0.0;
@@ -632,7 +655,7 @@ public sealed class HudGeometry
                         : g <= -2.0 ? _opt.WarnColor
                         : col;
         Row("G", s.NyG.ToString("0.0"), gColor);
-        Row("AOA", s.AoaDeg.ToString("0.0"), col);
+        Row(L10n.Get(LangScope.Alerts, "aoa"), s.AoaDeg.ToString("0.0"), col);
         // Endurance instead of raw fuel mass: estimated from the measured fuel-flow rate.
         if (_opt.EnduranceSeconds >= 0)
         {
@@ -731,9 +754,9 @@ public sealed class HudGeometry
 
         // ---- right column: BINGO (row 1) / AOA (row 2) ----
         if (_opt.BingoFuelAlert && phaseOn)
-            AddBoxedTextFixed(prims, rightX, gearY, boxWidthDeg, "BINGO", font, _opt.WarnColor, lineWidth, pxDeg);
+            AddBoxedTextFixed(prims, rightX, gearY, BoxWidthDeg(L10n.Get(LangScope.Alerts, "bingo"), font, pxDeg, boxWidthDeg), L10n.Get(LangScope.Alerts, "bingo"), font, _opt.WarnColor, lineWidth, pxDeg);
         if (_opt.AoaWarnAlert && phaseOn)
-            AddBoxedTextFixed(prims, rightX, flapsY, boxWidthDeg, "AOA", font, _opt.DangerColor, lineWidth, pxDeg);
+            AddBoxedTextFixed(prims, rightX, flapsY, BoxWidthDeg(L10n.Get(LangScope.Alerts, "aoa"), font, pxDeg, boxWidthDeg), L10n.Get(LangScope.Alerts, "aoa"), font, _opt.DangerColor, lineWidth, pxDeg);
     }
 
     private void AddTerrainAlerts(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
@@ -746,12 +769,12 @@ public sealed class HudGeometry
         if (_opt.PullUpAlert)
         {
             // Same height as the ACC / V/S readouts, centred between them.
-            AddBoxedText(prims, cx, cy + 2.6 * pxDeg, "PULL UP", font, HudAlign.Center,
+            AddBoxedText(prims, cx, cy + 2.6 * pxDeg, L10n.Get(LangScope.Alerts, "pullup"), font, HudAlign.Center,
                 _opt.DangerColor, lineWidth, pxDeg);
         }
         if (_opt.SinkRateAlert)
         {
-            AddBoxedText(prims, cx, cy + 4.8 * pxDeg, "SINK RATE", font, HudAlign.Center,
+            AddBoxedText(prims, cx, cy + 4.8 * pxDeg, L10n.Get(LangScope.Alerts, "sinkrate"), font, HudAlign.Center,
                 _opt.WarnColor, lineWidth, pxDeg);
         }
     }
@@ -763,15 +786,16 @@ public sealed class HudGeometry
         if (!(_opt.ForceTransitVisible || (Environment.TickCount64 / 220) % 2 == 0)) return;
 
         double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
-        const double boxWidthDeg = 5.4;
+        double boxWidthDeg = BoxWidthDeg(L10n.Get(LangScope.Alerts, "reducespeed"), font * 0.92, pxDeg, 5.4);
         double y = cy - 1.5 * pxDeg;                 // one row above the REDUCE SPEED boxes
         var col = _opt.StallWarnLevel >= 2 ? _opt.DangerColor : _opt.WarnColor;
 
         // Same (animating) tape offset as the readouts, so it stays aligned in the aiming layout.
         double tapeLeft = cx - _tapeOffsetDeg * pxDeg;
         double tapeRight = cx + _tapeOffsetDeg * pxDeg;
-        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, boxWidthDeg, "STALL", font * 0.92, col, lineWidth, pxDeg);
-        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - boxWidthDeg * pxDeg, y, boxWidthDeg, "STALL",
+        var stallW = BoxWidthDeg(L10n.Get(LangScope.Alerts, "stall"), font * 0.92, pxDeg, boxWidthDeg);
+        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, stallW, L10n.Get(LangScope.Alerts, "stall"), font * 0.92, col, lineWidth, pxDeg);
+        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - stallW * pxDeg, y, stallW, L10n.Get(LangScope.Alerts, "stall"),
             font * 0.92, col, lineWidth, pxDeg);
     }
 
@@ -783,16 +807,17 @@ public sealed class HudGeometry
         if (!(_opt.ForceTransitVisible || (Environment.TickCount64 / 250) % 2 == 0)) return;
 
         double lineWidth = Math.Max(1.0, 0.05 * pxDeg);
-        const double boxWidthDeg = 5.4;
+        double boxWidthDeg = BoxWidthDeg(L10n.Get(LangScope.Alerts, "reducespeed"), font * 0.92, pxDeg, 5.4);
         double y = cy + 0.9 * pxDeg;
 
         // The readouts sit 2 deg inside the tapes, so the boxes use the same (animating) tape
         // offset - otherwise they would drift away from ACC / V-S when the aiming layout is on.
         double tapeLeft = cx - _tapeOffsetDeg * pxDeg;
         double tapeRight = cx + _tapeOffsetDeg * pxDeg;
-        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, boxWidthDeg, "REDUCE SPEED", font * 0.92,
+        var rsW = BoxWidthDeg(L10n.Get(LangScope.Alerts, "reducespeed"), font * 0.92, pxDeg, boxWidthDeg);
+        AddBoxedTextFixed(prims, tapeLeft + 2.0 * pxDeg, y, rsW, L10n.Get(LangScope.Alerts, "reducespeed"), font * 0.92,
             _opt.DangerColor, lineWidth, pxDeg);
-        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - boxWidthDeg * pxDeg, y, boxWidthDeg, "REDUCE SPEED",
+        AddBoxedTextFixed(prims, tapeRight - 2.0 * pxDeg - rsW * pxDeg, y, rsW, L10n.Get(LangScope.Alerts, "reducespeed"),
             font * 0.92, _opt.DangerColor, lineWidth, pxDeg);
     }
 
@@ -842,7 +867,7 @@ public sealed class HudGeometry
         {
             double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
             AddBoxedText(prims, cx, cy + 6.5 * pxDeg,
-                "RETURN " + _opt.EdgeArrow, font, HudAlign.Center, _opt.DangerColor, lineWidth, pxDeg);
+                L10n.Get(LangScope.Alerts, "return") + " " + _opt.EdgeArrow, font, HudAlign.Center, _opt.DangerColor, lineWidth, pxDeg);
         }
     }
 
@@ -865,6 +890,17 @@ public sealed class HudGeometry
     // ------------------------------------------------------------------ helpers
 
     private static double SmoothStep(double t) => t * t * (3 - 2 * t);
+
+    /// <summary>
+    /// Box width in degrees, sized to the given text so a longer/shorter translation still fits.
+    /// 0.62 * fontSize per glyph is a good average for the HUD's monospace-ish font.
+    /// </summary>
+    private static double BoxWidthDeg(string text, double fontSize, double pxDeg, double minimum)
+    {
+        var chars = Math.Max(3, text.Length);
+        var widthPx = chars * fontSize * 0.62 + fontSize * 1.1;
+        return Math.Max(minimum, widthPx / Math.Max(1.0, pxDeg));
+    }
 
     private static HudColor Fade(HudColor c, double a) =>
         new(c.R, c.G, c.B, (byte)Math.Clamp((int)(c.A * Math.Clamp(a, 0, 1)), 0, 255));
@@ -953,6 +989,13 @@ public sealed class HudGeometry
         _ = pxDeg;
     }
 }
+
+
+
+
+
+
+
 
 
 

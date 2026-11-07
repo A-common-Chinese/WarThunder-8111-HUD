@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -33,6 +33,7 @@ public sealed class MapData : IDisposable
     public double? CourseDeg { get; private set; }
 
     private readonly Queue<(double T, double X, double Y)> _track = new();
+    private DateTime _lastGoodMap = DateTime.MinValue;   // 上次拿到非空 map_obj 的时间
     private DateTime _lastSample = DateTime.MinValue;
 
     /// <summary>Airfields on this map (friendly + enemy), static positions.</summary>
@@ -41,7 +42,17 @@ public sealed class MapData : IDisposable
     /// <summary>Playable map size in metres (x, y).</summary>
     public (double X, double Y) MapSizeM { get; private set; }
 
+    /// <summary>Size of the last /map_obj.json payload, for diagnostics.</summary>
+    public int RawBytes { get; private set; }
+
+    /// <summary>Last polling exception text, for diagnostics.</summary>
+    public string LastError { get; private set; } = "";
+
     /// <summary>Grid geometry from /map_info.json: origin and cell size in metres.</summary>
+
+    /// <summary>Number of parsed airfields in the last non-empty payload.</summary>
+    public int AirfieldCount => Airfields.Count;
+
     public (double X, double Y) GridZeroM { get; private set; }
     public (double X, double Y) GridStepM { get; private set; } = (5500, 5500);
 
@@ -78,8 +89,9 @@ public sealed class MapData : IDisposable
                 // Grid geometry changes only between maps: refresh it every 4th cycle.
                 if (++_infoTick >= 4) { _infoTick = 0; await PollInfoAsync(ct).ConfigureAwait(false); }
             }
-            catch
+            catch (Exception ex)
             {
+                LastError = ex.GetType().Name + ": " + ex.Message;
                 // The API disappears when the game closes or changes scene; keep polling quietly.
             }
 
@@ -91,6 +103,13 @@ public sealed class MapData : IDisposable
     private async Task PollObjectsAsync(CancellationToken ct)
     {
         string json = await _http.GetStringAsync(ObjUrl, ct).ConfigureAwait(false);
+        RawBytes = json.Length;
+
+        // The game legitimately answers 200 with an empty body when it has no map data for the
+        // current battle (some modes never expose it). Parsing that would throw and take the
+        // grid poll down with it, so treat "no tokens" as "no data this cycle".
+        if (string.IsNullOrWhiteSpace(json)) return;
+
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
 
@@ -127,6 +146,13 @@ public sealed class MapData : IDisposable
             }
             fields.Add(new MapPoint(mx, my, friendly, heading));
         }
+
+        // The API occasionally returns an empty body for a frame or two (scene load, map redraw).
+        // Keep the previous airfield table briefly so the navigation readout does not flicker out.
+        if (fields.Count == 0 && Airfields.Count > 0 && (DateTime.UtcNow - _lastGoodMap).TotalSeconds < 5.0)
+            return;
+
+        if (fields.Count > 0) _lastGoodMap = DateTime.UtcNow;
 
         Self = self;
         Airfields = fields;
@@ -195,6 +221,8 @@ public sealed class MapData : IDisposable
         _cts.Dispose();
     }
 }
+
+
 
 
 

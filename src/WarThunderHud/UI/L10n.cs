@@ -1,0 +1,298 @@
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 A-common-Chinese
+// This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
+
+using System.Globalization;
+
+namespace WtHud.UI;
+
+/// <summary>Which surface a string belongs to. Each surface has its own language.</summary>
+public enum LangScope
+{
+    Panel,      // 机框丝印：顶排/底排按键名
+    Screen,     // MFD 屏幕内容：菜单、行标签、提示
+    Alerts,     // HUD 告警文字
+}
+
+/// <summary>Two supported languages. Kept tiny on purpose - only CN/EN.</summary>
+public enum Lang
+{
+    Zh,
+    En,
+}
+
+/// <summary>
+/// Per-surface language state plus the lookup used by the HUD and the MFD panel.
+/// Panel rendering is done at runtime, so switching a language repaints immediately.
+/// </summary>
+public static class L10n
+{
+    public static Lang Panel { get; set; } = Lang.En;    // 默认：外板英文
+    public static Lang Screen { get; set; } = Lang.Zh;   // 默认：屏幕中文
+    public static Lang Alerts { get; set; } = Lang.En;   // 默认：告警英文
+
+    public static bool FollowSystem { get; set; }
+
+    public static Lang System => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName
+        .Equals("zh", StringComparison.OrdinalIgnoreCase) ? Lang.Zh : Lang.En;
+
+    public static void ApplyFollowSystem()
+    {
+        if (!FollowSystem) return;
+        var lang = System;
+        Panel = Screen = Alerts = lang;
+    }
+
+    public static Lang Get(LangScope scope) => scope switch
+    {
+        LangScope.Panel => Panel,
+        LangScope.Screen => Screen,
+        _ => Alerts,
+    };
+
+    public static void Set(LangScope scope, Lang lang)
+    {
+        switch (scope)
+        {
+            case LangScope.Panel: Panel = lang; break;
+            case LangScope.Screen: Screen = lang; break;
+            default: Alerts = lang; break;
+        }
+    }
+
+    public static Lang Toggle(Lang lang) => lang == Lang.Zh ? Lang.En : Lang.Zh;
+
+    /// <summary>Load the persisted selection into the live language state.</summary>
+    public static void LoadFromConfig(Hud.LanguageConfig cfg)
+    {
+        FollowSystem = cfg.FollowSystem;
+        Panel = Parse(cfg.Panel, Lang.En);
+        Screen = Parse(cfg.Screen, Lang.Zh);
+        Alerts = Parse(cfg.Alerts, Lang.En);
+        ApplyFollowSystem();
+    }
+
+    /// <summary>Write the live language state back into the persisted config object.</summary>
+    public static void StoreToConfig(Hud.LanguageConfig cfg)
+    {
+        cfg.FollowSystem = FollowSystem;
+        cfg.Panel = Panel == Lang.Zh ? "zh" : "en";
+        cfg.Screen = Screen == Lang.Zh ? "zh" : "en";
+        cfg.Alerts = Alerts == Lang.Zh ? "zh" : "en";
+    }
+
+    private static Lang Parse(string? s, Lang fallback) =>
+        string.Equals(s, "zh", StringComparison.OrdinalIgnoreCase) ? Lang.Zh
+        : string.Equals(s, "en", StringComparison.OrdinalIgnoreCase) ? Lang.En
+        : fallback;
+
+    /// <summary>Display name of a language, written in the screen language.</summary>
+    public static string Name(Lang lang, LangScope scope)
+    {
+        if (Screen == Lang.Zh) return lang == Lang.Zh ? "中文" : "英文";
+        return lang == Lang.Zh ? "CHINESE" : "ENGLISH";
+    }
+
+    /// <summary>Text for a key on the given surface.</summary>
+    public static string Get(LangScope scope, string key)
+    {
+        var table = scope switch
+        {
+            LangScope.Panel => PanelStrings,
+            LangScope.Screen => ScreenStrings,
+            _ => AlertStrings,
+        };
+        var lang = scope switch
+        {
+            LangScope.Panel => Panel,
+            LangScope.Screen => Screen,
+            _ => Alerts,
+        };
+        if (table.TryGetValue(key, out var pair))
+            return lang == Lang.Zh ? pair.Zh : pair.En;
+        return key;
+    }
+
+    private static readonly Dictionary<string, (string Zh, string En)> PanelStrings = new()
+    {
+        ["confirm"] = ("确认", "CONFIRM"),
+        ["back"] = ("返回", "BACK"),
+        ["up"] = ("上移", "UP"),
+        ["down"] = ("下移", "DOWN"),
+        ["help"] = ("帮助", "HELP"),
+        ["reset"] = ("重置", "RESET"),
+        ["pagePrev"] = ("上页", "PAGE◂"),
+        ["pageNext"] = ("下页", "PAGE▸"),
+        ["cancel"] = ("取消", "CANCEL"),
+        ["save"] = ("保存", "SAVE"),
+        ["brand"] = ("WTHUD  CFG", "WTHUD  CFG"),
+    };
+
+    private static readonly Dictionary<string, (string Zh, string En)> ScreenStrings = new()
+    {
+        // 页面标题
+        ["menu"] = ("主菜单", "MAIN MENU"),
+        ["page.display"] = ("显示", "DISPLAY"),
+        ["page.camera"] = ("视角与姿态", "CAMERA"),
+        ["page.alerts"] = ("告警", "ALERTS"),
+        ["page.keys"] = ("按键", "KEYS"),
+        ["page.language"] = ("语言", "LANGUAGE"),
+        ["page.diag"] = ("诊断", "DIAG"),
+        // 语言页
+        ["lang.panel"] = ("外板语言", "PANEL LANGUAGE"),
+        ["lang.screen"] = ("屏幕语言", "SCREEN LANGUAGE"),
+        ["lang.alerts"] = ("告警语言", "ALERT LANGUAGE"),
+        ["lang.follow"] = ("跟随系统", "FOLLOW SYSTEM"),
+        ["lang.reset"] = ("恢复默认语言", "RESET LANGUAGES"),
+        // 通用
+        ["on"] = ("开", "ON"),
+        ["off"] = ("关", "OFF"),
+        ["hint.nav"] = ("上移/下移 选择 · 确认 进入", "UP/DOWN SELECT · CONFIRM ENTER"),
+        ["hint.lang"] = ("上移/下移 选择 · 确认 切换", "UP/DOWN SELECT · CONFIRM TOGGLE"),
+        ["hint.help"] = ("任意键返回", "PRESS ANY KEY"),
+        ["help.title"] = ("说明", "HELP"),
+        // 菜单提示
+        ["menu.hint.display"] = ("显示 / 缩放 / 光标洞", "DISPLAY · SCALE · CURSOR HOLE"),
+        ["menu.hint.camera"] = ("视角与姿态", "CAMERA · ATTITUDE"),
+        ["menu.hint.alerts"] = ("各类告警阈值", "ALERT THRESHOLDS"),
+        ["menu.hint.keys"] = ("热键一览", "KEY BINDINGS"),
+        ["menu.hint.language"] = ("外板 / 屏幕 / 告警", "PANEL · SCREEN · ALERTS"),
+        ["menu.hint.diag"] = ("数据源与诊断", "SOURCES · DIAGNOSTICS"),
+        ["hint.menu"] = ("上移/下移 选择 · 确认 进入", "UP/DOWN SELECT · CONFIRM ENTER"),
+        ["hint.item"] = ("确认 切换 · 右键 反向 · 返回 上一级", "CONFIRM TOGGLE · RMB REVERSE · BACK"),
+        // 行标签
+        ["row.showHud"] = ("显示 HUD", "SHOW HUD"),
+        ["row.hideBg"] = ("后台隐藏", "HIDE IF BACKGROUND"),
+        ["row.fov"] = ("FOV 视场角", "FIELD OF VIEW"),
+        ["row.yoff"] = ("垂直偏移", "VERTICAL OFFSET"),
+        ["row.pitchzero"] = ("俯仰零点", "PITCH ZERO"),
+        ["row.hole"] = ("光标洞半径", "CURSOR HOLE"),
+        ["row.ladder"] = ("俯仰梯", "PITCH LADDER"),
+        ["row.fpm"] = ("速度矢量", "FLIGHT MARKER"),
+        ["row.extrapolate"] = ("插值平滑", "EXTRAPOLATE"),
+        ["row.version"] = ("版本", "VERSION"),
+        ["row.hideCockpit"] = ("座舱隐藏", "HIDE IN COCKPIT"),
+        ["row.hideNose"] = ("机头视角隐藏", "HIDE IN NOSE VIEW"),
+        ["row.rollCouple"] = ("相机随滚转", "ROLL COUPLING"),
+        ["row.bankSign"] = ("坡度方向", "BANK DIRECTION"),
+        ["row.pitchSign"] = ("俯仰符号", "PITCH SIGN"),
+        ["row.bankTrim"] = ("坡度修正", "BANK TRIM"),
+        ["row.fpmTrim"] = ("矢量修正", "MARKER TRIM"),
+        ["row.tapeRadar"] = ("高度带雷达", "RADAR ALTITUDE"),
+        ["row.aimRmb"] = ("右键瞄准", "AIM ON RMB"),
+        ["row.source"] = ("当前符号源", "ACTIVE SIGN"),
+        ["row.stallAoa"] = ("失速迎角", "STALL AOA"),
+        ["row.aoaWarn"] = ("迎角告警", "AOA WARNING"),
+        ["row.overspeedMode"] = ("极速依据", "OVERSPEED MODE"),
+        ["row.overspeedMach"] = ("极速 Mach", "OVERSPEED MACH"),
+        ["row.overspeedIas"] = ("极速 IAS", "OVERSPEED IAS"),
+        ["row.bingo"] = ("低油量剩余", "BINGO TIME"),
+        ["row.afAlert"] = ("机场告警距离", "AIRFIELD ALERT"),
+        ["row.edgeMargin"] = ("边界告警余量", "EDGE MARGIN"),
+        ["row.groundSpeed"] = ("地面隐藏速度", "GROUND HIDE SPEED"),
+        ["row.hideGround"] = ("地面隐藏", "HIDE ON GROUND"),
+        ["row.keyShow"] = ("显示 / 隐藏", "SHOW / HIDE"),
+        ["row.keyZoom"] = ("瞄准模式", "AIMING LAYOUT"),
+        ["row.keyView"] = ("视角循环", "CYCLE VIEW"),
+        ["row.keyMap"] = ("战术地图", "TACTICAL MAP"),
+        ["row.keyScore"] = ("记分板", "SCOREBOARD"),
+        ["row.keyBrake"] = ("减速板", "AIRBRAKE"),
+        ["row.keySave"] = ("保存配置", "SAVE CONFIG"),
+        ["row.keyHole"] = ("光标洞开关", "CURSOR HOLE KEY"),
+        ["row.keySettings"] = ("设置面板", "SETTINGS"),
+        ["row.keyExit"] = ("退出", "EXIT"),
+        ["row.endurance"] = ("续航系数", "ENDURANCE SCALE"),
+        ["row.groundDelay"] = ("地面延迟", "GROUND DELAY"),
+        ["row.mapFlip"] = ("地图 Y 翻转", "MAP Y FLIP"),
+        ["row.configDebug"] = ("构型调试块", "CONFIG DEBUG"),
+        ["row.stallMem"] = ("失速记忆", "STALL MEMORY"),
+        ["row.pitchMem"] = ("俯仰记忆", "PITCH MEMORY"),
+        ["row.dupKeys"] = ("重复热键", "DUPLICATE KEYS"),
+        ["row.copyDiag"] = ("复制诊断信息", "COPY DIAGNOSTICS"),
+        ["row.diagState"] = ("/state 状态", "/STATE"),
+        ["row.diagInd"] = ("/indicators", "/INDICATORS"),
+        ["row.diagMap"] = ("/map_obj", "/MAP_OBJ"),
+        ["row.diagInfo"] = ("/map_info", "/MAP_INFO"),
+        ["row.update"] = ("更新状态", "UPDATE"),
+        ["row.checkUpdate"] = ("检查更新", "CHECK UPDATE"),
+        // 选项文字
+        ["opt.normal"] = ("正常", "NORMAL"),
+        ["opt.invert"] = ("反转", "INVERT"),
+        ["opt.auto"] = ("自动", "AUTO"),
+        ["opt.positive"] = ("正", "POSITIVE"),
+        ["opt.negative"] = ("负", "NEGATIVE"),
+        ["opt.ias"] = ("IAS", "IAS"),
+        ["opt.mach"] = ("MACH", "MACH"),
+        ["opt.en"] = ("英文", "ENGLISH"),
+        ["opt.zh"] = ("中文", "CHINESE"),        ["pick.hint"] = ("确认 指定 · 返回 取消", "CONFIRM PICK · BACK CANCEL"),
+        ["help.pagerHint"] = ("PAGE 翻页 · BACK 返回", "PAGE FLIPS · BACK RETURNS"),
+        ["page.single"] = ("本页已全部显示", "SINGLE PAGE"),
+        ["page.edge"] = ("已到最后一页", "LAST PAGE"),
+        ["help.close"] = ("任意键 / 点击 关闭", "ANY KEY / CLICK TO CLOSE"),
+        ["help.body"] = ("侧键：选择    确认：执行     上下：移动     返回：上一级\n数值行：确认 进入输入页，直接键入数字\n键位行：确认 进入捕获页，按住组合键实时显示\n执行类：确认 后进入二次确认，再确认才执行\n底排：重置 / 翻页 / 取消 / 保存",
+                         "SIDE KEY: SELECT   CONFIRM: APPLY   UP/DOWN: MOVE   BACK: UP ONE LEVEL\nNUMBER ROW: CONFIRM OPENS NUMERIC ENTRY\nKEY ROW: CONFIRM OPENS LIVE CAPTURE\nACTION ROW: CONFIRM SHOWS A SECOND CONFIRMATION\nBOTTOM: RESET / PAGE / CANCEL / SAVE"),        ["page.airframe"] = ("机型", "AIRFRAMES"),
+        ["menu.hint.airframe"] = ("按机型异化的能力", "PER-AIRFRAME DATA"),
+        ["airframe.ra"] = ("雷达高度", "RADAR ALT"),
+        ["airframe.att"] = ("姿态来源", "ATTITUDE"),
+        ["airframe.ab"] = ("减速板", "AIRBRAKE"),
+        ["airframe.stall"] = ("失速迎角", "STALL AOA"),
+        ["airframe.aoa"] = ("迎角告警", "AOA WARN"),
+        ["airframe.sink"] = ("下降率告警", "SINK RATE"),
+        ["airframe.note"] = ("备注", "NOTE"),
+        ["page.panel"] = ("面板", "PANEL"),
+        ["menu.panel"] = ("面板", "PANEL"),
+        ["menu.panel.hint"] = ("配色 / 操作方式", "COLORS / INPUT"),
+        ["row.inkColor"] = ("文本颜色", "TEXT COLOR"),
+        ["row.accentColor"] = ("高亮颜色", "ACCENT COLOR"),
+        ["row.realisticKeys"] = ("拟真按键操作", "KEY-ONLY MODE"),
+        ["selectPreset"] = ("选择颜色 · 确认 应用 · 返回 取消", "PICK COLOR · CONFIRM APPLY · BACK CANCEL"),
+        ["color.white"] = ("白色", "WHITE"),
+        ["color.green"] = ("绿色", "GREEN"),
+        ["color.purple"] = ("紫色", "PURPLE"),
+        ["color.blue"] = ("蓝色", "BLUE"),
+        ["color.red"] = ("红色", "RED"),
+        ["edit.title"] = ("数值输入", "NUMERIC ENTRY"),
+        ["capture.title"] = ("键位捕获", "KEY CAPTURE"),
+        ["edit.prompt"] = ("输入数值 · 确认 提交 · 返回 取消", "TYPE VALUE · CONFIRM APPLY · BACK CANCEL"),
+        ["capture.prompt"] = ("按下要绑定的按键", "PRESS A KEY TO BIND"),
+        ["capture.hint"] = ("确认 保存 · 返回 取消", "CONFIRM SAVE · BACK CANCEL"),
+        ["hint.readonly"] = ("只读项，无法修改", "READ-ONLY ITEM"),        ["confirm.resetAirframe"] = ("重置该机型到默认？", "RESET THIS AIRFRAME?"),
+        ["confirm.askReset"] = ("确认 重置 · 取消 返回", "CONFIRM: RESET · CANCEL: BACK"),
+        ["toast.resetAirframe"] = ("该机型已恢复默认", "AIRFRAME RESET"),
+        ["confirm.discard"] = ("放弃未保存的修改？", "DISCARD UNSAVED CHANGES?"),
+        ["confirm.askDiscard"] = ("确认 放弃并关闭 · 取消 返回面板", "CONFIRM: DISCARD & CLOSE · CANCEL: BACK"),        ["confirm.title"] = ("确认", "CONFIRM"),
+        ["confirm.ask"] = ("是否执行该操作？", "EXECUTE THIS ACTION?"),
+        ["confirm.ok"] = ("确认", "CONFIRM"),
+        ["confirm.cancel"] = ("取消", "CANCEL"),
+        ["hint.confirm"] = ("左移/右移 选择 · 确认 执行 · 返回 取消", "LEFT/RIGHT SELECT · CONFIRM RUN · BACK CANCEL"),        ["hint.root"] = ("已在主菜单 · 取消 关闭面板", "AT ROOT · CANCEL TO CLOSE"),
+        ["help.lang"] = ("分别设置机框、屏幕、告警的语言；跟随系统开启后三项自动跟随系统语言。",
+                         "Set the language of the bezel, the screen and the HUD alerts. FOLLOW SYSTEM mirrors the OS language."),
+    };
+
+    private static readonly Dictionary<string, (string Zh, string En)> AlertStrings = new()
+    {
+        ["stall"] = ("失速", "STALL"),
+        ["aoa"] = ("迎角", "AOA"),
+        ["pullup"] = ("拉起", "PULL UP"),
+        ["sinkrate"] = ("下降率", "SINK RATE"),
+        ["reducespeed"] = ("减速", "REDUCE SPEED"),
+        ["return"] = ("返回战区", "RETURN"),
+        ["af"] = ("机场", "AF"),
+        ["afenemy"] = ("！机场", "AF!"),
+        ["bingo"] = ("低油量", "BINGO"),
+        ["overspeed"] = ("超速", "OVERSPEED"),
+        ["aoaAlert"] = ("迎角超限", "AOA"),
+        ["stallAlert"] = ("接近失速", "STALL"),
+    };
+}
+
+
+
+
+
+
+
+
+
+
+

@@ -186,45 +186,62 @@ public sealed class HudConfig
         return new HudConfig();
     }
 
-    public void Save()
+    public void Save() => SaveTo(PathFor());
+
+    /// <summary>Writes the config to an explicit path (used by the standalone scratch panel).</summary>
+    public void SaveTo(string path)
     {
         try
         {
-            File.WriteAllText(PathFor(),
+            File.WriteAllText(path,
                 JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
 
     public HudConfig Clone() => (HudConfig)MemberwiseClone();
+
+    /// <summary>Copies every writable property from <paramref name="other"/> (used by CANCEL).</summary>
+    public void CopyFrom(HudConfig other)
+    {
+        foreach (var p in typeof(HudConfig).GetProperties())
+        {
+            if (!p.CanRead || !p.CanWrite) continue;
+            p.SetValue(this, p.GetValue(other));
+        }
+    }
+
+    // ---------------------------------------------------------------- language
+
+    /// <summary>
+    /// Language of the three surfaces: panel = silk-screen on the bezel, screen = MFD text,
+    /// alerts = texts drawn on the HUD. Defaults: panel/alerts English, screen Chinese.
+    /// </summary>
+    [JsonPropertyName("language")] public LanguageConfig Language { get; set; } = new();
+
+    /// <summary>MFD panel appearance and input behaviour.</summary>
+    [JsonPropertyName("mfd")] public MfdSettings Mfd { get; set; } = new();
 }
 
+/// <summary>Persisted language selection (one language per surface).</summary>
+public sealed class LanguageConfig
+{
+    [JsonPropertyName("followSystem")] public bool FollowSystem { get; set; }
+    [JsonPropertyName("panel")] public string Panel { get; set; } = "en";
+    [JsonPropertyName("screen")] public string Screen { get; set; } = "zh";
+    [JsonPropertyName("alerts")] public string Alerts { get; set; } = "en";
 
+}
 
+/// <summary>MFD panel appearance/behaviour settings.</summary>
+public sealed class MfdSettings
+{
+    /// <summary>Normal text color preset: white / green / purple / blue / red.</summary>
+    public string InkColor { get; set; } = "white";
 
+    /// <summary>Highlight (accent) color preset: white / green / purple / blue / red.</summary>
+    public string AccentColor { get; set; } = "green";
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    /// <summary>Realistic mode: screen rows can only be driven by the physical keys.</summary>
+    public bool RealisticKeys { get; set; }
+}

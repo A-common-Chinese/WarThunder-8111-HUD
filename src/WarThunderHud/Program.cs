@@ -26,9 +26,12 @@ public static class Program
         {
             case "probe":
                 return Probe(args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 6.0);
-            case "replay":
-                if (args.Length < 2) { Console.WriteLine("usage: WtHud replay <file.jsonl> [speed]"); return 2; }
-                ReplaySource.Play(args[1], args.Length > 2 ? double.Parse(args[2], CultureInfo.InvariantCulture) : 1.0);
+            case "mapprobe":
+                return MapProbe();
+            case "mfd":
+                return MfdInteractive();
+            case "mfdpreview":
+                return MfdPreview(args.Length > 1 ? args[1] : "mfd-panel.png", args.Length > 2 ? args[2] : "", args.Length > 3 ? int.Parse(args[3]) : 0);
                 return 0;
             case "selftest":
                 return SelfTest();
@@ -196,6 +199,47 @@ public static class Program
         if (!pass) Environment.ExitCode = 1;
     }
 
+    /// <summary>Opens the MFD settings panel (F1) on its own STA thread.</summary>
+    private static void OpenMfdSettings(HudConfig cfg, HudCalibration cal, Action<bool> setShow)
+    {
+        // 面板已打开：F1 变成“关闭”，避免叠出多个设置窗口
+        if (_mfdPanel is { } openPanel)
+        {
+            try { openPanel.RequestClosePanel(); } catch { }
+            return;
+        }
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                settingsOpen = true;
+                NativeMethods.SetCursor(NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512));
+                using var form = new WtHud.UI.Mfd.MfdFrameForm(cfg);
+                _mfdPanel = form;
+                form.ShowDialog();
+                _mfdPanel = null;
+                if (form.Saved)
+                {
+                    cal.VerticalFovDeg = cfg.VerticalFovDeg;
+                    cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
+                    Console.WriteLine("MFD settings saved");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("MFD settings error: " + ex.Message);
+            }
+            finally
+            {
+                settingsOpen = false;
+            }
+        })
+        { IsBackground = true, Name = "mfd-settings" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+    }
+
     /// <summary>Opens the settings dialog on a dedicated STA thread (the overlay has its own pump).</summary>
     private static void OpenSettings(HudConfig cfg, HudCalibration cal, HudOptions opt, bool currentShow, Action<bool> setShow)
     {
@@ -296,9 +340,34 @@ public static class Program
             if (!string.IsNullOrEmpty(s.VehicleType) && s.VehicleType != lastVehicle)
             {
                 lastVehicle = s.VehicleType;
+                AirframeDb.CurrentVehicle = s.VehicleType;
                 if (viewState != 0) { viewState = 0; Console.WriteLine("view state reset: vehicle changed"); }
+
+                // 机型数据库：换机即按当前遥测能力刷新（游戏更新后会自动跟上）
+                var created = AirframeDb.Refresh(
+                    s.VehicleType,
+                    s.RadioAltM.HasValue,
+                    s.Caps.HasNativeAttitude,
+                    s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry",
+                    s.AoaDeg);
+                Console.WriteLine($"airframe: {s.VehicleType}  RA={(created.RadarAltitude ? "yes" : "no")}  " +
+                                  $"ATT={created.Attitude}  AB={created.Airbrake}");
             }
-            if (s.Valid && !prevValid) { viewState = 0; Console.WriteLine("view state reset: match entered"); }
+            if (s.Valid && !prevValid)
+            {
+                viewState = 0;
+                Console.WriteLine("view state reset: match entered");
+                if (!string.IsNullOrEmpty(s.VehicleType))
+                {
+                    var p2 = AirframeDb.Refresh(
+                        s.VehicleType,
+                        s.RadioAltM.HasValue,
+                        s.Caps.HasNativeAttitude,
+                        s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry");
+                    Console.WriteLine($"airframe(match): {s.VehicleType} ATT={p2.Attitude} " +
+                                      $"RA={(p2.RadarAltitude ? "yes" : "no")} AB={p2.Airbrake}");
+                }
+            }
             prevValid = s.Valid;
 
             latest = s;
@@ -316,6 +385,11 @@ public static class Program
 
         var opt = new HudOptions();
         var cfg = HudConfig.Load();
+        WtHud.UI.L10n.LoadFromConfig(cfg.Language);
+        var envPanel = Environment.GetEnvironmentVariable("WT_MFD_PANEL");
+        if (!string.IsNullOrEmpty(envPanel)) WtHud.UI.L10n.Panel = envPanel == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
+        var envScreen = Environment.GetEnvironmentVariable("WT_MFD_SCREEN");
+        if (!string.IsNullOrEmpty(envScreen)) WtHud.UI.L10n.Screen = envScreen == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
         var cal = new HudCalibration { VerticalFovDeg = cfg.VerticalFovDeg, LayoutOffsetYDeg = cfg.LayoutOffsetYDeg, RollCoupling = cfg.RollCoupling };
         var geo = new HudGeometry(opt, cal);
         var empty = new List<HudPrim>();
@@ -405,7 +479,7 @@ public static class Program
             }
             else if (id == 12)
             {
-                OpenSettings(cfg, cal, opt, show, v => show = v);
+                OpenMfdSettings(cfg, cal, v => show = v);
             }
             else if (id == 11)
             {
@@ -712,9 +786,9 @@ public static class Program
                 stallSince = 0;
             }
 
-            opt.OverspeedAlert = opt.OverspeedByMach
-                ? opt.OverspeedMach > 0.05 && snap.Mach > opt.OverspeedMach
-                : opt.OverspeedKmh > 0 && snap.IasKmh > opt.OverspeedKmh;
+            var overIas = opt.OverspeedKmh > 0 && snap.IasKmh > opt.OverspeedKmh;
+            var overMach = opt.OverspeedMach > 0.05 && snap.Mach > opt.OverspeedMach;
+            opt.OverspeedAlert = overIas || overMach;   // 双路：IAS 或 Mach 任一超限
 
             if (opt.OverspeedAlert != overspeedLogged)
             {
@@ -769,13 +843,16 @@ public static class Program
             else
             {
                 // Manual threshold: IAS (km/h) or Mach, whichever the user selected.
-                opt.OverspeedKmh = cfg.OverspeedKmh;
+                // 按机型覆盖告警阈值（0 = 用全局默认）
+            var af = AirframeDb.Get(snap.VehicleType);
+            opt.OverspeedKmh = af.OverspeedIas > 0 ? af.OverspeedIas : cfg.OverspeedKmh;
                 opt.OverspeedByMach = cfg.OverspeedByMach;
-                opt.OverspeedMach = cfg.OverspeedMach;
+                opt.OverspeedMach = af.OverspeedMach > 0 ? af.OverspeedMach : cfg.OverspeedMach;
             }
 
             opt.FpmAosSign = cfg.FpmAosSign != 0 ? Math.Sign(cfg.FpmAosSign) : -1;
-            opt.AoaWarnAlert = snap.InFlight && snap.AoaDeg > cfg.AoaWarnDeg;
+            var aoaWarn = AirframeDb.Get(snap.VehicleType).AoaWarn is var aw && aw > 0 ? aw : cfg.AoaWarnDeg;
+            opt.AoaWarnAlert = snap.InFlight && snap.AoaDeg > aoaWarn;
             opt.BingoFuelAlert = opt.EnduranceSeconds >= 0 && opt.EnduranceSeconds < cfg.BingoFuelSeconds;
             // Radar altitude only when the aircraft actually reports one: the API exposes no
             // terrain data, so an estimate was hopeless over hilly maps. Everything else shows
@@ -804,7 +881,10 @@ public static class Program
             bool pullUpCond = snap.InFlight && hasRalt && ralt < 1500 && snap.VyMs < -10 && tti < 3.5;
 
             // SINK RATE: estimate-based fallback for every aircraft (sea-level altitude, no terrain).
-            bool sinkCond = snap.InFlight && snap.AltM < 500 && snap.VyMs < -40;
+            // 下降率阈值可按机型覆盖（0 = 用默认 40 m/s）
+            var sinkThr = AirframeDb.Get(snap.VehicleType).SinkRate;
+            if (sinkThr <= 0) sinkThr = 40;
+            bool sinkCond = snap.InFlight && snap.AltM < 500 && snap.VyMs < -sinkThr;
 
             if (pullUpCond) { if (pullUpSince == 0) pullUpSince = alertTicks; } else pullUpSince = 0;
             if (sinkCond) { if (sinkRateSince == 0) sinkRateSince = alertTicks; } else sinkRateSince = 0;
@@ -815,7 +895,7 @@ public static class Program
             if (pullUpNow != opt.PullUpAlert)
                 Console.WriteLine($"PULL UP {(pullUpNow ? "ON" : "off")}: ralt={snap.RadioAltM:F0} m vy={snap.VyMs:F0} m/s tti={tti:F1} s");
             if (sinkNow != opt.SinkRateAlert)
-                Console.WriteLine($"SINK RATE {(sinkNow ? "ON" : "off")}: alt={snap.AltM:F0} m vy={snap.VyMs:F0} m/s");
+                Console.WriteLine($"SINK RATE {(sinkNow ? "ON" : "off")}: alt={snap.AltM:F0} m vy={snap.VyMs:F0} m/s thr={sinkThr:F0}");
 
             opt.PullUpAlert = pullUpNow;
             opt.SinkRateAlert = !pullUpNow && sinkNow;
@@ -1115,17 +1195,19 @@ public static class Program
         string Arrow(double rel) => Arrows[(int)Math.Round(rel / 45.0) % 8];
 
         // Without a compass the "relative to nose" bearing is meaningless (heading reads 0), so
-        // show the distance only - the arrow would point the wrong way (Rafale C etc.).
+        // Without a compass the relative bearing is meaningless: distance only.
+        var afLabel = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "af");
+        var afEnemyLabel = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "afenemy");
         if (bestFriendly < double.MaxValue)
             opt.NavFriendly = hasHeading
-                ? $"AF  {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km"
-                : $"AF  {bestFriendly / 1000.0:F1}km";
+                ? $"{afLabel} {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km"
+                : $"{afLabel} {bestFriendly / 1000.0:F1}km";
         opt.EnemyAirfieldAlert = false;
         if (bestEnemy < double.MaxValue)
         {
             opt.NavEnemy = hasHeading
-                ? $"AF! {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km"
-                : $"AF! {bestEnemy / 1000.0:F1}km";
+                ? $"{afEnemyLabel} {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km"
+                : $"{afEnemyLabel} {bestEnemy / 1000.0:F1}km";
             double alertKm = cfg.EnemyAirfieldAlertKm;
             opt.EnemyAirfieldAlert = alertKm > 0 && bestEnemy / 1000.0 < alertKm;
         }
@@ -1285,6 +1367,7 @@ public static class Program
     };
 
     private static volatile bool settingsOpen;
+    private static WtHud.UI.Mfd.MfdFrameForm? _mfdPanel;
     private static long lastExitPress;
     private static bool lastCursorShowing = true;
     private static WtHud.Input.KeyBinding _zoomKeyBinding = WtHud.Input.KeyBinding.Parse("Z", 0x5A, "Z");
@@ -1403,6 +1486,11 @@ public static class Program
 
     private static int Preview(string[] args)
     {
+        var pcfg = HudConfig.Load();
+        WtHud.UI.L10n.LoadFromConfig(pcfg.Language);
+        var envAlerts = Environment.GetEnvironmentVariable("WT_MFD_ALERTS");
+        if (!string.IsNullOrEmpty(envAlerts))
+            WtHud.UI.L10n.Alerts = envAlerts == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
         string outPath = args.Length > 1 ? args[1] : "hud-preview.png";
         int w = args.Length > 2 ? int.Parse(args[2], CultureInfo.InvariantCulture) : 1920;
         int h = args.Length > 3 ? int.Parse(args[3], CultureInfo.InvariantCulture) : 1080;
@@ -1444,10 +1532,12 @@ public static class Program
         opt.NavEnemy = "AF! " + (char)0x2197 + " 9.8km";
         if (variant == "edge") { opt.EdgeWarning = true; opt.EdgeArrow = "↑"; opt.ForceTransitVisible = true; }
         if (variant == "pullup") { opt.PullUpAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "pullupall") { opt.PullUpAlert = true; opt.SinkRateAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
         if (variant == "sink") { opt.SinkRateAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "aoa") { opt.AoaWarnAlert = true; opt.ForceTransitVisible = true; }
-        if (variant == "speed") { opt.OverspeedAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "speed") { opt.OverspeedAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
         if (variant == "stall") { opt.StallWarnLevel = 2; opt.ForceTransitVisible = true; }
+        if (variant == "stallaoa") { opt.StallWarnLevel = 2; opt.AoaWarnAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
         if (variant == "bingo") { opt.BingoFuelAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "ra") { opt.AltTapeIsRadar = true; opt.AltTapeM = 35; }
         if (variant == "all")
@@ -1480,6 +1570,15 @@ public static class Program
             opt.GearTransitText = "GEAR DOWN";
             if (variant == "gearzoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }
         }
+        if (variant == "cfg")
+        {
+            opt.GearTransitActive = true; opt.GearTransitText = "GEAR DOWN";
+            opt.GearDownSteady = true;
+            opt.FlapsDeployed = true; opt.FlapsSteadyText = "50";
+            opt.AirbrakeDeployed = true; opt.AirbrakeSteadyText = "AIRBRAKE";
+            opt.OnlyConfigBoxes = true;
+            opt.ForceTransitVisible = true;
+        }
         if (variant == "hg") snap = WithNy(snap, 13.0);
         if (variant == "mg") snap = WithNy(snap, 9.5);
         if (variant == "nw") snap = WithNy(snap, -2.5);
@@ -1500,162 +1599,87 @@ public static class Program
         Console.WriteLine((ok ? "  PASS  " : "  FAIL  ") + name);
         if (!ok) Environment.ExitCode = 1;
     }
-}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    private static int MapProbe()
+    {
+        using var map = new WtHud.Telemetry.MapData();
+        map.Start();
+        for (int i = 0; i < 12; i++)
+        {
+            Thread.Sleep(500);
+            Console.WriteLine($"[{i * 0.5:F1}s] map_obj bytes={map.RawBytes,5}  airfields={map.AirfieldCount,3}  self={(map.Self is { } s ? $"{s.X:F3},{s.Y:F3}" : "null"),-18} cog={(map.CourseDeg is { } c ? c.ToString("F0") : "null")}  mapSize={map.MapSizeM.X:F0}x{map.MapSizeM.Y:F0}  err={map.LastError}");
+        }
+        return 0;
+    }
+    /// <summary>Renders the MFD panel to a PNG (headless verification of the bezel + text).</summary>
+    private static int MfdPreview(string outPath, string view = "", int item = 0)
+    {
+        var cfg = HudConfig.Load();
+        WtHud.UI.L10n.LoadFromConfig(cfg.Language);
+        var envPanel = Environment.GetEnvironmentVariable("WT_MFD_PANEL");
+        if (!string.IsNullOrEmpty(envPanel)) WtHud.UI.L10n.Panel = envPanel == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
+        var envScreen = Environment.GetEnvironmentVariable("WT_MFD_SCREEN");
+        if (!string.IsNullOrEmpty(envScreen)) WtHud.UI.L10n.Screen = envScreen == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
+        var thread = new Thread(() =>
+        {
+            using var form = new WtHud.UI.Mfd.MfdFrameForm(cfg);
+            // 语言覆盖必须在窗体构造（会重读配置）之后再应用
+            var envPanel2 = Environment.GetEnvironmentVariable("WT_MFD_PANEL");
+            if (!string.IsNullOrEmpty(envPanel2)) WtHud.UI.L10n.Panel = envPanel2 == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
+            var envScreen2 = Environment.GetEnvironmentVariable("WT_MFD_SCREEN");
+            if (!string.IsNullOrEmpty(envScreen2)) WtHud.UI.L10n.Screen = envScreen2 == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
+            Application.DoEvents();
+            Thread.Sleep(200);
+            if (!string.IsNullOrEmpty(view) && int.TryParse(view, out var pageIdx))
+            {
+                if (item >= 0) form.PreviewOpen(pageIdx, Math.Max(0, item));
+            }
+            else if (view == "help") { form.PreviewHelp(0); }
+            else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
+            else if (view == "edit") { form.PreviewEdit(0, 2); }
+            else if (view == "capture") { form.PreviewCapture(3, 0); }
+            else if (view == "discard")
+            {
+                form.PreviewDiscard();
+            }
+            else if (view == "confirm")
+            {
+                form.PreviewConfirm(5, 9);   // DIAG 页的“检查更新”
+            }
+            using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
+            using (var g = System.Drawing.Graphics.FromImage(bmp))
+            {
+                form.RenderTo(g);
+            }
+            var path = Path.IsPathRooted(outPath) ? outPath : Path.Combine(Path.GetTempPath(), outPath);
+            bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            Console.WriteLine("mfd preview -> " + path);
+            form.Close();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return 0;
+    }
+    /// <summary>Opens the MFD panel standalone (no game, scratch config) for interaction testing.</summary>
+    private static int MfdInteractive()
+    {
+        var cfg = HudConfig.Load();
+        var scratch = Path.Combine(Path.GetTempPath(), "wthud-mfd-scratch.json");
+        Console.WriteLine("MFD panel (scratch mode). SAVE writes to: " + scratch);
+        Console.WriteLine("  F1 no longer needed - this window IS the panel. ESC/BACK at menu closes.");
+        var thread = new Thread(() =>
+        {
+            Application.EnableVisualStyles();
+            using var form = new WtHud.UI.Mfd.MfdFrameForm(cfg, scratch);
+            Application.Run(form);
+            Console.WriteLine(form.Saved ? "saved to scratch file" : "closed without saving");
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return 0;
+    }}
 
 
 
