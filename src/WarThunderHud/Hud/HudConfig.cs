@@ -110,6 +110,9 @@ public sealed class HudConfig
     /// <summary>AOA above this (deg) blinks the AOA warning.</summary>
     [JsonPropertyName("aoaWarnDeg")] public double AoaWarnDeg { get; set; } = 18;
 
+    /// <summary>Distance limit (km) for the nearest friendly SPAA readout. 0 = hidden.</summary>
+    [JsonPropertyName("friendlySpaaKm")] public double FriendlySpaaKm { get; set; } = 60;
+
     /// <summary>Endurance below this (seconds) blinks the BINGO fuel warning.</summary>
     [JsonPropertyName("bingoFuelSeconds")] public double BingoFuelSeconds { get; set; } = 180;
 
@@ -163,6 +166,9 @@ public sealed class HudConfig
     [JsonPropertyName("configDebug")] public bool ConfigDebug { get; set; }
 
     /// <summary>How much of the aircraft roll the camera performs (0 = horizon-stabilised chase cam).</summary>
+    /// <summary>Camera roll coupling mode: "auto" (follow the current view), "off", "on".</summary>
+    [JsonPropertyName("rollCouplingMode")] public string RollCouplingMode { get; set; } = "auto";
+
     [JsonPropertyName("rollCoupling")] public double RollCoupling { get; set; }
 
     /// <summary>Extra vertical trim for the flight path marker, degrees.</summary>

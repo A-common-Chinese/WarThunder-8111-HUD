@@ -297,7 +297,10 @@ public static class Program
 
                     cal.VerticalFovDeg = cfg.VerticalFovDeg;
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
-                    cal.RollCoupling = cfg.RollCoupling;
+                    cal.RollCoupling = cfg.RollCouplingMode == "auto"
+            ? 1.0   // 座舱为主的拟真玩法：自动即耦合（普通模式可用“关”）
+            : cfg.RollCouplingMode == "on" ? 1.0
+            : cfg.RollCouplingMode == "off" ? 0.0 : cfg.RollCoupling;
                     opt.BodyFixedOnly = form.BodyFixedOnly;
                     setShow(form.HudVisible);
                     cfg.Save();
@@ -390,7 +393,12 @@ public static class Program
         if (!string.IsNullOrEmpty(envPanel)) WtHud.UI.L10n.Panel = envPanel == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
         var envScreen = Environment.GetEnvironmentVariable("WT_MFD_SCREEN");
         if (!string.IsNullOrEmpty(envScreen)) WtHud.UI.L10n.Screen = envScreen == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
-        var cal = new HudCalibration { VerticalFovDeg = cfg.VerticalFovDeg, LayoutOffsetYDeg = cfg.LayoutOffsetYDeg, RollCoupling = cfg.RollCoupling };
+        // 坡度耦合：auto = 座舱视角开、第三人称关；也可强制开/关
+        var coupling = cfg.RollCouplingMode == "auto"
+            ? 1.0   // 座舱为主的拟真玩法：自动即耦合（普通模式可用“关”）
+            : cfg.RollCouplingMode == "on" ? 1.0
+            : cfg.RollCouplingMode == "off" ? 0.0 : cfg.RollCoupling;
+        var cal = new HudCalibration { VerticalFovDeg = cfg.VerticalFovDeg, LayoutOffsetYDeg = cfg.LayoutOffsetYDeg, RollCoupling = coupling };
         var geo = new HudGeometry(opt, cal);
         var empty = new List<HudPrim>();
 
@@ -1175,6 +1183,15 @@ public static class Program
             opt.EdgeArrow = hasHeading ? Arrows[(int)Math.Round(rel / 45.0) % 8] : "";
         }
 
+        if (Environment.GetEnvironmentVariable("WT_NAVDBG") == "1"
+            && (DateTime.UtcNow - navDbgUtc).TotalSeconds >= 2)
+        {
+            navDbgUtc = DateTime.UtcNow;
+            Console.WriteLine($"[navdbg] enter map={(map == null ? "null" : "ok")} " +
+                              $"self={(map?.Self is null ? "null" : "ok")} units={map?.GroundUnits.Count ?? -1} " +
+                              $"fields={map?.Airfields.Count ?? -1}");
+        }
+
         // --- nearest friendly / enemy airfield ---
         double bestFriendly = double.MaxValue, bestEnemy = double.MaxValue;
         double relFriendly = 0, relEnemy = 0;
@@ -1202,6 +1219,52 @@ public static class Program
             opt.NavFriendly = hasHeading
                 ? $"{afLabel} {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km"
                 : $"{afLabel} {bestFriendly / 1000.0:F1}km";
+        // 友方地面单位：取 30 km 内最近的 2 个，显示类型（防空优先）与相对方位
+        opt.NavUnit1 = "";
+        opt.NavUnit2 = "";
+        if (map.Self is { } selfPos && map.GroundUnits.Count > 0)
+        {
+            string IcoShort(string icon) => icon switch
+            {
+                "SPAA" => "AA",
+                "IFV" => "IFV",
+                "MediumTank" => "MBT",
+                "LightTank" => "LT",
+                _ => icon.Length > 3 ? icon[..3].ToUpperInvariant() : icon.ToUpperInvariant(),
+            };
+
+            var near = map.GroundUnits
+                .Select(u =>
+                {
+                    double dx = (u.X - selfPos.X) * sizeX;
+                    double dn = (u.Y - selfPos.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
+                    double d = Math.Sqrt(dx * dx + dn * dn);
+                    double brg = Math.Atan2(dx, dn) * 180.0 / Math.PI;
+                    return (Dist: d, Brg: brg, u.Icon);
+                })
+                .Where(u => cfg.FriendlySpaaKm > 0 && u.Dist / 1000.0 <= cfg.FriendlySpaaKm && u.Icon == "SPAA")
+                .OrderBy(u => u.Dist)
+                .Take(1)
+                .ToList();
+
+            string Fmt((double Dist, double Brg, string Icon) u)
+            {
+                var km = u.Dist / 1000.0;
+                var label = IcoShort(u.Icon);
+                if (hasHeading)
+                {
+                    double relU = u.Brg - navHeading;
+                    while (relU < 0) relU += 360;
+                    while (relU >= 360) relU -= 360;
+                    return $"{label} {Arrow(relU)} {relU:F0}° {km:F1}km";
+                }
+                return $"{label} {km:F1}km";
+            }
+
+            if (near.Count > 0) opt.NavUnit1 = Fmt(near[0]);   // 只显示最近的友军防空
+
+        }
+
         opt.EnemyAirfieldAlert = false;
         if (bestEnemy < double.MaxValue)
         {
@@ -1416,6 +1479,7 @@ public static class Program
     private static string vneLogged = "";
     private static long pullUpSince;
     private static long sinkRateSince;
+    private static DateTime navDbgUtc = DateTime.MinValue;
 
     private static bool zoomLatched;          // Z key toggle state (RMB adds momentary aiming)
     private static long holdKeyStart;         // long-press hide timer

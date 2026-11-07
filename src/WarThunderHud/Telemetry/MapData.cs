@@ -39,6 +39,9 @@ public sealed class MapData : IDisposable
     /// <summary>Airfields on this map (friendly + enemy), static positions.</summary>
     public List<MapPoint> Airfields { get; private set; } = new();
 
+    /// <summary>Spotted ground units: position, icon class (SPAA/IFV/tank) and friend flag.</summary>
+    public List<(double X, double Y, string Icon, bool Friendly)> GroundUnits { get; private set; } = new();
+
     /// <summary>Playable map size in metres (x, y).</summary>
     public (double X, double Y) MapSizeM { get; private set; }
 
@@ -114,6 +117,7 @@ public sealed class MapData : IDisposable
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
 
         (double, double)? self = null;
+        var units = new List<(double X, double Y, string Icon, bool Friendly)>();
         var fields = new List<MapPoint>();
 
         foreach (var e in doc.RootElement.EnumerateArray())
@@ -124,6 +128,26 @@ public sealed class MapData : IDisposable
             if (type == "aircraft" && icon == "Player")
             {
                 self = (GetDouble(e, "x"), GetDouble(e, "y"));
+                continue;
+            }
+
+            // 友方地面单位：只记录会出现在地图上的已侦察单位（用于全真导航）
+            if (type == "ground_model")
+            {
+                bool unitFriendly = false;
+                string ucolor = e.TryGetProperty("color", out var uc) ? uc.GetString() ?? "" : "";
+                if (ucolor.Length >= 7 && ucolor[0] == '#'
+                    && int.TryParse(ucolor.Substring(1, 2), NumberStyles.HexNumber,
+                                    CultureInfo.InvariantCulture, out int ur)
+                    && int.TryParse(ucolor.Substring(5, 2), NumberStyles.HexNumber,
+                                    CultureInfo.InvariantCulture, out int ub))
+                    unitFriendly = ub > ur;
+
+                if (unitFriendly)
+                {
+                    // 地面单位用 x/y（机场才是 sx/sy 线段）
+                    units.Add((GetDouble(e, "x"), GetDouble(e, "y"), icon, true));
+                }
                 continue;
             }
 
@@ -155,6 +179,7 @@ public sealed class MapData : IDisposable
         if (fields.Count > 0) _lastGoodMap = DateTime.UtcNow;
 
         Self = self;
+        GroundUnits = units;
         Airfields = fields;
 
         // Course over ground: some aircraft expose no compass, but the map position still moves.

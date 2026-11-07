@@ -153,6 +153,10 @@ public sealed class HudOptions
     public string NavFriendly { get; set; } = "";
     public string NavEnemy { get; set; } = "";
 
+    /// <summary>Two nearest friendly ground units, e.g. "AA ↗ 83° 3.1km".</summary>
+    public string NavUnit1 { get; set; } = "";
+    public string NavUnit2 { get; set; } = "";
+
     /// <summary>Value shown on the altitude tape (barometric or radar altitude, chosen by the app).</summary>
     public double AltTapeM { get; set; }
 
@@ -863,6 +867,21 @@ public sealed class HudGeometry
 
         // "Return to battle area" sits at the lower edge of the pitch ladder and deliberately does
         // NOT follow the aiming layout, so it stays put when Z is engaged.
+        // 友方防空：排在 AF! 之下，避免与其重叠
+        var unitY = string.IsNullOrEmpty(_opt.NavEnemy) ? navY : navY + 1.55 * pxDeg;
+        foreach (var unit in new[] { _opt.NavUnit1, _opt.NavUnit2 })
+        {
+            if (string.IsNullOrEmpty(unit)) continue;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = unit,
+                Align = HudAlign.Left, FontSize = fontSmall * 0.92, Color = Fade(_opt.Color, 0.80),
+                Points = { (navX, unitY) },
+            });
+            unitY += 1.45 * pxDeg;
+        }
+
+
         if (_opt.EdgeWarning && (_opt.ForceTransitVisible || (Environment.TickCount64 / 320) % 2 == 0))
         {
             double lineWidth = Math.Max(1.0, 0.045 * pxDeg);

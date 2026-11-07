@@ -193,6 +193,9 @@ internal static class MfdPages
         {
             Toggle("row.hideCockpit", c => c.HideInCockpit, (c, v) => c.HideInCockpit = v),
             Toggle("row.hideNose", c => c.HideInNose, (c, v) => c.HideInNose = v),
+            Enum("row.rollCoupleMode", new[] { "opt.auto", "opt.on", "opt.off" },
+                c => c.RollCouplingMode == "on" ? 1 : c.RollCouplingMode == "off" ? 2 : 0,
+                (c, i2) => c.RollCouplingMode = i2 == 1 ? "on" : i2 == 2 ? "off" : "auto"),
             Number("row.rollCouple", c => c.RollCoupling, (c, v) => c.RollCoupling = v, 0.5, 0, 1),
             Enum("row.bankSign", new[] { "opt.normal", "opt.invert" },
                 c => c.BankSign >= 0 ? 0 : 1, (c, i) => c.BankSign = i == 0 ? 1 : -1),
@@ -215,6 +218,7 @@ internal static class MfdPages
         Items =
         {
             Number("row.stallAoa", c => c.StallAoaDeg, (c, v) => c.StallAoaDeg = v, 1, 5, 40, "°"),
+            Number("row.spaaRange", c => c.FriendlySpaaKm, (c, v) => c.FriendlySpaaKm = v, 5, 0, 200, "km"),
             Number("row.aoaWarn", c => c.AoaWarnDeg, (c, v) => c.AoaWarnDeg = v, 1, 5, 45, "°"),
             Number("row.overspeedMach", c => c.OverspeedMach, (c, v) => c.OverspeedMach = v, 0.05, 0.5, 5, "M"),
             Number("row.overspeedIas", c => c.OverspeedKmh, (c, v) => c.OverspeedKmh = v, 50, 200, 3000, "km/h"),
