@@ -39,6 +39,13 @@ Get-Content "dist-wthud\wthud-overlay.log"
 # 面板离线预览（无需游戏）
 $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 & "src\WarThunderHud\bin\Debug\net8.0-windows\WtHud.exe" mfdpreview "out.png" 0    # 参数 = 页索引
+
+# 回归快照预览（视图：snapshots / snapconfirm / snaprestore）
+# 注意：快照目录 = exe 同目录 temp\；dev 预览前先把 dist-wthud\temp\*-save.json 复制到
+#       src\WarThunderHud\bin\Debug\net8.0-windows\temp\，否则列表为空
+& "src\WarThunderHud\bin\Debug\net8.0-windows\WtHud.exe" mfdpreview "out.png" snapshots     # 快照列表
+& "src\WarThunderHud\bin\Debug\net8.0-windows\WtHud.exe" mfdpreview "out.png" snapconfirm   # 二级确认
+& "src\WarThunderHud\bin\Debug\net8.0-windows\WtHud.exe" mfdpreview "out.png" snaprestore   # 真跑一次恢复（写审计、删 session）
 ```
 
 ## 3. 当前版本与提交
@@ -46,6 +53,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.0`（`WarThunderHud.csproj`）
 - 分支：`v0.3.0`（本地与远端一致），tag `v0.3.0-wip`
 - 最近提交（新→旧）：
+  - `a0b3348` feat: 回归快照（列 temp 下 SAVE 快照 → 二次确认 → 恢复）
   - `0e0c3b3` docs: 快照回退规格
   - `827a814` fix: CANCEL 也清 session 快照
   - `955f13f` feat: 每次改动写 session 快照，SAVE 后清空
@@ -81,9 +89,19 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   - `_cancel.json`：每次 F1 打开覆盖，CANCEL 回退到它
   - `session\*-edit.json`：每次改动一份（上限 10），SAVE / CANCEL 后整个删除
   - `*-save.json`：每次 SAVE 一份（保留 10）
+  - `*-restore.json`：回归快照恢复后的审计留痕；**不参与** 10 份裁剪、不进可恢复列表
 - 序列化/反序列化用 `System.Text.Json`，回填用**反射复制属性**（`HudConfig` 没有 `CopyTo`）
 
-### 4.5 其它
+### 4.5 回归快照（v0.3.0 新增）
+- 入口：首页第 **9** 个模块「回归快照」（row-major 填充 → **左列第 5 行 / 侧键 4**；规格文档写的「侧键 8 右列第 4 行」与现行填充顺序冲突，侧键 8 已是「诊断」，未改菜单布局）
+- 页面：`UI/Mfd/Pages/SnapshotsPage.cs`（2 列 × 5 行、PAGE 翻页、单击选中、双击/确认进确认页；空列表画 `snap.empty`）
+- 后端：`ConfigSnapshots.ListRestorable()`（只列 `*-save.json`，按文件名时间倒序）+ `RestoreFrom(path, cfg)`
+- 恢复流程（**不自动 SAVE**）：`ConfirmPage` 确认 → `RestoreFrom(_cfg)`（反射回填 + 删 `temp\session` + 写 `*-restore.json`）→ `_work.CopyFrom(_cfg)` 同步草稿 → 刷新 L10n/主题 → 回首页并 toast「已恢复到 xx:xx 的快照」；`perVehicleOverrides` 一起回退
+- 首页模块的数量显示用 `MfdPage.LiveCount`（实时读快照数）
+- 列表只在进入页面 `Build()` 时读盘：面板开着时新 SAVE 的快照要**退出重进**才看得到
+- 扫描器已支持：`python tools\scan_page_migration.py Snapshots` → CLEAN（`Enter*` 方法体里的 `_mode = Mode.X` 不再误报）
+
+### 4.6 其它
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
 - 中文告警框宽：ASCII 0.62em / 中文 1.0em
 - 机型数据库只收飞机（`tankModels/*` 排除）
@@ -91,24 +109,19 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 5. 未完成的工作（按优先级）
 
-### A. 回归快照（规格已写：`docs/snapshot-restore-spec.md`）
-1. `ConfigSnapshots.ListRestorable()`（列 `temp\*.json`，排除 `_cancel.json`）+ `RestoreFrom(path, cfg)`
-2. 新页面 `SnapshotsPage`（参考 `PickVehiclePage`：2×5 网格、翻页、单击选中、双击确认）
-3. 首页模块 +1「回归快照」（现 8 个，容量 10）
-4. `MfdFrameForm` 增加 `Mode.Snapshots` 的绘制/确认/返回/移动/翻页/单元格点击
-5. 二级确认复用 `ConfirmPage`；确认后恢复 `_cfg`+`_work`，删除 `temp\session`，**不自动 SAVE**
-
-### B. 死代码清理到 CLEAN
+### A. 死代码清理到 CLEAN
 工具：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle`
-当前命中：PickVehicle **1**、Preset **4**、EditNumber **14**、Confirm **22**、PitchDetect **1**
+当前命中：PickVehicle **1**、Preset **4**、EditNumber **14**、Confirm **21**、PitchDetect **1**
+（扫描器已豁免 `Enter*` 方法体里的 `_mode = Mode.X`，所以 Confirm 从 22 降到 21）
 剩余是**仍被使用**的旧字段与直接跳转，需要逐项确认调用方：
 - `_confirmSel`：`DrawDecisionRows`（L~775）仍读它，调用点 L~422 需确认归属
 - `_mode = Mode.X` 直接赋值若干处 → 换成进入函数
 - 已删：`_pickSel/_pickReturn/_pickPage/_editBuffer/_presetSel/_presetTarget` + 5 个死函数
 
-### C. 其它待办
+### B. 其它待办
 - v0.3.0 changelog + 打包发布（尚未做；用户此前说先不发）
 - 面板剩余页面迁移：Help / Detail / Diag / Items 主列表
+- 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 
 ## 6. 踩过的坑（务必避免重复）
 
@@ -124,6 +137,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 | 预设改了不生效 | 只写 `_work` 没写 `_cfg` | 提交时同时应用到运行配置 |
 | robocopy 报错 | 用了不存在的 `/NJL` 参数 | 只用 `/NFL /NDL /NJH /NJS /NP` |
 | 快照迁移覆盖新值 | “新值优先”规则把刚改的值覆盖 | 迁移前确认，或改完再迁移 |
+| 回归快照列表为空 | 快照目录 = **exe 同目录** `temp\`；dev 预览跑的是 `bin\Debug\...`，那里没有 `*-save.json` | 预览前把 `dist-wthud\temp\*-save.json` 复制到 `bin\Debug\net8.0-windows\temp\` |
+| 恢复后历史快照变少 | `*-restore.json` 审计文件被 `SaveHistory` 的 10 份裁剪算进去 | 已在 `History()/SaveHistory` 排除 `-restore.json` |
+| 扫描器把 `Enter*` 入口判成 risky | 迁移后的页面构造入口也写 `_mode = Mode.X` | 扫描器已豁免 `Enter*` 方法体内的赋值 |
 
 ## 7. 验证清单（改完面板必跑）
 
@@ -135,6 +151,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 6. 机型详情数值 = 生效值；RESET 清空该机型覆盖
 7. CANCEL 后 `temp\session` 消失、值回到打开时
 8. `python tools\scan_page_migration.py ...` 命中数不增加
+9. 首页第 9 模块「回归快照」→ 列出 `temp` 下 SAVE 快照（倒序、形如 `11-08 21:37  save`、不含 `_cancel.json`）
+10. 快照页：UP/DOWN 选中、PAGE 翻页、单击选中、双击/CONFIRM 进确认页（文案含时间）
+11. 确认恢复 → 回首页 toast「已恢复到 xx:xx 的快照」；`temp\session` 消失、多一份 `*-restore.json`；**没有自动 SAVE**（面板仍开着，值已是快照值）
+12. `python tools\scan_page_migration.py Snapshots` → verdict CLEAN
 
 ## 8. 协作约定
 
