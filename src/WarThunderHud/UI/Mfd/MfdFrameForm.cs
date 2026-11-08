@@ -852,16 +852,20 @@ public sealed class MfdFrameForm : Form
 
         Row(L10n.Get(LangScope.Screen, "airframe.ra"), prof.RadarAltitude ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
         Row("PULL UP", prof.PullUp ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
-        Row(L10n.Get(LangScope.Screen, "airframe.aoa"), prof.AoaWarn > 0 ? $"{prof.AoaWarn:F0}°" : (zh ? "默认" : "DEFAULT"));
-        Row("IAS 极速", prof.OverspeedIas > 0 ? $"{prof.OverspeedIas:F0} km/h" : (zh ? "默认" : "DEFAULT"));
-        Row("MACH", prof.OverspeedMach > 0 ? $"{prof.OverspeedMach:F2}" : (zh ? "默认" : "DEFAULT"));
+        var aoaWarn = WtHud.Hud.Scoped.Get(_work, "row.aoaWarn", prof.AoaWarn);
+        Row(L10n.Get(LangScope.Screen, "airframe.aoa"), aoaWarn > 0 ? $"{aoaWarn:F0}°" : (zh ? "默认" : "DEFAULT"));
+        var overIas = WtHud.Hud.Scoped.Get(_work, "row.overspeedIas", prof.OverspeedIas);
+        Row("IAS 极速", overIas > 0 ? $"{overIas:F0} km/h" : (zh ? "默认" : "DEFAULT"));
+        var overMach = WtHud.Hud.Scoped.Get(_work, "row.overspeedMach", prof.OverspeedMach);
+        Row("MACH", overMach > 0 ? $"{overMach:F2}" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
         Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
         var shownSign = WtHud.Hud.SettingsRouter.GetFor(_work, id, "row.pitchSign", out var storedSign) ? storedSign : _work.PitchSign;
         Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
             shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
-        Row(L10n.Get(LangScope.Screen, "airframe.stall"), prof.StallAoa > 0 ? $"{prof.StallAoa:F1}°" : (zh ? "未校准" : "DEFAULT"));
+        var stall = WtHud.Hud.Scoped.Get(_work, "row.stallAoa", prof.StallAoa);
+        Row(L10n.Get(LangScope.Screen, "airframe.stall"), stall > 0 ? $"{stall:F1}°" : (zh ? "未校准" : "DEFAULT"));
 
         y += 8 * s;
         foreach (var line in WrapHelpText(g, cjk, L10n.Get(LangScope.Screen, "airframe.note") + ": " + prof.Note,
