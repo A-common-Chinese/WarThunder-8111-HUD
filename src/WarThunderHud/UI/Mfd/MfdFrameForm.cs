@@ -885,6 +885,14 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        // 二级确认页：单击「确认/取消」行选中，双击（或同一行 400ms 内再点）执行该选项
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Confirm &&
+            TryClickConfirmRow(new PointF(e.X, e.Y), e.Clicks))
+        {
+            Invalidate();
+            return;
+        }
+
         // 首页菜单：只有真正点在模块行上才交给 router，其它位置继续走按键逻辑
         if (!_work.Mfd.RealisticKeys && _mode == Mode.Menu)
         {
@@ -1019,6 +1027,42 @@ public sealed class MfdFrameForm : Form
         return false;
     }
 
+    /// <summary>
+    /// 二级确认页的两行（0 = 确认、1 = 取消）命中测试。矩形与 <c>ConfirmPage.Draw</c> 用的是同一个
+    /// <see cref="MfdPageLayout.ListRowRect(int,int)"/>，所以画在哪里就能点在哪里。
+    /// </summary>
+    private bool ConfirmRowHitTest(PointF p, out int option)
+    {
+        option = -1;
+        var s = _layout.Width / 1330f;
+        var pageLayout = new MfdPageLayout(_layout, s);
+        for (var i = 0; i < 2; i++)
+        {
+            var row = pageLayout.ListRowRect(0, 2 + i);
+            row.Inflate(6 * s, 0);          // 高亮条比行矩形左右各宽 6*s
+            if (row.Contains(p)) { option = i; return true; }
+        }
+        return false;
+    }
+
+    /// <summary>确认页行的点击处理（OnMouseDown 与预览钩子共用）：单击选中，双击执行。</summary>
+    private bool TryClickConfirmRow(PointF point, int clicks)
+    {
+        if (!ConfirmRowHitTest(point, out var option)) return false;
+
+        var now = DateTime.UtcNow;
+        var repeated = option == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
+        _lastHitCell = option;
+        _lastHitUtc = now;
+
+        _confirmPage?.Select(option);
+        _confirmSel = option;
+
+        if (repeated || clicks >= 2)
+            _confirmPage?.Handle(MfdCommand.Of(option == 0 ? "confirm.ok" : "confirm.cancel"));
+        return true;
+    }
+
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
@@ -1058,8 +1102,10 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.Confirm)
         {
-            if (index == 2) RunPending();
-            else if (index == 3) CancelPending();
+            // 必须走页面回调：快照确认的「取消」要回快照列表、「确认」要执行恢复。
+            // 直接调 RunPending/CancelPending 会落到快照模块那个 0 行的 Items 页（空白页）。
+            if (index == 2) _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
+            else if (index == 3) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
             return;
         }
 
@@ -1217,7 +1263,7 @@ public sealed class MfdFrameForm : Form
     /// <summary>Leaves a second-level page without applying.</summary>
     private void CancelSecondLevel()
     {
-        if (_mode == Mode.Confirm) { CancelPending(); return; }
+        if (_mode == Mode.Confirm) { _confirmPage?.Handle(MfdCommand.Of("confirm.cancel")); return; }
         if (_mode == Mode.Preset) { _mode = Mode.Items; return; }
         _mode = Mode.Items;
         _captureText = "";
@@ -1301,7 +1347,9 @@ public sealed class MfdFrameForm : Form
                 }
                 break;
             case Mode.Confirm:
-                _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
+                // 跟随页面上高亮的选项：UP/DOWN 移到「取消」后按 CONFIRM 应是取消
+                _confirmPage?.Handle(MfdCommand.Of(
+                    _confirmPage?.Selected == 1 ? "confirm.cancel" : "confirm.ok"));
                 break;
             case Mode.EditNumber:
                 _editPage?.Handle(MfdCommand.Of(
@@ -1796,7 +1844,7 @@ public sealed class MfdFrameForm : Form
 
     private void ResetPage()
     {
-        if (_mode == Mode.Confirm) { CancelPending(); return; }
+        if (_mode == Mode.Confirm) { _confirmPage?.Handle(MfdCommand.Of("confirm.cancel")); return; }
         if (_mode == Mode.Menu) return;
         if (_mode == Mode.Snapshots)                 // 快照列表是只读的，RESET 不碰配置
         {
@@ -1927,6 +1975,18 @@ public sealed class MfdFrameForm : Form
         _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
     }
 
+    /// <summary>Preview helper: presses a physical side key by index (0-9), exactly like clicking it.</summary>
+    public void PreviewSideKey(int index) => SidePressed(Math.Clamp(index, 0, 9));
+
+    /// <summary>Preview helper: clicks a row of the current confirm sheet (0 = 确认, 1 = 取消).</summary>
+    public void PreviewConfirmRowClick(int option, int clicks = 1)
+    {
+        if (_mode != Mode.Confirm) return;
+        var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
+        var row = pageLayout.ListRowRect(0, 2 + Math.Clamp(option, 0, 1));
+        TryClickConfirmRow(new PointF(row.X + row.Width / 2, row.Y + row.Height / 2), clicks);
+    }
+
     private void CancelAndClose()
     {
         // 丢弃本次会话的全部修改：回到打开 F1 时的快照
@@ -1968,7 +2028,7 @@ public sealed class MfdFrameForm : Form
 
     private void SaveAndClose()
     {
-        if (_mode == Mode.Confirm) CancelPending();
+        if (_mode == Mode.Confirm) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
         L10n.StoreToConfig(_work.Language);
         _cfg.CopyFrom(_work);
         if (_savePath != null) _cfg.SaveTo(_savePath); else _cfg.Save();

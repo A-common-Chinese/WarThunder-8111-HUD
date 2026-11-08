@@ -1872,6 +1872,21 @@ public static class Program
             else if (view == "snapshots") { form.PreviewSnapshots(); }
             else if (view == "snapconfirm") { form.PreviewSnapshotConfirm(); }
             else if (view == "snaprestore") { form.PreviewRestoreNewest(); }
+            else if (view == "snapback")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewSideKey(3);          // 确认页上的「取消」侧键
+            }
+            else if (view == "snapclick")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewConfirmRowClick(1);  // 单击「取消」行：只选中，不执行
+            }
+            else if (view == "snapclickok")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewConfirmRowClick(0, 2);   // 双击「确认」行：执行恢复
+            }
             using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
             {
