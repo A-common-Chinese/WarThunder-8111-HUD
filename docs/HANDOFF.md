@@ -53,6 +53,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.0`（`WarThunderHud.csproj`）
 - 分支：`v0.3.0`（本地与远端一致），tag `v0.3.0-wip`
 - 最近提交（新→旧）：
+  - `0b66417` fix: 二级确认页支持鼠标单击/双击，侧键取消回到来源页
   - `a0b3348` feat: 回归快照（列 temp 下 SAVE 快照 → 二次确认 → 恢复）
   - `0e0c3b3` docs: 快照回退规格
   - `827a814` fix: CANCEL 也清 session 快照
@@ -98,6 +99,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 后端：`ConfigSnapshots.ListRestorable()`（只列 `*-save.json`，按文件名时间倒序）+ `RestoreFrom(path, cfg)`
 - 恢复流程（**不自动 SAVE**）：`ConfirmPage` 确认 → `RestoreFrom(_cfg)`（反射回填 + 删 `temp\session` + 写 `*-restore.json`）→ `_work.CopyFrom(_cfg)` 同步草稿 → 刷新 L10n/主题 → 回首页并 toast「已恢复到 xx:xx 的快照」；`perVehicleOverrides` 一起回退
 - 首页模块的数量显示用 `MfdPage.LiveCount`（实时读快照数）
+- 二级确认页（所有 `ConfirmPage`）：鼠标单击「确认/取消」行 = 选中，双击（或同格 400ms 内重点）= 执行；物理侧键 2/3、RESET、CANCEL、SAVE 全部走 `_confirmPage.Handle(...)`，页面回调决定回到哪一页（快照确认取消 → 回快照列表）
 - 列表只在进入页面 `Build()` 时读盘：面板开着时新 SAVE 的快照要**退出重进**才看得到
 - 扫描器已支持：`python tools\scan_page_migration.py Snapshots` → CLEAN（`Enter*` 方法体里的 `_mode = Mode.X` 不再误报）
 
@@ -140,6 +142,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 | 回归快照列表为空 | 快照目录 = **exe 同目录** `temp\`；dev 预览跑的是 `bin\Debug\...`，那里没有 `*-save.json` | 预览前把 `dist-wthud\temp\*-save.json` 复制到 `bin\Debug\net8.0-windows\temp\` |
 | 恢复后历史快照变少 | `*-restore.json` 审计文件被 `SaveHistory` 的 10 份裁剪算进去 | 已在 `History()/SaveHistory` 排除 `-restore.json` |
 | 扫描器把 `Enter*` 入口判成 risky | 迁移后的页面构造入口也写 `_mode = Mode.X` | 扫描器已豁免 `Enter*` 方法体内的赋值 |
+| 二级确认页鼠标点了没反应 | `Mode.Confirm` 没接鼠标命中（只有侧键/键盘） | 用 `ConfirmRowHitTest`/`TryClickConfirmRow`：单击选中、双击执行 |
+| 确认页按「取消」侧键后空白页 | 侧键直接调 `CancelPending()`，绕过页面回调 → `_mode = Items`（快照模块 0 行） | 确认页所有输入统一走 `_confirmPage.Handle(...)`，由页面回调决定返回哪一页 |
+| 确认页高亮在「取消」但 CONFIRM 仍是确认 | `Confirm()` 固定发 `confirm.ok` | 已改为跟随 `_confirmPage.Selected` |
 
 ## 7. 验证清单（改完面板必跑）
 
@@ -153,8 +158,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 8. `python tools\scan_page_migration.py ...` 命中数不增加
 9. 首页第 9 模块「回归快照」→ 列出 `temp` 下 SAVE 快照（倒序、形如 `11-08 21:37  save`、不含 `_cancel.json`）
 10. 快照页：UP/DOWN 选中、PAGE 翻页、单击选中、双击/CONFIRM 进确认页（文案含时间）
-11. 确认恢复 → 回首页 toast「已恢复到 xx:xx 的快照」；`temp\session` 消失、多一份 `*-restore.json`；**没有自动 SAVE**（面板仍开着，值已是快照值）
-12. `python tools\scan_page_migration.py Snapshots` → verdict CLEAN
+11. 确认页（所有二级确认）：鼠标单击某行 = 选中高亮、双击 = 执行；物理侧键 2/3 也执行；侧键「取消」/BACK 回到来源页（快照确认回到快照列表，不再是空白页）
+12. 确认恢复 → 回首页 toast「已恢复到 xx:xx 的快照」；`temp\session` 消失、多一份 `*-restore.json`；**没有自动 SAVE**（面板仍开着，值已是快照值）
+13. `python tools\scan_page_migration.py Snapshots` → verdict CLEAN
 
 ## 8. 协作约定
 

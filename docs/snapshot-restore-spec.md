@@ -73,3 +73,18 @@
 - 后端隔离单测：5 个 `-save.json` 过滤/倒序/`Display` 格式、反射回填、`perVehicleOverrides` 一起回退、`session` 删除、审计写入且不进列表/不参与裁剪、坏文件与缺失文件返回 false 且不改 target —— 全部 PASS
 - 面板预览：`mfdpreview ... snapshots / snapconfirm / snaprestore` 三种视图渲染正确（9 模块首页、5 条快照倒序、确认页文案含时间、恢复后首页 toast）
 - `python tools/scan_page_migration.py Snapshots` → CLEAN；Debug/Release 编译 0 错误；发布到 `dist-wthud` 后启动正常（30fps 日志无异常）
+
+## 修复记录（2026-11-08，commit `0b66417`）
+
+用户实测发现两个 bug，均已修复并用预览回归：
+
+1. **所有二级确认页鼠标无效**（单击不选中、双击不执行）
+   - 原因：`MfdFrameForm.OnMouseDown` 只有 Menu/Items/PickVehicle/Snapshots/Preset/EditNumber 的命中分支，`Mode.Confirm` 没有命中测试；落到通用 `RowHitTest` 分支后既不改选中也不执行。
+   - 修复：`ConfirmRowHitTest(point) → option`（行矩形与 `ConfirmPage.Draw` 共用 `MfdPageLayout.ListRowRect(0, 2+i)`，左右各放宽 6*s 覆盖高亮条）+ `TryClickConfirmRow(point, clicks)`：单击 `_confirmPage.Select(option)`，双击（或同一格 400ms 内重点）执行 `confirm.ok / confirm.cancel`。
+   - 顺带：`Confirm()` 的 CONFIRM 键改为跟随 `_confirmPage.Selected`（高亮在「取消」时不再误执行确认）。
+
+2. **快照二级确认页按「取消」侧键 → 空白页**
+   - 原因：`SidePressed` 在 `Mode.Confirm` 直接调 `RunPending()/CancelPending()`，绕过 `ConfirmPage` 的 `onOk/onCancel`；快照确认的取消于是执行 `_mode = Mode.Items`，而快照模块行列表为 0 → 满屏 `—` 的空页。
+   - 修复：确认页的物理侧键 2/3、RESET、CANCEL、SAVE 路径全部改走 `_confirmPage.Handle(...)`，由页面回调决定返回哪一页（快照取消 → 快照列表；通用确认取消 → 原模块页 / 机型详情）。
+
+回归视图（`mfdpreview`）：`snapback`（侧键取消 → 回列表）、`snapclick`（单击「取消」行 → 只高亮）、`snapclickok`（双击「确认」行 → 执行恢复）；三者渲染均符合预期，扫描器仍 CLEAN。
