@@ -1426,7 +1426,6 @@ public sealed class MfdFrameForm : Form
             _menuSel = (_menuSel + delta + _pages.Count) % _pages.Count;
             EnsureMenuPage();               // 路由器和菜单页是懒建的，必须先建好再同步
             _menuRouter?.Move(delta);       // 否则 CONFIRM 时索引还是 0（永远打开第一项）
-            Console.WriteLine($"menu move: sel={_menuSel} router={_menuRouter?.SelectedIndex} delta={delta}");
         }
         else
         {
@@ -1447,7 +1446,6 @@ public sealed class MfdFrameForm : Form
         {
             case Mode.Menu:
                 EnsureMenuPage();
-                Console.WriteLine($"menu confirm: sel={_menuSel} router={_menuRouter!.SelectedIndex}");
                 if (_menuRouter!.ActivateSelected() is { Id: "menu.open" } cmd2
                     && int.TryParse(cmd2.Arg, out var sel))
                 {
