@@ -178,6 +178,8 @@ public static class L10n
         ["row.rollCoupleMode"] = ("坡度耦合方式", "ROLL COUPLING MODE"),
         ["row.rollCouple"] = ("相机随滚转", "ROLL COUPLING"),
         ["row.bankSign"] = ("坡度方向", "BANK DIRECTION"),
+        ["scope.global"] = ("全局数据", "GLOBAL"),
+        ["scope.vehicle"] = ("机型数据：", "AIRFRAME: "),
         ["row.pitchDetect"] = ("自动判断俯仰方向", "AUTO PITCH SIGN"),
         ["pitchdetect.title"] = ("俯仰方向检测", "PITCH SIGN CHECK"),
         ["pitchdetect.running"] = ("正在捕捉姿态，建议持续 5 秒", "Capturing attitude - keep flying for 5 s"),

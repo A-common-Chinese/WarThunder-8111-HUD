@@ -255,6 +255,11 @@ public sealed class MfdFrameForm : Form
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
+        var scopeText = WtHud.Hud.EditScope.HeaderText;
+        using (var scopeFont = MfdTheme.CjkAt(15f * s))
+        using (var scopeBrush = new SolidBrush(MfdTheme.Green))
+            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Left + pad, glass.Top + 30 * s,
+                         StringFormat.GenericTypographic);
         g.DrawString(title, meta, muted, glass.Left + glass.Width / 2 - g.MeasureString(title, meta).Width / 2,
                      glass.Top + 8 * s);
         var pages = _mode == Mode.Items && CurrentPage != null ? (CurrentPage.Items.Count + 9) / 10 : 1;
@@ -1553,7 +1558,14 @@ public sealed class MfdFrameForm : Form
                     {
                         _pickReturn = Mode.EditNumber;
                         _pickPageUI = new Pages.PickVehiclePage(
-                            onPicked: name => { WtHud.Hud.AirframeDb.ManualVehicle = name; _dirty = true; _nav.Clear(); _mode = Mode.EditNumber; },
+                            onPicked: name =>
+                            {
+                                if (string.IsNullOrEmpty(name)) WtHud.Hud.EditScope.UseGlobal();
+                                else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
+                                _dirty = true;
+                                _nav.Clear();
+                                _mode = Mode.EditNumber;
+                            },
                             onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
                             layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
                         _nav.Push(_pickPageUI);

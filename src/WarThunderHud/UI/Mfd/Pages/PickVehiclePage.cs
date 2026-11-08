@@ -30,6 +30,7 @@ internal sealed class PickVehiclePage : MfdPageBase
     public override void Build()
     {
         _list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+        _list.Insert(0, "");        // 空字符串 = 全局（第一页第一项）
         Buttons.Clear();
         for (var i = 0; i < 10; i++)
         {
@@ -97,7 +98,10 @@ internal sealed class PickVehiclePage : MfdPageBase
                 g.FillRectangle(hi, row);
             }
             using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
-            g.DrawString(_list[index], body, fg, row.X + 10 * s, row.Y + 6 * s,
+            var label = string.IsNullOrEmpty(_list[index])
+                ? L10n.Get(LangScope.Screen, "scope.global")
+                : _list[index];
+            g.DrawString(label, body, fg, row.X + 10 * s, row.Y + 6 * s,
                          StringFormat.GenericTypographic);
         }
     }
