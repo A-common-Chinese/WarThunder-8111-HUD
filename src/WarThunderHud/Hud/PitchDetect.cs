@@ -22,6 +22,11 @@ public static class PitchDetect
     /// <summary>Live number of usable samples (updated while capturing).</summary>
     public static int SampleCount => Samples.Count;
 
+    /// <summary>Last raw inputs (null = the game did not report that field).</summary>
+    public static double? LastGamePitch { get; private set; }
+    public static double? LastGamma { get; private set; }
+    public static int Rejected { get; private set; }
+
     public static int Sign { get; private set; }
     public static double Confidence { get; private set; }
     public static int UsedSamples { get; private set; }
@@ -40,6 +45,8 @@ public static class PitchDetect
     public static void Begin()
     {
         Samples.Clear();
+        Rejected = 0;
+        LastGamePitch = null; LastGamma = null;
         Sign = 0;
         Confidence = 0;
         UsedSamples = 0;
@@ -57,8 +64,13 @@ public static class PitchDetect
     /// <summary>Fed from the overlay loop: game pitch (deg) and flight-path estimate (deg).</summary>
     public static void Feed(double? gamePitch, double? gammaDeg)
     {
-        if (!Active || gamePitch is null || gammaDeg is null) return;
-        if (Math.Abs(gamePitch.Value) < 5.0) return;          // level flight carries no sign information
+        if (!Active) return;
+        LastGamePitch = gamePitch;
+        LastGamma = gammaDeg;
+
+        if (gamePitch is null || gammaDeg is null) { Rejected++; return; }
+        if (Math.Abs(gamePitch.Value) < 5.0) { Rejected++; return; }   // level flight: no sign info
+
         Samples.Add((gammaDeg.Value, gamePitch.Value));
         if (Samples.Count > 2000) Samples.RemoveAt(0);
     }

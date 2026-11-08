@@ -1171,6 +1171,17 @@ public static class Program
             if (WtHud.Hud.PitchDetect.Active)
                 WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, snap.FlightPathAngleDeg);
 
+            if (WtHud.Hud.PitchDetect.Active && nowTicks - lastPitchProbeTicks > 2000)
+            {
+                lastPitchProbeTicks = nowTicks;
+                var dbgPitch = snap.PitchDeg;
+                Console.WriteLine("pitchdetect probe: pitch=" +
+                                  (dbgPitch.HasValue ? dbgPitch.Value.ToString("F1") : "null") +
+                                  " gamma=" + snap.FlightPathAngleDeg.ToString("F1") +
+                                  " samples=" + WtHud.Hud.PitchDetect.SampleCount +
+                                  " skip=" + WtHud.Hud.PitchDetect.Rejected);
+            }
+
             long key = FrameKey(snap, shown, opt, cal, draw, hiddenByView);
             if (key != lastFrameKey)
             {
@@ -1621,6 +1632,7 @@ public static class Program
     private static DateTime navDbgUtc = DateTime.MinValue;
     private static int lastAircraftMarkers = -1;
     private static long lastFramePollTicks;
+    private static long lastPitchProbeTicks;
     private static long perfLastPrintTicks;
     private static double perfBuildMs, perfDrawMs, perfPresentMs;
     private static int perfPresents, perfLoops;

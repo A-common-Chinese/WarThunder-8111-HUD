@@ -113,6 +113,14 @@ internal sealed class PitchDetectPage : MfdPageBase
                      body, accent, x, y);
         y += 46 * s;
 
+        var gp = WtHud.Hud.PitchDetect.LastGamePitch;
+        var gm = WtHud.Hud.PitchDetect.LastGamma;
+        var gpText = gp.HasValue ? gp.Value.ToString("F1") : "n/a";
+        var gmText = gm.HasValue ? gm.Value.ToString("F1") : "n/a";
+        var raw = "P " + gpText + "   G " + gmText + "   skip " + WtHud.Hud.PitchDetect.Rejected;
+        g.DrawString(raw, body, text, x, y);
+        y += 34 * s;
+
         g.DrawString("CONFIRM = " + L10n.Get(LangScope.Screen, "pitchdetect.ok"), body, text, x, y);
     }
 }
