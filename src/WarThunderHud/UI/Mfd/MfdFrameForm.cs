@@ -1425,7 +1425,8 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Menu)
         {
             _menuSel = (_menuSel + delta + _pages.Count) % _pages.Count;
-            _menuRouter?.Move(delta);       // 路由器的选中项必须同步，否则 CONFIRM 永远打开第一项
+            EnsureMenuPage();               // 路由器和菜单页是懒建的，必须先建好再同步
+            _menuRouter?.Move(delta);       // 否则 CONFIRM 时索引还是 0（永远打开第一项）
         }
         else
         {
