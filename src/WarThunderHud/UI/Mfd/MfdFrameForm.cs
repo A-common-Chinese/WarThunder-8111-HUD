@@ -1565,7 +1565,13 @@ public sealed class MfdFrameForm : Form
                 var target = item;
                 _presetPage = new Pages.PresetPage(
                     currentKey: () => target.GetPreset?.Invoke(_work) ?? "green",
-                    onApply: key => { target.SetPreset?.Invoke(_work, key); target.SetPreset?.Invoke(_cfg, key); _nav.Clear(); _mode = Mode.Items; _dirty = true; },
+                    onApply: key =>
+                    {
+                        // 和双击走同一条路径：ApplyPreset 会同步主题与草稿
+                        _presetSel = Math.Max(0, Array.FindIndex(MfdTheme.Presets, p => p.Key == key));
+                        _nav.Clear();
+                        ApplyPreset();
+                    },
                     onCancel: () => { _nav.Clear(); _presetTarget = null; _mode = Mode.Items; },
                     layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
                 _presetSel = _presetPage.Selected;
