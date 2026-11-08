@@ -260,7 +260,12 @@ public sealed class MfdFrameForm : Form
             var scopeText = WtHud.Hud.EditScope.HeaderText;
             using var scopeFont = MfdTheme.CjkAt(15f * s);
             using var scopeBrush = new SolidBrush(MfdTheme.Green);
-            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Right - pad - 150 * s, glass.Top + 30 * s,
+
+            // 左侧显示；机型名过长就截断，避免越过边框
+            var maxW = glass.Width * 0.45f;
+            while (scopeText.Length > 4 && g.MeasureString(scopeText, scopeFont).Width > maxW)
+                scopeText = scopeText[..^2] + "…";
+            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Left + pad, glass.Top + 30 * s,
                          StringFormat.GenericTypographic);
         }
         g.DrawString(title, meta, muted, glass.Left + glass.Width / 2 - g.MeasureString(title, meta).Width / 2,
