@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -136,7 +136,7 @@ public sealed class HudDrawer : IDisposable
         var key = (Math.Round(size, 1), align);
         if (_formats.TryGetValue(key, out var cached)) return cached;
 
-        var fmt = _write.CreateTextFormat("Consolas", null, FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, (float)size);
+        var fmt = _write.CreateTextFormat("Consolas", null!, FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, FontStretch.Normal, (float)size);
         fmt.TextAlignment = align switch
         {
             HudAlign.Left => TextAlignment.Leading,

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -275,11 +275,12 @@ public sealed class OverlayWindow : IDisposable
         _device = device;
         _context = context;
 
-        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory factory).CheckError();
-        _d2dFactory = factory.QueryInterface<ID2D1Factory1>();
+        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory? factory).CheckError();
+        _d2dFactory = (factory ?? throw new InvalidOperationException("D2D1 factory unavailable"))
+            .QueryInterface<ID2D1Factory1>();
 
-        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory write).CheckError();
-        _dwrite = write;
+        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory? write).CheckError();
+        _dwrite = write ?? throw new InvalidOperationException("DWrite factory unavailable");
 
         using var dxgiDevice = _device.QueryInterface<IDXGIDevice>();
         using var adapter = dxgiDevice.GetAdapter();

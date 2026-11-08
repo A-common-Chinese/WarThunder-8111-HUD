@@ -378,7 +378,7 @@ public static class Program
                 if (s.VehicleType.StartsWith("tankModels", StringComparison.OrdinalIgnoreCase)
                     || s.VehicleType.StartsWith("tank", StringComparison.OrdinalIgnoreCase))
                 {
-                    AirframeDb.CurrentVehicle = null;
+                    AirframeDb.CurrentVehicle = "";   // 空串 = 不是飞机，不参与飞行阈值
                 }
                 else
                 {
@@ -1334,9 +1334,9 @@ public static class Program
             && (DateTime.UtcNow - navDbgUtc).TotalSeconds >= 2)
         {
             navDbgUtc = DateTime.UtcNow;
-            Console.WriteLine($"[navdbg] enter map={(map == null ? "null" : "ok")} " +
-                              $"self={(map?.Self is null ? "null" : "ok")} units={map?.GroundUnits.Count ?? -1} " +
-                              $"fields={map?.Airfields.Count ?? -1}");
+            Console.WriteLine($"[navdbg] enter map=ok " +
+                              $"self={(map.Self is null ? "null" : "ok")} units={map.GroundUnits.Count} " +
+                              $"fields={map.Airfields.Count}");
         }
 
         lastAircraftMarkers = map.AircraftMarkers;
