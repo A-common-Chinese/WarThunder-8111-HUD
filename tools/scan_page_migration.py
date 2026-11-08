@@ -41,6 +41,8 @@ LEGACY = {
     "EditNumber": ["_editBuffer", "_confirmSel"],
     "PitchDetect": ["_detectTimer"],
     "Snapshots": [],          # 快照页由页面层整体接管，没有遗留状态字段
+    "Help": ["_helpEntries", "_helpSel", "_helpPage", "DrawHelpStructure"],
+    "Detail": ["_detailTarget", "DrawAirframePage"],
 }
 
 # MfdFrameForm 的方法声明行：4 格缩进 + 访问修饰符 + 返回类型 + 方法名 + "("

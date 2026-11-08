@@ -52,13 +52,11 @@ public sealed class MfdFrameForm : Form
     private string? _toast;
     private string _captureText = "";      // 键位捕获结果
     private readonly HashSet<Keys> _heldKeys = new();   // 捕获时当前按住的键
-    private int _helpPage;
-    private int _helpSel;
-    private List<(int Line, string Key)> _helpEntries = new();
     private Mode _helpPrevMode = Mode.Menu;
     private int _helpPrevPage;
     private int _helpPrevItemSel;
-    private MfdItem? _detailTarget;
+    private Pages.HelpPage? _helpPageUI;
+    private Pages.DetailPage? _detailPageUI;
     private bool _resetConfirm;
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
@@ -274,8 +272,8 @@ public sealed class MfdFrameForm : Form
             case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
             case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
-            case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
+            case Mode.Help: _helpPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
@@ -416,7 +414,7 @@ public sealed class MfdFrameForm : Form
         DrawDecisionRows(g, s, glass, pad);
     }
 
-    /// <summary>Enters the help page, remembering where we came from.</summary>
+    /// <summary>HELP 键：进入帮助页（再按一次退出）。页面的内容/翻页/选中都在 HelpPage 里。</summary>
     private void EnterHelp()
     {
         // HELP 再按一次 = 关闭帮助（避免把 Help 存成“返回目标”导致退不出来）
@@ -425,324 +423,25 @@ public sealed class MfdFrameForm : Form
         _helpPrevMode = _mode;
         _helpPrevPage = _page;
         _helpPrevItemSel = _itemSel;
-        _helpPage = 0;
-        _mode = Mode.Help;
+        _helpPageUI = new Pages.HelpPage(
+            pages: () => _pages,
+            cfg: () => _cfg,
+            onClose: LeaveHelp,
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_helpPageUI);
         _toast = null;
+        _mode = Mode.Help;
     }
 
     private void LeaveHelp()
     {
+        _nav.Clear();
         _mode = _helpPrevMode;      // EnterHelp 在已是 Help 时提前返回，所以这里不会是 Help
         _page = _helpPrevPage;
         _itemSel = _helpPrevItemSel;
         _toast = null;
         SyncDiagProbe();
     }
-
-    private const float HelpLineHeight = 30f;
-
-    private int HelpLinesPerPage(RectangleF glass, float s) =>
-        Math.Max(8, (int)((glass.Height - 78 * s) / (HelpLineHeight * s)));
-
-    /// <summary>Flat help content: key reference followed by every module and every item.</summary>
-    private List<string> BuildHelpLines()
-    {
-        var zh = L10n.Screen == Lang.Zh;
-        var lines = new List<string>();
-        _helpEntries = new List<(int, string)>();
-        void Add(string t) => lines.Add(t);
-        void AddEntry(string t, string key)
-        {
-            _helpEntries.Add((lines.Count, key));
-            lines.Add(t);
-        }
-
-        // ---- 物理按键：每一项都带方框 ----
-        Add(zh ? "[ 物理按键功能说明 ]" : "[ PHYSICAL KEY FUNCTIONS ]");
-        Add("");
-        Add(zh ? " \u25a1 UP       : 向上移动高亮选项" : " \u25a1 UP       : move highlight up");
-        Add(zh ? " \u25a1 DOWN     : 向下移动高亮选项" : " \u25a1 DOWN     : move highlight down");
-        Add(zh ? " \u25a1 CONFIRM  : 确认 / 进入所选模块" : " \u25a1 CONFIRM  : apply / enter module");
-        Add(zh ? " \u25a1 BACK     : 返回上一级" : " \u25a1 BACK     : leave one level");
-        Add(zh ? " \u25a1 HELP     : 打开本手册" : " \u25a1 HELP     : this manual");
-        Add(zh ? " \u25a1 RESET    : 本页恢复默认" : " \u25a1 RESET    : reset current page");
-        Add(zh ? " \u25a1 PAGE-/PAGE+: 翻页" : " \u25a1 PAGE+/-  : flip pages");
-        Add(zh ? " \u25a1 CANCEL   : 放弃改动并关闭" : " \u25a1 CANCEL   : discard and close");
-        Add(zh ? " \u25a1 SAVE     : 保存并关闭" : " \u25a1 SAVE     : save and close");
-        Add(zh ? " \u25a1 侧键 x10 : 选择对应行" : " \u25a1 SIDE KEYS: select row");
-        Add("");
-
-        // ---- 结构树：全部展开 ----
-        AddEntry(zh ? "\u251c\u2500 L0  首页" : "\u251c\u2500 L0  MAIN MENU", "L0");
-        for (var m = 0; m < _pages.Count; m++)
-        {
-            var p = _pages[m];
-            var isLast = m == _pages.Count - 1;
-            var branch = isLast ? "\u2514\u2500" : "\u251c\u2500";
-            var name = L10n.Get(LangScope.Screen, p.MenuKey).ToUpperInvariant();
-            AddEntry($"     {branch} \u25b8 {name}", p.MenuKey);
-
-            for (var i = 0; i < p.Items.Count; i++)
-            {
-                var it = p.Items[i];
-                var itemLast = i == p.Items.Count - 1;
-                var tail = itemLast ? "\u2514\u2500" : "\u251c\u2500";
-                var side = i % 2 == 0 ? (zh ? "左" : "L") : (zh ? "右" : "R");
-                var slot = $"{side}{i / 2 + 1}";
-                var label = L10n.Get(LangScope.Screen, it.LabelKey);
-                var value = it.ValueText(_cfg);
-                AddEntry($"      |        {tail} {slot,-4} {label,-20} [{value}]", it.LabelKey);
-            }
-        }
-
-        return lines;
-    }
-
-
-    /// <summary>Selects the help tree entry under the mouse (only in non-key-only mode).</summary>
-    private bool TryClickHelpLine(PointF p)
-    {
-        if (!_layout.Glass.Contains(p)) return false;
-
-        var s = _layout.Width / 1330f;
-        var glass = _layout.Glass;
-        var pad = 18 * s;
-        var textTop = glass.Top + 72 * s;                 // 页眉 + 虚线之后
-        var lineH = HelpLineHeight * s;
-
-        var per = HelpLinesPerPage(glass, s);
-        var lines = BuildHelpLines();
-        var total = Math.Max(1, (lines.Count + per - 1) / per);
-        if (_helpPage >= total) _helpPage = total - 1;
-
-        var rowIndex = (int)((p.Y - textTop) / lineH);
-        if (rowIndex < 0) return false;
-
-        var lineIndex = _helpPage * per + rowIndex;
-        for (var i = 0; i < _helpEntries.Count; i++)
-        {
-            if (_helpEntries[i].Line != lineIndex) continue;
-            _helpSel = i;
-            return true;
-        }
-
-        // 点到非结构树行：选中本页最近的条目，保持左右一致
-        for (var i = 0; i < _helpEntries.Count; i++)
-        {
-            if (_helpEntries[i].Line / per == _helpPage) { _helpSel = i; return true; }
-        }
-        return false;
-    }
-
-    /// <summary>Selects the first tree entry that lives on the given page.</summary>
-    private void SelectFirstEntryOnPage(int page, int per)
-    {
-        _helpPage = page;
-        for (var i = 0; i < _helpEntries.Count; i++)
-        {
-            if (_helpEntries[i].Line / per == page) { _helpSel = i; return; }
-        }
-        _helpSel = 0;
-    }
-
-    private void MoveHelpSelection(int delta)
-    {
-        if (_helpEntries.Count == 0) return;
-        _helpSel = Math.Clamp(_helpSel + delta, 0, _helpEntries.Count - 1);
-    }
-
-    /// <summary>Draws the description of the selected entry in a right-hand column.</summary>
-    private void DrawHelpDescription(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        if (_helpEntries.Count == 0) return;
-        _helpSel = Math.Clamp(_helpSel, 0, _helpEntries.Count - 1);
-        var key = _helpEntries[_helpSel].Key;
-        var text = HelpDescriptions.Get(key, L10n.Screen == Lang.Zh);
-        if (string.IsNullOrWhiteSpace(text)) return;
-
-        using var title = MfdTheme.CjkAt(16f * s);
-        using var body = MfdTheme.CjkAt(16f * s);
-        using var accent = new SolidBrush(MfdTheme.Green);
-        using var ink = new SolidBrush(MfdTheme.Text);
-
-        var colX = glass.Right - glass.Width * 0.34f;
-        var colW = glass.Width * 0.34f - pad;
-        using (var sep = new Pen(MfdTheme.Muted, 1f))
-        {
-            sep.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
-            g.DrawLine(sep, colX - 8 * s, glass.Top + 40 * s, colX - 8 * s, glass.Bottom - 34 * s);
-        }
-
-        g.DrawString("INFO", title, accent, colX, glass.Top + 42 * s, StringFormat.GenericTypographic);
-
-        var y = glass.Top + 70 * s;
-        foreach (var raw in text.Split('\n'))
-        {
-            foreach (var line in WrapHelpText(g, body, raw, colW))
-            {
-                if (y > glass.Bottom - 40 * s) return;
-                g.DrawString(line, body, ink, colX, y, StringFormat.GenericTypographic);
-                y += 24 * s;
-            }
-        }
-    }
-
-    /// <summary>Wraps help text: Latin words stay whole, CJK characters break individually.</summary>
-    private static List<string> WrapHelpText(System.Drawing.Graphics g, Font font, string text, float maxWidth)
-    {
-        var result = new List<string>();
-        var tokens = new List<string>();
-        var word = "";
-        foreach (var ch in text)
-        {
-            var isAsciiWord = ch < 0x80 && ch != ' ';
-            if (isAsciiWord) { word += ch; continue; }
-            if (word.Length > 0) { tokens.Add(word); word = ""; }
-            tokens.Add(ch.ToString());
-        }
-        if (word.Length > 0) tokens.Add(word);
-
-        var line = "";
-        foreach (var t in tokens)
-        {
-            if (t == " ") { line += " "; continue; }
-            var candidate = line + t;
-            if (g.MeasureString(candidate, font).Width > maxWidth && line.Trim().Length > 0)
-            {
-                result.Add(line.TrimEnd());
-                line = t;
-            }
-            else line = candidate;
-        }
-        if (line.Trim().Length > 0) result.Add(line.TrimEnd());
-        return result;
-    }
-
-    private void DrawHelpStructure(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var head = MfdTheme.CjkAt(22f * s);
-        using var body = MfdTheme.MonoAt(19f * s);
-        using var cjk = MfdTheme.CjkAt(19f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var accent = new SolidBrush(MfdTheme.Green);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var zh = L10n.Screen == Lang.Zh;
-        var left = glass.Left + pad;
-        var y = glass.Top + 34 * s;
-
-        var lines = BuildHelpLines();
-        var per = HelpLinesPerPage(glass, s);
-        var total = Math.Max(1, (lines.Count + per - 1) / per);
-        _helpPage = Math.Clamp(_helpPage, 0, total - 1);
-
-        var title = zh ? "SYSTEM HELP / 导航手册" : "SYSTEM HELP / NAVIGATION";
-        g.DrawString(title, head, accent, left, y, StringFormat.GenericTypographic);
-        var pager = $"{_helpPage + 1}/{total}";
-        g.DrawString(pager, head, text, glass.Right - pad - g.MeasureString(pager, head).Width, y,
-                     StringFormat.GenericTypographic);
-
-        y += 30 * s;
-        using (var dash = new Pen(MfdTheme.Muted, 1f))
-        {
-            dash.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
-            dash.DashPattern = new[] { 4f, 3f };
-            g.DrawLine(dash, left, y, glass.Right - pad, y);
-        }
-        y += 8 * s;
-
-        // 逐行填满整页（跨模块连续排版）
-        // 切页后自动选中本页第一个结构树项
-        if (_helpEntries.Count > 0)
-        {
-            var selLine = _helpEntries[Math.Clamp(_helpSel, 0, _helpEntries.Count - 1)].Line;
-            if (selLine / per != _helpPage) SelectFirstEntryOnPage(_helpPage, per);
-        }
-
-        var lineH = HelpLineHeight * s;
-        var start = _helpPage * per;
-        var selLineIndex = _helpEntries.Count > 0
-            ? _helpEntries[Math.Clamp(_helpSel, 0, _helpEntries.Count - 1)].Line
-            : -1;
-
-        for (var i = start; i < Math.Min(lines.Count, start + per); i++)
-        {
-            if (y + lineH > glass.Bottom - 30 * s) break;
-            var line = lines[i];
-            var f = line.Any(c => c > 0x7F) ? cjk : body;
-
-            if (i == selLineIndex)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, left - 4 * s, y - 2 * s,
-                                glass.Width * 0.62f, lineH - 4 * s);
-                using var dark = new SolidBrush(MfdTheme.Dark);
-                g.DrawString(line, f, dark, left, y, StringFormat.GenericTypographic);
-            }
-            else
-            {
-                g.DrawString(line, f, line.StartsWith("  [") ? muted : text, left, y,
-                             StringFormat.GenericTypographic);
-            }
-            y += lineH;
-        }
-
-        DrawHelpDescription(g, s, glass, pad);
-    }
-
-
-    /// <summary>Airframe detail page: capability summary for the selected type.</summary>
-    private void DrawAirframePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        var zh = L10n.Screen == Lang.Zh;
-        var id = _detailTarget?.LabelKey ?? "";
-        var prof = WtHud.Hud.AirframeDb.Get(id);
-
-        using var head = MfdTheme.CjkAt(24f * s);
-        using var body = MfdTheme.MonoAt(19f * s);
-        using var cjk = MfdTheme.CjkAt(19f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var accent = new SolidBrush(MfdTheme.Green);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var left = glass.Left + pad;
-        var y = glass.Top + 16 * s;
-        g.DrawString(id, head, accent, left, y, StringFormat.GenericTypographic);
-
-        y += 38 * s;
-        void Row(string label, string value)
-        {
-            g.DrawString(label, cjk, muted, left, y, StringFormat.GenericTypographic);
-            g.DrawString(value, body, text, left + 200 * s, y, StringFormat.GenericTypographic);
-            y += 28 * s;
-        }
-
-        Row(L10n.Get(LangScope.Screen, "airframe.ra"), prof.RadarAltitude ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
-        Row("PULL UP", prof.PullUp ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
-        var aoaWarn = WtHud.Hud.Scoped.Get(_work, "row.aoaWarn", prof.AoaWarn);
-        Row(L10n.Get(LangScope.Screen, "airframe.aoa"), aoaWarn > 0 ? $"{aoaWarn:F0}°" : (zh ? "默认" : "DEFAULT"));
-        var overIas = WtHud.Hud.Scoped.Get(_work, "row.overspeedIas", prof.OverspeedIas);
-        Row("IAS 极速", overIas > 0 ? $"{overIas:F0} km/h" : (zh ? "默认" : "DEFAULT"));
-        var overMach = WtHud.Hud.Scoped.Get(_work, "row.overspeedMach", prof.OverspeedMach);
-        Row("MACH", overMach > 0 ? $"{overMach:F2}" : (zh ? "默认" : "DEFAULT"));
-        Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
-        Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
-        Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
-        var shownSign = WtHud.Hud.SettingsRouter.GetFor(_work, id, "row.pitchSign", out var storedSign) ? storedSign : _work.PitchSign;
-        Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
-            shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
-        var stall = WtHud.Hud.Scoped.Get(_work, "row.stallAoa", prof.StallAoa);
-        Row(L10n.Get(LangScope.Screen, "airframe.stall"), stall > 0 ? $"{stall:F1}°" : (zh ? "未校准" : "DEFAULT"));
-
-        y += 8 * s;
-        foreach (var line in WrapHelpText(g, cjk, L10n.Get(LangScope.Screen, "airframe.note") + ": " + prof.Note,
-                     glass.Width - pad * 2))
-        {
-            g.DrawString(line, cjk, muted, left, y, StringFormat.GenericTypographic);
-            y += 26 * s;
-        }
-    }
-
 
 
 
@@ -908,7 +607,8 @@ public sealed class MfdFrameForm : Form
         }
 
         // 帮助页：非拟真模式下可直接点击某一行来选中
-        if (!_work.Mfd.RealisticKeys && _mode == Mode.Help && TryClickHelpLine(new PointF(e.X, e.Y)))
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Help &&
+            _helpPageUI?.TryClick(new PointF(e.X, e.Y)) == true)
         {
             Invalidate();
             return;
@@ -1246,12 +946,8 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.Help)
         {
-            var sScale = _layout.Width / 1330f;
-            var per = HelpLinesPerPage(_layout.Glass, sScale);
-            BuildHelpLines();
-            MoveHelpSelection(delta);
-            if (_helpEntries.Count > 0)
-                _helpPage = _helpEntries[_helpSel].Line / per;
+            _helpPageUI?.Move(delta);
+            _toast = null;
             return;
         }
 
@@ -1476,10 +1172,30 @@ public sealed class MfdFrameForm : Form
         _mode = Mode.CaptureKey;
     }
 
-    /// <summary>机型行 → 机型详情页。</summary>
-    private void EnterDetail(MfdItem item)
+    /// <summary>机型行 → 机型详情页；item = null 表示回到已有详情页（重置确认后返回）。</summary>
+    private void EnterDetail(MfdItem? item = null)
     {
-        _detailTarget = item;
+        if (item != null || _detailPageUI == null)
+        {
+            _detailPageUI = new Pages.DetailPage(
+                vehicleId: item?.LabelKey ?? "",
+                cfg: () => _work,
+                onBack: () =>
+                {
+                    _nav.Clear();
+                    _mode = Mode.Items;
+                    _toast = null;
+                },
+                onReset: () =>
+                {
+                    _resetConfirm = true;
+                    _closeConfirm = false;
+                    _pendingAction = null;
+                    EnterConfirm();
+                },
+                layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+            _nav.Push(_detailPageUI);
+        }
         _mode = Mode.Detail;
     }
 
@@ -1520,7 +1236,7 @@ public sealed class MfdFrameForm : Form
     {
         if (_resetConfirm)
         {
-            var id = _detailTarget?.LabelKey ?? "";
+            var id = _detailPageUI?.VehicleId ?? "";
             WtHud.Hud.AirframeDb.ResetOverrides(id);
 
             // 同时清掉该机型在统一覆盖表里的数据，否则详情页仍显示旧的覆盖值
@@ -1532,7 +1248,7 @@ public sealed class MfdFrameForm : Form
             _resetConfirm = false;
             _dirty = true;
             WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
-            _mode = Mode.Detail;
+            EnterDetail();               // 回到详情页（复用同一页面，数值已更新）
             _toast = L10n.Get(LangScope.Screen, "toast.resetAirframe");
             return;
         }
@@ -1565,7 +1281,7 @@ public sealed class MfdFrameForm : Form
         if (_resetConfirm)
         {
             _resetConfirm = false;
-            _mode = Mode.Detail;
+            EnterDetail();               // 取消重置：回到详情页
             _toast = null;
             return;
         }
@@ -1718,12 +1434,10 @@ public sealed class MfdFrameForm : Form
                 _nav.Current?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Help:
-                LeaveHelp();
+                _helpPageUI?.Handle(MfdCommand.Of("nav.back"));   // onClose -> LeaveHelp
                 break;
             case Mode.Detail:
-                _mode = Mode.Items;
-                _detailTarget = null;
-                _toast = null;
+                _detailPageUI?.Handle(MfdCommand.Of("nav.back")); // onBack -> 模块页
                 break;
             case Mode.PickVehicle:
                 _pickPageUI?.Handle(MfdCommand.Of("nav.back"));
@@ -1749,11 +1463,7 @@ public sealed class MfdFrameForm : Form
     {
         if (_mode == Mode.Help)
         {
-            var sScale = _layout.Width / 1330f;
-            var per = HelpLinesPerPage(_layout.Glass, sScale);
-            var total = Math.Max(1, (BuildHelpLines().Count + per - 1) / per);
-            var helpNext = Math.Clamp(_helpPage + delta, 0, total - 1);
-            if (helpNext != _helpPage) SelectFirstEntryOnPage(helpNext, per);
+            _helpPageUI?.CyclePage(delta);
             _toast = null;
             return;
         }
@@ -1812,13 +1522,7 @@ public sealed class MfdFrameForm : Form
         switch (index)
         {
             case 0:
-                if (_mode == Mode.Detail)
-                {
-                    _resetConfirm = true;
-                    _closeConfirm = false;
-                    _pendingAction = null;
-                    EnterConfirm();
-                }
+                if (_mode == Mode.Detail) _detailPageUI?.Handle(MfdCommand.Of("reset"));
                 else ResetPage();
                 break;
             case 1: CyclePage(-1); break;
@@ -1897,10 +1601,31 @@ public sealed class MfdFrameForm : Form
 
     /// <summary>Preview helper: opens the help structure page.</summary>
     public void PreviewHelp(int page)
-{
+    {
         EnterHelp();
-        _helpPage = Math.Max(0, page);
-}
+        _helpPageUI?.ShowPage(Math.Max(0, page));
+    }
+
+    /// <summary>Preview helper: 帮助页翻到最后一页（验证分页与选中跟随）。</summary>
+    public void PreviewHelpLast()
+    {
+        PreviewHelp(0);
+        for (var i = 0; i < 8; i++) _helpPageUI?.CyclePage(1);
+    }
+
+    /// <summary>Preview helper: 帮助页再按一次 HELP（应关闭帮助并回到原页面）。</summary>
+    public void PreviewHelpToggle()
+    {
+        PreviewHelp(0);
+        EnterHelp();
+    }
+
+    /// <summary>Preview helper: 详情页按返回（应回到机型列表）。</summary>
+    public void PreviewDetailBack()
+    {
+        PreviewDetail();
+        _detailPageUI?.Handle(MfdCommand.Of("nav.back"));
+    }
 
     /// <summary>Preview helper: opens the color preset picker.</summary>
     public void PreviewPreset()

@@ -1884,6 +1884,9 @@ public static class Program
                 form.PreviewConfirmRowClick(0, 2);   // 双击「确认」行：执行恢复
             }
             else if (view == "detail") { form.PreviewDetail(); }
+            else if (view == "detailback") { form.PreviewDetailBack(); }
+            else if (view == "help3") { form.PreviewHelpLast(); }
+            else if (view == "helpback") { form.PreviewHelpToggle(); }
             else if (view == "pickvehicle") { form.PreviewPickVehicle(); }
             else if (view == "editcommit") { form.PreviewEditCommit(); }
             else if (view == "pickpicked") { form.PreviewPickPicked(); }
