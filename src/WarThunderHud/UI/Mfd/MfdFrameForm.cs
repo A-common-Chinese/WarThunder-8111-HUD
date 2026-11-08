@@ -66,9 +66,7 @@ public sealed class MfdFrameForm : Form
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
     private List<RealButton>? _realButtons;
-    private int _pickSel;
     private int _pickPage;
-    private Mode _pickReturn = Mode.EditNumber;
     private MfdItem? _presetTarget;
     private int _presetSel;
     private DateTime _lastClickUtc = DateTime.MinValue;
@@ -761,18 +759,6 @@ public sealed class MfdFrameForm : Form
     }
 
 
-    /// <summary>Applies the manually picked airframe and returns to the previous page.</summary>
-    private void ApplyPickedVehicle()
-    {
-        var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
-        if (_pickSel >= 0 && _pickSel < list.Count)
-        {
-            WtHud.Hud.AirframeDb.ManualVehicle = list[_pickSel];
-            _dirty = true;
-        }
-        _mode = _pickReturn;
-        _toast = null;
-    }
 
 
     /// <summary>确认 / 取消 两行，对应左侧第 3、4 个键。</summary>
@@ -1223,8 +1209,7 @@ public sealed class MfdFrameForm : Form
     {
         if (_mode == Mode.PickVehicle)
         {
-            var n = WtHud.Hud.AirframeDb.All.Count;
-            if (n > 0) _pickSel = Math.Clamp(_pickSel + delta, 0, n - 1);
+            _pickPageUI?.Move(delta);       // 由页面维护选中项
             return;
         }
 
@@ -1375,7 +1360,6 @@ public sealed class MfdFrameForm : Form
                     onCancel: () => { _nav.Clear(); _editBuffer = ""; _mode = Mode.Items; },
                     onPick: () =>
                     {
-                        _pickReturn = Mode.EditNumber;
                         _pickPageUI = new Pages.PickVehiclePage(
                             onPicked: name =>
                             {
