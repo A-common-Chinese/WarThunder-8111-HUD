@@ -1437,6 +1437,13 @@ public sealed class MfdFrameForm : Form
         {
             var id = _detailTarget?.LabelKey ?? "";
             WtHud.Hud.AirframeDb.ResetOverrides(id);
+
+            // 同时清掉该机型在统一覆盖表里的数据，否则详情页仍显示旧的覆盖值
+            if (!string.IsNullOrEmpty(id))
+            {
+                _work.PerVehicleOverrides.Remove(id);
+                _cfg.PerVehicleOverrides.Remove(id);
+            }
             _resetConfirm = false;
             _dirty = true;
             _mode = Mode.Detail;
