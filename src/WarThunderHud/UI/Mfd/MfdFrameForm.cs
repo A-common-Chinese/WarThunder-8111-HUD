@@ -35,6 +35,7 @@ public sealed class MfdFrameForm : Form
     private Mode _mode = Mode.Menu;
     private readonly Pages.MfdNavigator _nav = new();
     private Pages.PitchDetectPage? _pitchPage;
+    private Pages.ConfirmPage? _confirmPage;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -260,7 +261,7 @@ public sealed class MfdFrameForm : Form
         switch (_mode)
         {
             case Mode.Menu: DrawMenu(g, s, glass, left, pad); break;
-            case Mode.Confirm: DrawConfirm(g, s, glass, left, pad); break;
+            case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.EditNumber: DrawEditPage(g, s, glass, pad); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
             case Mode.Preset: DrawPresetPage(g, s, glass, pad); break;
@@ -1417,7 +1418,8 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.Confirm)
         {
-            _confirmSel = (_confirmSel + delta + 2) % 2;
+            _confirmPage?.Move(delta);
+            _confirmSel = _confirmPage?.Selected ?? 0;
             return;
         }
         if (_mode == Mode.Menu)
@@ -1451,8 +1453,7 @@ public sealed class MfdFrameForm : Form
                 }
                 break;
             case Mode.Confirm:
-                if (_confirmSel == 0) RunPending();
-                else CancelPending();
+                _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             case Mode.EditNumber:
                 switch (_confirmSel)
@@ -1532,7 +1533,7 @@ public sealed class MfdFrameForm : Form
             case ItemKind.Action:
                 _pendingAction = item;
                 _confirmSel = 0;
-                _mode = Mode.Confirm;
+                EnterConfirm();
                 return;
             case ItemKind.Number:
                 // 数值：进入手输编辑，CONFIRM 提交
@@ -1559,6 +1560,28 @@ public sealed class MfdFrameForm : Form
         }
         item.Activate(_work);
         _dirty = true;
+    }
+
+    /// <summary>Builds the confirm sheet as a page instead of a mode-specific switch branch.</summary>
+    private void EnterConfirm()
+    {
+        _confirmPage = new Pages.ConfirmPage(
+            texts: () =>
+            {
+                var label = _resetConfirm
+                    ? L10n.Get(LangScope.Screen, "confirm.resetAirframe")
+                    : _closeConfirm
+                        ? L10n.Get(LangScope.Screen, "confirm.discard")
+                        : _pendingAction == null ? "" : L10n.Get(LangScope.Screen, _pendingAction.LabelKey);
+                var sub = L10n.Get(LangScope.Screen,
+                    _resetConfirm ? "confirm.askReset" : _closeConfirm ? "confirm.askDiscard" : "confirm.ask");
+                return (label, sub);
+            },
+            onOk: RunPending,
+            onCancel: CancelPending,
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_confirmPage);
+        _mode = Mode.Confirm;
     }
 
     private void RunPending()
@@ -1672,7 +1695,7 @@ public sealed class MfdFrameForm : Form
         switch (_mode)
         {
             case Mode.Confirm:
-                CancelPending();
+                _confirmPage?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Items:
                 _menuSel = _page;
