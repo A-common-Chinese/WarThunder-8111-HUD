@@ -16,7 +16,7 @@ public static class SettingsRouter
 {
     /// <summary>Effective value for display: override of the edited/detected airframe, else global.</summary>
     /// <summary>Vehicle whose overrides are visible: the edited one, else the detected one.</summary>
-    private static string? ResolveVehicle() => EditScope.Target ?? EditScope.DetectedVehicle;
+    private static string? ResolveVehicle() => EditScope.ResolvedVehicle;
 
     public static double Get(HudConfig cfg, string name, double globalValue)
     {
