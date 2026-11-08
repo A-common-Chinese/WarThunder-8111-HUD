@@ -23,6 +23,49 @@ public static class ConfigSnapshots
 
     private static string CancelPath => Path.Combine(Directory, "_cancel.json");
 
+    /// <summary>Snapshots of the current (unsaved) panel session; wiped when the panel saves.</summary>
+    private static string SessionDirectory => Path.Combine(Directory, "session");
+
+    public static void BeginSession()
+    {
+        try
+        {
+            if (System.IO.Directory.Exists(SessionDirectory))
+                System.IO.Directory.Delete(SessionDirectory, true);
+            EnsureDirectory();
+        }
+        catch (Exception ex) { Console.WriteLine("session init failed: " + ex.Message); }
+    }
+
+    /// <summary>One snapshot per edit while the panel is open (newest 10 kept).</summary>
+    public static void SaveSession(HudConfig cfg, string label = "edit")
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(SessionDirectory);
+            var safe = string.Join("_", (label ?? "edit").Split(Path.GetInvalidFileNameChars()));
+            var name = $"{DateTime.Now:yyyyMMdd-HHmmss-fff}-{safe}.json";
+            File.WriteAllText(Path.Combine(SessionDirectory, name), JsonSerializer.Serialize(cfg, Options));
+
+            var stale = System.IO.Directory.GetFiles(SessionDirectory, "*.json")
+                .OrderByDescending(f => f)
+                .Skip(MaxHistory)
+                .ToList();
+            foreach (var old in stale) File.Delete(old);
+        }
+        catch (Exception ex) { Console.WriteLine("session snapshot failed: " + ex.Message); }
+    }
+
+    public static void EndSession()
+    {
+        try
+        {
+            if (System.IO.Directory.Exists(SessionDirectory))
+                System.IO.Directory.Delete(SessionDirectory, true);
+        }
+        catch (Exception ex) { Console.WriteLine("session cleanup failed: " + ex.Message); }
+    }
+
     private static void EnsureDirectory() => System.IO.Directory.CreateDirectory(Directory);
 
     /// <summary>Called when the panel opens: remember the state CANCEL should return to.</summary>

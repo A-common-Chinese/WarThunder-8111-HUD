@@ -82,6 +82,7 @@ public sealed class MfdFrameForm : Form
         _baseline = cfg.Clone();
         _work = cfg.Clone();
         WtHud.Hud.ConfigSnapshots.MarkCancelPoint(cfg);   // CANCEL 回退点（每次 F1 覆盖）
+        WtHud.Hud.ConfigSnapshots.BeginSession();          // 本次未保存操作的快照目录
         L10n.LoadFromConfig(_work.Language);
         MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
 
@@ -1183,6 +1184,7 @@ public sealed class MfdFrameForm : Form
             set(_work, MfdTheme.Presets[_presetPage?.Selected ?? 0].Key);
             MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
         _toast = null;
@@ -1312,6 +1314,7 @@ public sealed class MfdFrameForm : Form
             v = Math.Clamp(v, item.Min, item.Max);
             item.SetNumber?.Invoke(_work, v);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
         _toast = null;
@@ -1324,6 +1327,7 @@ public sealed class MfdFrameForm : Form
         {
             item.SetText2?.Invoke(_work, _captureText);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
         _captureText = "";
@@ -1359,6 +1363,7 @@ public sealed class MfdFrameForm : Form
                                 if (string.IsNullOrEmpty(name)) WtHud.Hud.EditScope.UseGlobal();
                                 else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
                                 _dirty = true;
+                                WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
                                 _nav.Clear();
                                 _mode = Mode.Items;
 
@@ -1408,6 +1413,7 @@ public sealed class MfdFrameForm : Form
         }
         item.Activate(_work);
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
     }
 
     /// <summary>Builds the confirm sheet as a page instead of a mode-specific switch branch.</summary>
@@ -1447,6 +1453,7 @@ public sealed class MfdFrameForm : Form
             }
             _resetConfirm = false;
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
             _mode = Mode.Detail;
             _toast = L10n.Get(LangScope.Screen, "toast.resetAirframe");
             return;
@@ -1462,6 +1469,7 @@ public sealed class MfdFrameForm : Form
         }
         _pendingAction?.Run?.Invoke(_work);
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         _pendingAction = null;
         _toast = null;
 
@@ -1677,6 +1685,7 @@ public sealed class MfdFrameForm : Form
             WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_work);
             WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_cfg);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
             _toast = L10n.Get(LangScope.Screen, "scope.resetVehicle");
             _mode = Mode.Items;
             SyncDiagProbe();
@@ -1758,6 +1767,7 @@ public sealed class MfdFrameForm : Form
     public void PreviewDiscard()
     {
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         CancelAndClose();
     }
 
@@ -1828,6 +1838,7 @@ public sealed class MfdFrameForm : Form
         }
 
         WtHud.Hud.ConfigSnapshots.SaveHistory(_work, "save");
+        WtHud.Hud.ConfigSnapshots.EndSession();   // SAVE 成功后清掉本次会话快照
         Saved = true;
         _dirty = false;
         _forceClose = true;   // 已保存：关闭时不要再弹放弃确认
