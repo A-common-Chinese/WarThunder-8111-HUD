@@ -65,7 +65,6 @@ public sealed class MfdFrameForm : Form
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
     private List<RealButton>? _realButtons;
-    private int _pickPage;
     private MfdItem? _presetTarget;
     private int _presetSel;
     private DateTime _lastClickUtc = DateTime.MinValue;
@@ -845,7 +844,7 @@ public sealed class MfdFrameForm : Form
             var rowH = 40 * sScale;
             for (var i = 0; i < 10; i++)
             {
-                var item = _pickPage * 10 + i;
+                var item = (_pickPageUI?.PageIndex ?? 0) * 10 + i;
                 if (item >= count) break;
                 var col = i % 2;
                 var row = i / 2;
