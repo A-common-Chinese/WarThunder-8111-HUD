@@ -36,6 +36,7 @@ public sealed class MfdFrameForm : Form
     private readonly Pages.MfdNavigator _nav = new();
     private Pages.PitchDetectPage? _pitchPage;
     private Pages.ConfirmPage? _confirmPage;
+    private Pages.NumberEditPage? _editPage;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -262,7 +263,7 @@ public sealed class MfdFrameForm : Form
         {
             case Mode.Menu: DrawMenu(g, s, glass, left, pad); break;
             case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            case Mode.EditNumber: DrawEditPage(g, s, glass, pad); break;
+            case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
             case Mode.Preset: DrawPresetPage(g, s, glass, pad); break;
             case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
@@ -1211,10 +1212,8 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.EditNumber)
         {
-            if (index == 2) _confirmSel = 0;          // 确认
-            else if (index == 3) _confirmSel = 1;     // 取消
-            else if (index == 7)
-                _confirmSel = 2;                      // 手动指定机型
+            _editPage?.Select(index == 2 ? 0 : index == 3 ? 1 : index == 7 ? 2 : -1);
+            _confirmSel = _editPage?.Choice ?? 0;
             return;
         }
 
@@ -1271,18 +1270,18 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.EditNumber)
         {
             e.Handled = true;
-            if (e.KeyCode == Keys.Escape) { _mode = Mode.Items; _editBuffer = ""; Invalidate(); return; }
+            if (e.KeyCode == Keys.Escape) { _editPage?.Handle(MfdCommand.Of("nav.back")); Invalidate(); return; }
             if (e.KeyCode == Keys.Enter) { Confirm(); Invalidate(); return; }
             if (e.KeyCode == Keys.Back)
             {
-                if (_editBuffer.Length > 0) _editBuffer = _editBuffer[..^1];
+                _editPage?.Backspace();
                 Invalidate();
                 return;
             }
             var ch = KeyToDigit(e.KeyCode);
             if (ch != '\0' && _editBuffer.Length < 10)
             {
-                _editBuffer += ch;
+                _editPage?.AppendChar(ch);
                 Invalidate();
             }
             return;
@@ -1427,6 +1426,7 @@ public sealed class MfdFrameForm : Form
             _menuSel = (_menuSel + delta + _pages.Count) % _pages.Count;
             EnsureMenuPage();               // 路由器和菜单页是懒建的，必须先建好再同步
             _menuRouter?.Move(delta);       // 否则 CONFIRM 时索引还是 0（永远打开第一项）
+            Console.WriteLine($"menu move: sel={_menuSel} router={_menuRouter?.SelectedIndex} delta={delta}");
         }
         else
         {
@@ -1447,6 +1447,7 @@ public sealed class MfdFrameForm : Form
         {
             case Mode.Menu:
                 EnsureMenuPage();
+                Console.WriteLine($"menu confirm: sel={_menuSel} router={_menuRouter!.SelectedIndex}");
                 if (_menuRouter!.ActivateSelected() is { Id: "menu.open" } cmd2
                     && int.TryParse(cmd2.Arg, out var sel))
                 {
@@ -1458,21 +1459,9 @@ public sealed class MfdFrameForm : Form
                 _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             case Mode.EditNumber:
-                switch (_confirmSel)
-                {
-                    case 1:
-                        CancelSecondLevel();
-                        break;
-                    case 2:
-                        _pickReturn = Mode.EditNumber;
-                        _pickSel = 0;
-                        _pickPage = 0;
-                        _mode = Mode.PickVehicle;
-                        break;
-                    default:
-                        CommitNumber();
-                        break;
-                }
+                _editPage?.Handle(MfdCommand.Of(
+                    _editPage.Choice == 1 ? "edit.cancel" :
+                    _editPage.Choice == 2 ? "edit.pick" : "edit.commit"));
                 break;
             case Mode.CaptureKey:
                 CommitCapture();
@@ -1538,10 +1527,22 @@ public sealed class MfdFrameForm : Form
                 EnterConfirm();
                 return;
             case ItemKind.Number:
+            {
                 // 数值：进入手输编辑，CONFIRM 提交
-                _editBuffer = item.ValueText(_work).TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
+                var target = item;
+                var initial = item.ValueText(_work).TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
+                _confirmSel = 0;
+                _editPage = new Pages.NumberEditPage(
+                    texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.Unit),
+                    initial: initial,
+                    onCommit: buffer => { _editBuffer = buffer; CommitNumber(); },
+                    onCancel: () => { _nav.Clear(); _editBuffer = ""; _mode = Mode.Items; },
+                    onPick: () => { _pickReturn = Mode.EditNumber; _pickSel = 0; _pickPage = 0; _mode = Mode.PickVehicle; },
+                    layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+                _nav.Push(_editPage);
                 _mode = Mode.EditNumber;
                 return;
+            }
             case ItemKind.KeyBinding:
                 _captureText = "";
                 _mode = Mode.CaptureKey;
