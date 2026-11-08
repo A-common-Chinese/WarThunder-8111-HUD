@@ -1169,7 +1169,7 @@ public static class Program
 
             // 俯仰方向检测：用游戏姿态 vs 航迹角(gamma) 的相关系数判断符号
             if (WtHud.Hud.PitchDetect.Active)
-                WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, snap.FlightPathAngleDeg);
+                WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, att.PitchDeg);   // att = 实际画到 HUD 上的俯仰
 
             if (WtHud.Hud.PitchDetect.Active && nowTicks - lastPitchProbeTicks > 2000)
             {
