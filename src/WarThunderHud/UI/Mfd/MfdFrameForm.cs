@@ -37,6 +37,7 @@ public sealed class MfdFrameForm : Form
     private Pages.PitchDetectPage? _pitchPage;
     private Pages.ConfirmPage? _confirmPage;
     private Pages.NumberEditPage? _editPage;
+    private MfdItem? _editTarget;
     private Pages.PresetPage? _presetPage;
     private Pages.PickVehiclePage? _pickPageUI;
     private int _page;
@@ -1556,6 +1557,7 @@ public sealed class MfdFrameForm : Form
             {
                 // 数值：进入手输编辑，CONFIRM 提交
                 var target = item;
+                _editTarget = item;
                 var initial = item.ValueText(_work).TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
                 _confirmSel = 0;
                 _editPage = new Pages.NumberEditPage(
@@ -1573,7 +1575,11 @@ public sealed class MfdFrameForm : Form
                                 else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
                                 _dirty = true;
                                 _nav.Clear();
-                                _mode = Mode.EditNumber;   // 回到编辑页，显示所选数据集的值
+                                _mode = Mode.Items;
+
+                                // 重建编辑页：缓冲必须按新作用域重新取值，否则仍显示旧层的数据
+                                if (_editTarget is { } t) Activate(t);
+                                else { _mode = Mode.Items; }
                                 Invalidate();
                             },
                             onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
