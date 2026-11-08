@@ -73,6 +73,11 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - `Present(0, PresentFlags.DoNotWait)` 是关键优化：改成 `None` 会把帧率从 30 掉到 9–19
 - `--perf` 参数打印 `build/draw/present/loop` 耗时
 - 覆盖层只覆盖**游戏所在显示器**；HUD 中心 = 游戏客户区中心；`PxReferenceHeight` 用客户区高度
+- **俯仰梯/地平线（2026-11-08 调整）**：
+  - 地平线加长到 ±`NoseRefInnerDeg`(7.4°)、线宽 ×2（醒目）；不含端部竖线
+  - 两侧**机头基准短线**固定在俯仰梯锚点高度（±7.4°…±8.8°，不随坡度旋转）：梯子移动时，短线对准的刻度 = 机头当前俯仰；平飞时短线与地平线端头相接，读作一条贯穿的长横线
+  - 为保证净空，读数微调：`ACC`/`M` 外移 0.3°、`V/S` 外移 0.5°、导航 `AF/AF!` 右移 2.4°（这些值都在 `HudGeometry` 顶部常量里）
+  - 预览检查：`preview out.png 1920 1080 level|pitch5|bank30`，或用环境变量 `WT_PREVIEW_ATT="pitch,bank"` 指定任意姿态；`dumpgeo w h pitch bank` 可导出该姿态的图元坐标做碰撞检查
 
 ### 4.2 参数作用域（v0.3.0 核心）
 - 三层：**机型覆盖 > 全局 > 内置默认**

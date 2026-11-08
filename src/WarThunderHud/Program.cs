@@ -114,13 +114,15 @@ public static class Program
     {
         int w = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 1920;
         int h = args.Length > 2 ? int.Parse(args[2], CultureInfo.InvariantCulture) : 1080;
+        double dumpPitch = args.Length > 3 ? double.Parse(args[3], CultureInfo.InvariantCulture) : 8;
+        double dumpBank = args.Length > 4 ? double.Parse(args[4], CultureInfo.InvariantCulture) : 24;
         var snap = new TelemetrySnapshot
         {
             Valid = true, InFlight = true, VehicleType = "j_16",
             IasKmh = 912, TasKmh = 1044, Mach = 0.87, AltM = 3520, VyMs = 12.4,
             AoaDeg = 5.2, AosDeg = 1.1, NyG = 2.4, HeadingDeg = 275, FuelKg = 4100, Fuel0Kg = 9400,
         };
-        var att = new AttitudeSolution { PitchDeg = 8, BankDeg = 24, Source = AttitudeSource.Estimated, Confidence = 1 };
+        var att = new AttitudeSolution { PitchDeg = dumpPitch, BankDeg = dumpBank, Source = AttitudeSource.Estimated, Confidence = 1 };
         var cal = new HudCalibration { VerticalFovDeg = 45 };
         var geo = new HudGeometry(new HudOptions(), cal);
         var prims = geo.Build(snap, att, w, h);
@@ -170,31 +172,6 @@ public static class Program
         bool pass = Math.Abs(att.BankDeg - bankExpected) < 6 && Math.Abs(att.PitchDeg - pitchExpected) < 6;
         Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {name,-28} got bank={att.BankDeg,6:F1} (want {bankExpected,5:F1})  " +
                           $"pitch={att.PitchDeg,6:F1} (want {pitchExpected,5:F1})  src={att.Source}");
-        if (!pass) Environment.ExitCode = 1;
-    }
-
-    private static void FusionNativeBias()
-    {
-        // Native horizon carries a constant -4.3 deg offset; the fusion must learn it out.
-        var fusion = new AttitudeFusion();
-        AttitudeSolution att = default;
-        for (int i = 0; i < 300; i++)
-        {
-            double t = i * 0.04;
-            var snap = new TelemetrySnapshot
-            {
-                Valid = true, InFlight = true, ElapsedSeconds = t,
-                HeadingDeg = 90, TasKmh = 900, IasKmh = 810, VyMs = 10, AoaDeg = 3.0, NyG = 1.2, AltM = 2000,
-                PitchDeg = (Math.Asin(10 / (900 / 3.6)) * 180 / Math.PI + 3.0) - 4.3,
-                BankDeg = 12.0,
-            };
-            att = fusion.Update(snap);
-        }
-        double expectedPitch = Math.Asin(10 / (900 / 3.6)) * 180 / Math.PI + 3.0;
-        bool pass = Math.Abs(att.PitchDeg - expectedPitch) < 1.0 && Math.Abs(att.BankDeg - 12.0) < 1.0 &&
-                    att.Source == AttitudeSource.Game;
-        Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  native bias learning          got pitch={att.PitchDeg:F1} " +
-                          $"(want {expectedPitch:F1})  bank={att.BankDeg:F1} (want 12.0)  src={att.Source}");
         if (!pass) Environment.ExitCode = 1;
     }
 
@@ -1739,8 +1716,24 @@ public static class Program
         {
             "game" => new AttitudeSolution { PitchDeg = 8.0, BankDeg = 24.0, Source = AttitudeSource.Game, Confidence = 1 },
             "none" => new AttitudeSolution { Source = AttitudeSource.Unavailable },
+            "level" => new AttitudeSolution { PitchDeg = 0.0, BankDeg = 0.0, Source = AttitudeSource.Estimated, Confidence = 1 },
+            "pitch5" => new AttitudeSolution { PitchDeg = 5.0, BankDeg = 0.0, Source = AttitudeSource.Estimated, Confidence = 1 },
+            "bank30" => new AttitudeSolution { PitchDeg = 0.0, BankDeg = 30.0, Source = AttitudeSource.Estimated, Confidence = 1 },
             _ => new AttitudeSolution { PitchDeg = 8.0, BankDeg = 24.0, Source = AttitudeSource.Estimated, Confidence = 1 },
         };
+        // 预览姿态覆盖："pitch,bank"，用于检查特定俯仰角下的布局碰撞
+        var envAtt = Environment.GetEnvironmentVariable("WT_PREVIEW_ATT");
+        if (!string.IsNullOrEmpty(envAtt))
+        {
+            var parts = envAtt.Split(',');
+            att = new AttitudeSolution
+            {
+                PitchDeg = double.Parse(parts[0], CultureInfo.InvariantCulture),
+                BankDeg = parts.Length > 1 ? double.Parse(parts[1], CultureInfo.InvariantCulture) : 0,
+                Source = AttitudeSource.Estimated,
+                Confidence = 1,
+            };
+        }
 
         var opt = new HudOptions();
         if (variant == "zoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }

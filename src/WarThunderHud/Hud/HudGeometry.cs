@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -188,6 +188,19 @@ public sealed class HudGeometry
     private const double HeadingHalfSpanDeg = 6.0;
     private const double BankRadiusDeg = 8.6;
 
+    // Pitch ladder / horizon shape (degrees of view angle).
+    private const double LadderWideHalfDeg = 5.4;    // ±10° rungs (the long ones)
+    private const double LadderNarrowHalfDeg = 3.2;  // all other rungs
+    private const double LadderGapDeg = 1.8;         // centre gap of each rung
+    private const double LadderLabelGapDeg = 0.40;   // rung end → number
+    private const double LadderHookDeg = 0.55;       // hook tick height at the rung ends
+    private const double HorizonGapDeg = 2.4;        // centre gap of the horizon line
+    // Nose reference: fixed short lines at the ladder anchor (screen-horizontal, no roll).
+    // Their inner end is exactly where the horizon line ends, so in level flight the horizon
+    // and the two reference lines read as one continuous long line.
+    private const double NoseRefInnerDeg = 7.4;
+    private const double NoseRefOuterDeg = 8.8;
+
     // Aiming (zoom) layout overrides.
     private const double ZoomTapeOffsetDeg = 19.0;
     private const double ZoomHeadingOffsetDeg = ZoomHeadingPushDeg;
@@ -280,7 +293,9 @@ public sealed class HudGeometry
         double theta = -att.BankDeg * _cal.RollCoupling * Deg2Rad;
         double cos = Math.Cos(theta), sin = Math.Sin(theta);
         var col = Fade(_opt.Color, alpha);
-        double gap = 1.8 * pxDeg;
+        double gap = LadderGapDeg * pxDeg;
+        double hook = LadderHookDeg * pxDeg;
+        double labelGap = LadderLabelGapDeg * pxDeg;
 
         for (int p = -90; p <= 90; p += 5)
         {
@@ -288,34 +303,41 @@ public sealed class HudGeometry
             double dy = (att.PitchDeg - p) * pxDeg;
             if (Math.Abs(dy) > 7.0 * pxDeg) continue;
 
-            double half = (Math.Abs(p) <= 10 ? 5.4 : 3.2) * pxDeg;
+            double half = (Math.Abs(p) <= 10 ? LadderWideHalfDeg : LadderNarrowHalfDeg) * pxDeg;
             bool dashed = p < 0;
             AddRotatedSegment(prims, cx, cy, -half, dy, -gap, dy, cos, sin, line, col, dashed);
             AddRotatedSegment(prims, cx, cy, gap, dy, half, dy, cos, sin, line, col, dashed);
 
             // hook ticks at both ends pointing toward the horizon (classic HUD ladder shape)
             double tickDir = p > 0 ? 1 : -1;
-            AddRotatedSegment(prims, cx, cy, half, dy, half, dy + tickDir * 0.55 * pxDeg, cos, sin, line, col, dashed);
-            AddRotatedSegment(prims, cx, cy, -half, dy, -half, dy + tickDir * 0.55 * pxDeg, cos, sin, line, col, dashed);
+            AddRotatedSegment(prims, cx, cy, half, dy, half, dy + tickDir * hook, cos, sin, line, col, dashed);
+            AddRotatedSegment(prims, cx, cy, -half, dy, -half, dy + tickDir * hook, cos, sin, line, col, dashed);
 
-            double lx = half + 0.55 * pxDeg;
+            double lx = half + labelGap;
             AddRotatedText(prims, cx, cy, lx, dy, p.ToString(), font, HudAlign.Left, cos, sin, Fade(_opt.Color, alpha * 0.95));
             AddRotatedText(prims, cx, cy, -lx, dy, p.ToString(), font, HudAlign.Right, cos, sin, Fade(_opt.Color, alpha * 0.95));
         }
+
+        // 机头基准短线：固定在俯仰梯锚点高度、不随坡度旋转。梯子移动时，这两段线对准的刻度
+        // 就是机头当前指向的俯仰值；内端与地平线半宽相同，平飞时与地平线连成一条长横线。
+        double refW = line * 1.7;
+        var refCol = Fade(_opt.Color, alpha * 0.95);
+        AddSegment(prims, cx - NoseRefOuterDeg * pxDeg, cy, cx - NoseRefInnerDeg * pxDeg, cy, refW, refCol);
+        AddSegment(prims, cx + NoseRefInnerDeg * pxDeg, cy, cx + NoseRefOuterDeg * pxDeg, cy, refW, refCol);
     }
 
+    /// <summary>地平线：加粗加长到与机头基准短线内端相接，平飞时读作一条贯穿的长横线。</summary>
     private void AddHorizon(List<HudPrim> prims, AttitudeSolution att, double cx, double cy, double pxDeg, double line, double alpha)
     {
         double theta = -att.BankDeg * _cal.RollCoupling * Deg2Rad;
         double cos = Math.Cos(theta), sin = Math.Sin(theta);
         double dy = att.PitchDeg * pxDeg;
-        double half = 4.6 * pxDeg;
-        double gap = 2.4 * pxDeg;
+        double half = NoseRefInnerDeg * pxDeg;      // 与机头基准短线内端对齐
+        double gap = HorizonGapDeg * pxDeg;
         var col = Fade(_opt.Color, alpha);
-        AddRotatedSegment(prims, cx, cy, -half, dy, -gap, dy, cos, sin, line * 1.3, col, false);
-        AddRotatedSegment(prims, cx, cy, gap, dy, half, dy, cos, sin, line * 1.3, col, false);
-        AddRotatedSegment(prims, cx, cy, -half, dy, -half, dy + 0.6 * pxDeg, cos, sin, line, col, false);
-        AddRotatedSegment(prims, cx, cy, half, dy, half, dy + 0.6 * pxDeg, cos, sin, line, col, false);
+        double wide = line * 2.0;                   // 比普通梯线粗一倍：地平线要醒目
+        AddRotatedSegment(prims, cx, cy, -half, dy, -gap, dy, cos, sin, wide, col, false);
+        AddRotatedSegment(prims, cx, cy, gap, dy, half, dy, cos, sin, wide, col, false);
     }
 
     private void AddBankScale(List<HudPrim> prims, AttitudeSolution att, double cx, double cyIn, double pxDeg,
@@ -444,13 +466,13 @@ public sealed class HudGeometry
             Kind = HudPrimKind.Text, Text = "ACC " + _opt.AccelMs2.ToString("+0.0;-0.0"),
             Align = HudAlign.Left, FontSize = fontSmall,
             Color = Math.Abs(_opt.AccelMs2) > 5 ? _opt.WarnColor : Fade(col, 0.9),
-            Points = { (x + 2.0 * pxDeg, cy + 2.6 * pxDeg) },
+            Points = { (x + 1.7 * pxDeg, cy + 2.6 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = "M " + s.Mach.ToString("0.00"),
             Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(col, 0.9),
-            Points = { (x + 2.0 * pxDeg, cy + 4.1 * pxDeg) },
+            Points = { (x + 1.7 * pxDeg, cy + 4.1 * pxDeg) },
         });
 
         // Acceleration trend bar, mirroring the vertical-speed bar on the altitude tape.
@@ -553,7 +575,7 @@ public sealed class HudGeometry
         {
             Kind = HudPrimKind.Text, Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + s.VyMs.ToString("0.0"),
             Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.9),
-            Points = { (x - 2.0 * pxDeg, cy + 2.6 * pxDeg) },
+            Points = { (x - 1.5 * pxDeg, cy + 2.6 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
@@ -832,7 +854,7 @@ public sealed class HudGeometry
         double sink = 2.0 * _blend * pxDeg;
 
 
-        double navX = cx + 5.4 * pxDeg;
+        double navX = cx + 7.8 * pxDeg;      // clear of the extended horizon line
         double navY = cy + 10.4 * pxDeg + sink;
         if (!string.IsNullOrEmpty(_opt.NavFriendly))
         {
@@ -936,6 +958,17 @@ public sealed class HudGeometry
 
     private static HudColor Fade(HudColor c, double a) =>
         new(c.R, c.G, c.B, (byte)Math.Clamp((int)(c.A * Math.Clamp(a, 0, 1)), 0, 255));
+
+    /// <summary>Screen-space (non-rotated) segment; used by body-fixed reference marks.</summary>
+    private static void AddSegment(List<HudPrim> prims, double x1, double y1, double x2, double y2,
+        double width, HudColor color)
+    {
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Line, Width = width, Color = color,
+            Points = { (x1, y1), (x2, y2) },
+        });
+    }
 
     private static void AddRotatedSegment(List<HudPrim> prims, double cx, double cy,
         double x1, double y1, double x2, double y2, double cos, double sin, double width, HudColor color, bool dashed)
