@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle, PitchDetect }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle, PitchDetect, Snapshots }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -40,6 +40,7 @@ public sealed class MfdFrameForm : Form
     private MfdItem? _editTarget;
     private Pages.PresetPage? _presetPage;
     private Pages.PickVehiclePage? _pickPageUI;
+    private Pages.SnapshotsPage? _snapPageUI;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -282,6 +283,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: DrawItems(g, s, glass, left, pad); break;
         }
 
@@ -294,6 +296,7 @@ public sealed class MfdFrameForm : Form
             Mode.Help => "help.pagerHint",
             Mode.PickVehicle => "pick.hint",
             Mode.PitchDetect => "pitchdetect.hint",
+            Mode.Snapshots => "snap.hint",
             Mode.EditNumber => "edit.prompt",
             Mode.CaptureKey => "capture.hint",
             _ => "hint.item",
@@ -333,7 +336,8 @@ public sealed class MfdFrameForm : Form
             var page = _pages[i];
             g.DrawString(L10n.Get(LangScope.Screen, page.MenuKey), name, fgBrush, x + 16 * s, y + 5 * s,
                          StringFormat.GenericTypographic);
-            var countText = page.Items.Count + (L10n.Screen == Lang.Zh ? " 项" : " ITEMS");
+            var countText = (page.LiveCount?.Invoke() ?? page.Items.Count)
+                            + (L10n.Screen == Lang.Zh ? " 项" : " ITEMS");
             var hw = g.MeasureString(countText, hintF).Width;
             g.DrawString(countText, hintF, fgBrush, x + colW - hw, y + 12 * s, StringFormat.GenericTypographic);
         }
@@ -867,6 +871,20 @@ public sealed class MfdFrameForm : Form
             }
         }
 
+        // 快照列表：单击选中，同一行 400ms 内再点 = 进入恢复确认（与选机型页一致）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Snapshots &&
+            RowHitTest(new PointF(e.X, e.Y), out var snapCell))
+        {
+            var nowS = DateTime.UtcNow;
+            var againS = snapCell == _lastHitCell && (nowS - _lastHitUtc).TotalMilliseconds < 400;
+            _lastHitCell = snapCell;
+            _lastHitUtc = nowS;
+            _snapPageUI?.SelectCell(snapCell);
+            if (againS || e.Clicks >= 2) _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+            Invalidate();
+            return;
+        }
+
         // 首页菜单：只有真正点在模块行上才交给 router，其它位置继续走按键逻辑
         if (!_work.Mfd.RealisticKeys && _mode == Mode.Menu)
         {
@@ -1029,6 +1047,12 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.PickVehicle)
         {
             _pickPageUI?.SelectCell(cell);
+            return;
+        }
+
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.SelectCell(cell);
             return;
         }
 
@@ -1203,6 +1227,13 @@ public sealed class MfdFrameForm : Form
 
     private void Move(int delta)
     {
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.Move(delta);
+            _toast = null;
+            return;
+        }
+
         if (_mode == Mode.PickVehicle)
         {
             _pickPageUI?.Move(delta);       // 由页面维护选中项
@@ -1286,6 +1317,9 @@ public sealed class MfdFrameForm : Form
                 break;
             case Mode.PickVehicle:
                 _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+                break;
+            case Mode.Snapshots:
+                _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             case Mode.PitchDetect:
                 _nav.Current?.Handle(MfdCommand.Of("confirm.ok"));
@@ -1546,11 +1580,86 @@ public sealed class MfdFrameForm : Form
     {
         if (_menuSel < 0 || _menuSel >= _pages.Count) return;
         _page = _menuSel;
-        _mode = Mode.Items;
         _itemPage = 0;
         _itemSel = 0;
         _toast = null;
+
+        // 快照模块没有行列表：直接进入快照页（页面自己负责列表与选中）
+        if (_pages[_page].TitleKey == "page.snapshots")
+        {
+            EnterSnapshots();
+            return;
+        }
+
+        _mode = Mode.Items;
         SyncDiagProbe();
+    }
+
+    /// <summary>
+    /// 首页「回归快照」模块：进入可恢复快照列表。所有 `_mode = Mode.Snapshots` 都在 Enter* 方法里，
+    /// 保证页面一定经过构造（直接赋 mode 会得到空白页）。
+    /// </summary>
+    private void EnterSnapshots()
+    {
+        _snapPageUI = new Pages.SnapshotsPage(
+            entries: WtHud.Hud.ConfigSnapshots.ListRestorable,
+            onPicked: EnterSnapshotConfirm,
+            onCancel: () =>
+            {
+                _nav.Clear();
+                _menuSel = _page;
+                _mode = Mode.Menu;
+                _toast = null;
+                SyncDiagProbe();
+            },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_snapPageUI);
+        _mode = Mode.Snapshots;
+    }
+
+    /// <summary>选中最新的快照后的二次确认；确认前不碰运行配置。</summary>
+    private void EnterSnapshotConfirm(WtHud.Hud.ConfigSnapshots.SnapshotEntry entry)
+    {
+        _confirmPage = new Pages.ConfirmPage(
+            texts: () => (
+                string.Format(L10n.Get(LangScope.Screen, "snap.confirmAsk"), entry.TimeText),
+                L10n.Get(LangScope.Screen, "snap.confirmSub")),
+            onOk: () => RestoreSnapshot(entry),
+            onCancel: () =>
+            {
+                _nav.Clear();
+                _toast = null;
+                _mode = Mode.Snapshots;
+            },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_confirmPage);
+        _mode = Mode.Confirm;
+    }
+
+    /// <summary>
+    /// 恢复动作（规格 docs/snapshot-restore-spec.md）：反射回填 _cfg + 同步 _work + 清 session 快照
+    /// + 写审计文件；不自动 SAVE，返回首页让用户先核对数值。
+    /// </summary>
+    private void RestoreSnapshot(WtHud.Hud.ConfigSnapshots.SnapshotEntry entry)
+    {
+        if (!WtHud.Hud.ConfigSnapshots.RestoreFrom(entry.Path, _cfg))
+        {
+            _toast = L10n.Get(LangScope.Screen, "snap.toast.failed");
+            _nav.Clear();
+            EnterSnapshots();
+            return;
+        }
+
+        // 快照是“全局整体替换”：perVehicleOverrides 也一起回退，草稿必须同步到同一份数据
+        _work.CopyFrom(_cfg);
+        L10n.LoadFromConfig(_cfg.Language);
+        MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
+        _dirty = true;
+        _nav.Clear();
+        _menuSel = _page;
+        _mode = Mode.Menu;
+        EnsureMenuPage();
+        _toast = string.Format(L10n.Get(LangScope.Screen, "snap.toast.restored"), entry.TimeText);
     }
 
     private void Back()
@@ -1584,6 +1693,10 @@ public sealed class MfdFrameForm : Form
                 _pickPageUI?.Handle(MfdCommand.Of("nav.back"));
                 _toast = null;
                 break;
+            case Mode.Snapshots:
+                _snapPageUI?.Handle(MfdCommand.Of("nav.back"));
+                _toast = null;
+                break;
             case Mode.EditNumber:
             case Mode.CaptureKey:
                 CancelSecondLevel();
@@ -1612,6 +1725,13 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.PickVehicle)
         {
             _pickPageUI?.CyclePage(delta);
+            return;
+        }
+
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.CyclePage(delta);
+            _toast = null;
             return;
         }
 
@@ -1678,6 +1798,11 @@ public sealed class MfdFrameForm : Form
     {
         if (_mode == Mode.Confirm) { CancelPending(); return; }
         if (_mode == Mode.Menu) return;
+        if (_mode == Mode.Snapshots)                 // 快照列表是只读的，RESET 不碰配置
+        {
+            _toast = L10n.Get(LangScope.Screen, "hint.readonly");
+            return;
+        }
 
         // 机型作用域：RESET 只清空该机型的覆盖，作用域保持不动（编辑页继续停在该机型）
         if (!WtHud.Hud.EditScope.IsGlobal)
@@ -1776,6 +1901,30 @@ public sealed class MfdFrameForm : Form
     {
         PreviewOpen(pageIndex, itemIndex);
         if (SelectedItem is { } item) Activate(item);
+    }
+
+    /// <summary>Preview helper: opens the snapshot list page (regression-restore entry).</summary>
+    public void PreviewSnapshots()
+    {
+        var idx = _pages.FindIndex(p => p.TitleKey == "page.snapshots");
+        if (idx < 0) return;
+        _page = idx;
+        _menuSel = idx;
+        EnterSnapshots();
+    }
+
+    /// <summary>Preview helper: opens the restore confirmation for the newest snapshot.</summary>
+    public void PreviewSnapshotConfirm()
+    {
+        PreviewSnapshots();
+        _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>Preview helper: runs the real restore path on the newest snapshot (writes audit, clears session).</summary>
+    public void PreviewRestoreNewest()
+    {
+        PreviewSnapshotConfirm();
+        _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
     }
 
     private void CancelAndClose()

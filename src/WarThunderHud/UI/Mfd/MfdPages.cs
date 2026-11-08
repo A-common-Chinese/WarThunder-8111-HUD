@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -111,13 +111,16 @@ internal sealed class MfdPage
     public required string MenuKey { get; init; }
     public required string MenuHintKey { get; init; }
     public List<MfdItem> Items { get; init; } = new();
+
+    /// <summary>首页显示的数量：动态页面（如回归快照）用它替代 <see cref="Items"/>.Count。</summary>
+    public Func<int>? LiveCount { get; init; }
 }
 
 internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), Airframes(), Diag(),
+        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), Airframes(), Diag(), Snapshots(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set) =>
@@ -325,6 +328,15 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.airframe",
         Items = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
             .Select(Airframe).Cast<MfdItem>().ToList(),
+    };
+
+    /// <summary>回归快照：没有固定行，列表由 <c>SnapshotsPage</c> 直接绘制，这里只占首页一个模块位。</summary>
+    private static MfdPage Snapshots() => new()
+    {
+        TitleKey = "page.snapshots",
+        MenuKey = "page.snapshots",
+        MenuHintKey = "menu.hint.snapshots",
+        LiveCount = () => WtHud.Hud.ConfigSnapshots.ListRestorable().Count,
     };
 
     private static MfdPage Diag() => new()

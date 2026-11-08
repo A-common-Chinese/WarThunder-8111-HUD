@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 
 
@@ -1869,6 +1869,9 @@ public static class Program
             {
                 form.PreviewConfirm(5, 9);   // DIAG 页的“检查更新”
             }
+            else if (view == "snapshots") { form.PreviewSnapshots(); }
+            else if (view == "snapconfirm") { form.PreviewSnapshotConfirm(); }
+            else if (view == "snaprestore") { form.PreviewRestoreNewest(); }
             using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
             {
