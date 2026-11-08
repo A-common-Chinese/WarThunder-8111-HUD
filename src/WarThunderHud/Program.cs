@@ -335,11 +335,14 @@ public static class Program
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         // 跟随游戏客户区：窗口化 / 副屏 / 非 100% 缩放都能对上；找不到窗口时回退主屏
-        // 覆盖整个虚拟桌面：多显示器时 HUD 不会被限制在主屏
-        int scrX = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
-        int scrY = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
-        int scrW = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
-        int scrH = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        // 覆盖层只覆盖游戏所在的那块显示器：不会挡住其它屏幕的点击
+        int monX = 0, monY = 0, monW = 0, monH = 0;
+        bool tracking0 = GameWindowTracker.TryGetClientRect(out _, out _, out _, out _, out _);
+        bool haveMonitor = tracking0 && GameWindowTracker.TryGetMonitorRect(out monX, out monY, out monW, out monH);
+        int scrX = haveMonitor ? monX : 0;
+        int scrY = haveMonitor ? monY : 0;
+        int scrW = haveMonitor ? monW : NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
+        int scrH = haveMonitor ? monH : NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
         if (scrW <= 0 || scrH <= 0)
         {
             scrX = scrY = 0;
@@ -1122,6 +1125,15 @@ public static class Program
                 if (GameWindowTracker.IsActive
                     && GameWindowTracker.TryGetClientRect(out var fx, out var fy, out var fw2, out var fh2, out _))
                 {
+                    // 游戏换到另一块显示器时，把覆盖层挪过去
+                    if (GameWindowTracker.TryGetMonitorRect(out var nmx, out var nmy, out var nmw, out var nmh)
+                        && (nmx != scrX || nmy != scrY || nmw != scrW || nmh != scrH))
+                    {
+                        scrX = nmx; scrY = nmy; scrW = nmw; scrH = nmh;
+                        overlay.SetFrame(scrX, scrY, scrW, scrH);
+                        Console.WriteLine($"overlay monitor -> {scrX},{scrY} {scrW}x{scrH}");
+                    }
+
                     var ox = fx + fw2 / 2.0 - (scrX + scrW / 2.0);
                     var oy = fy + fh2 / 2.0 - (scrY + scrH / 2.0);
                     if (Math.Abs(ox - cal.CenterOffsetX) > 0.5 || Math.Abs(oy - cal.CenterOffsetY) > 0.5

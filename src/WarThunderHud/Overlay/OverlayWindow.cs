@@ -394,7 +394,7 @@ public sealed class OverlayWindow : IDisposable
             ApplyCursorHoleRegion(_winW, _winH);
             // A child window must not be pushed to the topmost band.
             IntPtr insertAfter = _parent != IntPtr.Zero ? IntPtr.Zero : (IntPtr)NativeMethods.HWND_TOPMOST;
-            NativeMethods.SetWindowPos(_hwnd, insertAfter, 0, 0, Width, Height,
+            NativeMethods.SetWindowPos(_hwnd, insertAfter, _originX, _originY, Width, Height,
                 NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
         }
     }

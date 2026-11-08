@@ -31,6 +31,25 @@ public static class GameWindowTracker
         }
     }
 
+    /// <summary>Rect of the display that currently contains the game window.</summary>
+    public static bool TryGetMonitorRect(out int x, out int y, out int w, out int h)
+    {
+        x = y = w = h = 0;
+        var hwnd = GameHwnd;
+        if (hwnd == IntPtr.Zero) return false;
+
+        var mon = NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        if (mon == IntPtr.Zero) return false;
+
+        var mi = new NativeMethods.MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+        if (!NativeMethods.GetMonitorInfo(mon, ref mi)) return false;
+
+        x = mi.rcMonitor.Left; y = mi.rcMonitor.Top;
+        w = mi.rcMonitor.Right - mi.rcMonitor.Left;
+        h = mi.rcMonitor.Bottom - mi.rcMonitor.Top;
+        return w > 0 && h > 0;
+    }
+
     public static bool TryGetClientRect(out int x, out int y, out int w, out int h, out bool usable)
     {
         usable = false;
