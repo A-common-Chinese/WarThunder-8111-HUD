@@ -391,123 +391,7 @@ public sealed class MfdFrameForm : Form
         }
     }
 
-    /// <summary>Second-level page: manual numeric entry.</summary>
-    private void DrawEditPage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var title = MfdTheme.CjkAt(26f * s);
-        using var mono = MfdTheme.MonoBoldAt(56f * s);
-        using var hint = MfdTheme.CjkAt(18f * s);
-        using var green = new SolidBrush(MfdTheme.Green);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
 
-        var name = L10n.Get(LangScope.Screen, SelectedItem?.LabelKey ?? "");
-        var cx = glass.Left + glass.Width / 2;
-
-        var zh2 = L10n.Screen == Lang.Zh;
-        var vehicle = WtHud.Hud.AirframeDb.EffectiveVehicle;
-        using var vFont = MfdTheme.CjkAt(17f * s);
-        var vText = string.IsNullOrWhiteSpace(vehicle)
-            ? (zh2 ? "当前机型：未读取到机型数据" : "AIRFRAME: NOT DETECTED")
-            : (zh2 ? "当前机型：" + vehicle : "AIRFRAME: " + vehicle);
-        g.DrawString(vText, vFont, string.IsNullOrWhiteSpace(vehicle) ? muted : text,
-                     cx - g.MeasureString(vText, vFont).Width / 2, glass.Top + 26 * s,
-                     StringFormat.GenericTypographic);
-
-        g.DrawString(name, title, muted, cx - g.MeasureString(name, title).Width / 2, glass.Top + 62 * s,
-                     StringFormat.GenericTypographic);
-
-        var shown = _editBuffer.Length == 0 ? "_" : _editBuffer + "_";
-        var w = g.MeasureString(shown, mono).Width;
-        var boxW = Math.Max(w + 80 * s, 320 * s);
-        var boxH = 90 * s;
-        var bx = cx - boxW / 2;
-        var by = glass.Top + glass.Height * 0.28f;
-
-        using (var boxBg = new SolidBrush(Color.FromArgb(210, 6, 16, 10)))
-            g.FillRectangle(boxBg, bx, by, boxW, boxH);
-        g.DrawRectangle(new Pen(MfdTheme.Green, 2.5f * s), bx, by, boxW, boxH);
-        g.DrawString(shown, mono, green, cx - w / 2, by + 12 * s, StringFormat.GenericTypographic);
-
-        var unit = SelectedItem?.Unit ?? "";
-        if (!string.IsNullOrEmpty(unit))
-            g.DrawString(unit, title, muted, bx + boxW + 10 * s, by + boxH / 2 - 14 * s, StringFormat.GenericTypographic);
-
-        DrawDecisionRows(g, s, glass, pad);
-        // 第三个选项（右侧第 3 键）：手动指定机型，常驻并可高亮
-        {
-            var rowH3 = 44 * s;
-            var colW3 = (glass.Width - pad * 2) / 2 - 34 * s;
-            var optX3 = glass.Left + glass.Width / 2 + pad * 0.4f;
-            var btn3 = _layout.SideButtons[7];
-            var by3 = btn3.Y + btn3.Height / 2 - rowH3 / 2;
-            var pickSelected = _confirmSel == 2;
-
-            if (pickSelected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, optX3 - 2 * s, by3, colW3 + 4 * s, rowH3);
-            }
-            else
-            {
-                using var frame = new Pen(MfdTheme.Green, 1.5f * s);
-                g.DrawRectangle(frame, optX3 - 2 * s, by3, colW3 + 4 * s, rowH3);
-            }
-
-            using var opt = MfdTheme.CjkAt(24f * s);
-            using var pickFg = new SolidBrush(pickSelected ? MfdTheme.Dark : MfdTheme.Text);
-            var pick = zh2 ? "手动指定机型" : "PICK AIRFRAME";
-            g.DrawString(pick, opt, pickFg, optX3 + 20 * s, by3 + 2 * s, StringFormat.GenericTypographic);
-        }
-
-    }
-
-    /// <summary>Second-level page: pick one of the color presets.</summary>
-    private void DrawPresetPage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var title = MfdTheme.CjkAt(24f * s);
-        using var label = MfdTheme.CjkAt(22f * s);
-        using var hintF = MfdTheme.CjkAt(17f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var cx = glass.Left + glass.Width / 2;
-
-        // 与模块页相同的 2 列 × 5 行网格：cell = (列 * 5) + 行
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
-
-        for (var i = 0; i < MfdTheme.Presets.Length; i++)
-        {
-            var col = i % 2;
-            var row = i / 2;
-            var btn = _layout.SideButtons[col * 5 + row];
-            var x = col == 0
-                ? glass.Left + pad
-                : glass.Left + glass.Width / 2 + pad * 0.4f;
-            var y = btn.Y + btn.Height / 2 - rowH / 2;
-
-            var selected = i == _presetSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
-            }
-
-            var (key, ink, accent) = MfdTheme.Presets[i];
-
-            // 两个小色块：左=高亮色，右=正文色
-            using (var sw = new SolidBrush(accent))
-                g.FillRectangle(sw, x + 8 * s, y + 9 * s, 20 * s, rowH - 18 * s);
-            using (var sw2 = new SolidBrush(ink))
-                g.FillRectangle(sw2, x + 32 * s, y + 9 * s, 20 * s, rowH - 18 * s);
-
-            using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
-            g.DrawString(L10n.Get(LangScope.Screen, "color." + key), label, fg,
-                         x + 62 * s, y + 4 * s, StringFormat.GenericTypographic);
-        }
-
-    }
 
     /// <summary>Second-level page: live key capture.</summary>
     private void DrawCapturePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
@@ -890,46 +774,6 @@ public sealed class MfdFrameForm : Form
         _toast = null;
     }
 
-    /// <summary>Second-level page: pick an airframe by hand when detection failed.</summary>
-    private void DrawPickVehiclePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var head = MfdTheme.CjkAt(20f * s);
-        using var body = MfdTheme.MonoAt(19f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var accent = new SolidBrush(MfdTheme.Green);
-
-        var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
-        var pages = Math.Max(1, (list.Count + 9) / 10);
-        _pickPage = Math.Clamp(_pickPage, 0, pages - 1);
-
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
-
-        for (var i = 0; i < 10; i++)
-        {
-            var item = _pickPage * 10 + i;
-            if (item >= list.Count) break;
-
-            var col = i % 2;
-            var row = i / 2;
-            var btn = _layout.SideButtons[col * 5 + row];
-            var x = col == 0 ? glass.Left + pad : glass.Left + glass.Width / 2 + pad * 0.4f;
-            var y = btn.Y + btn.Height / 2 - rowH / 2;
-
-            var selected = item == _pickSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
-            }
-            using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
-            g.DrawString(list[item], body, fg, x + 8 * s, y + 8 * s, StringFormat.GenericTypographic);
-        }
-
-        var pager = $"{_pickPage + 1}/{pages}";
-        g.DrawString(pager, head, accent, glass.Right - pad - g.MeasureString(pager, head).Width,
-                     glass.Top + 38 * s, StringFormat.GenericTypographic);
-    }
 
     /// <summary>确认 / 取消 两行，对应左侧第 3、4 个键。</summary>
     private void DrawDecisionRows(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
@@ -957,46 +801,6 @@ public sealed class MfdFrameForm : Form
     }
     /// <summary>Confirmation sheet: only CONFIRM and CANCEL.</summary>
 
-    private void DrawConfirm(System.Drawing.Graphics g, float s, RectangleF glass, float left, float pad)
-    {
-        var label = _resetConfirm
-            ? L10n.Get(LangScope.Screen, "confirm.resetAirframe")
-            : _closeConfirm
-            ? L10n.Get(LangScope.Screen, "confirm.discard")
-            : _pendingAction == null ? "" : L10n.Get(LangScope.Screen, _pendingAction.LabelKey);
-
-        using var big = MfdTheme.CjkAt(28f * s);
-        using var small = MfdTheme.MonoAt(15f * s);
-        using var white = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var cy = glass.Top + glass.Height * 0.30f;
-        var w = g.MeasureString(label, big).Width;
-        g.DrawString(label, big, white, glass.Left + glass.Width / 2 - w / 2, cy - 40 * s, StringFormat.GenericTypographic);
-
-        var sub = L10n.Get(LangScope.Screen, _resetConfirm ? "confirm.askReset" : _closeConfirm ? "confirm.askDiscard" : "confirm.ask");
-        var sw = g.MeasureString(sub, small).Width;
-        g.DrawString(sub, small, muted, glass.Left + glass.Width / 2 - sw / 2, cy + 4 * s, StringFormat.GenericTypographic);
-
-        var rowH = 44 * s;
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        for (var i = 0; i < 2; i++)
-        {
-            var btn = _layout.SideButtons[2 + i];
-            var yy = btn.Y + btn.Height / 2 - rowH / 2;
-            var x = left;
-            var selected = i == _confirmSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(i == 0 ? MfdTheme.Green : MfdTheme.GreenDim);
-                g.FillRectangle(hi, x - 6 * s, yy, colW + 12 * s, rowH);
-            }
-            var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
-            using var fgBrush = new SolidBrush(fg);
-            var text = L10n.Get(LangScope.Screen, i == 0 ? "confirm.ok" : "confirm.cancel");
-            g.DrawString(text, big, fgBrush, x + 20 * s, yy + 2 * s, StringFormat.GenericTypographic);
-        }
-    }
 
     // ---------------------------------------------------------------- input
 
