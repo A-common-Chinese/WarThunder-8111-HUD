@@ -1036,14 +1036,14 @@ public sealed class MfdFrameForm : Form
         // 选机型页：非拟真模式下点击行即选中（同一行 400ms 内再点一次 = 指定）
         if (!_work.Mfd.RealisticKeys && _mode == Mode.PickVehicle)
         {
-            var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+            var count = WtHud.Hud.AirframeDb.All.Count + 1;   // +1 = 「全局」项
             var sScale = _layout.Width / 1330f;
             var colW = (_layout.Glass.Width - 18 * sScale * 2) / 2 - 34 * sScale;
             var rowH = 40 * sScale;
             for (var i = 0; i < 10; i++)
             {
                 var item = _pickPage * 10 + i;
-                if (item >= list.Count) break;
+                if (item >= count) break;
                 var col = i % 2;
                 var row = i / 2;
                 var btn = _layout.SideButtons[col * 5 + row];
@@ -1058,8 +1058,8 @@ public sealed class MfdFrameForm : Form
                 var again = item == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
                 _lastHitCell = item;
                 _lastHitUtc = now;
-                _pickSel = item;
-                if (again || e.Clicks >= 2) ApplyPickedVehicle();
+                _pickPageUI?.SelectCell(i);
+                if (again || e.Clicks >= 2) _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 Invalidate();
                 return;
             }
