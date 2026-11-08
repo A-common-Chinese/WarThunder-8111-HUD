@@ -1876,6 +1876,18 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Confirm) { CancelPending(); return; }
         if (_mode == Mode.Menu) return;
 
+        // 机型作用域：RESET 只清空该机型的覆盖，作用域保持不动（编辑页继续停在该机型）
+        if (!WtHud.Hud.EditScope.IsGlobal)
+        {
+            WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_work);
+            WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_cfg);
+            _dirty = true;
+            _toast = L10n.Get(LangScope.Screen, "scope.resetVehicle");
+            _mode = Mode.Items;
+            SyncDiagProbe();
+            return;
+        }
+
         if (CurrentPage?.TitleKey == "page.language")
         {
             L10n.Panel = Lang.En;

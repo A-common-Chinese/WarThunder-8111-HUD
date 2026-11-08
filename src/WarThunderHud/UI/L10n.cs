@@ -178,6 +178,7 @@ public static class L10n
         ["row.rollCoupleMode"] = ("坡度耦合方式", "ROLL COUPLING MODE"),
         ["row.rollCouple"] = ("相机随滚转", "ROLL COUPLING"),
         ["row.bankSign"] = ("坡度方向", "BANK DIRECTION"),
+        ["scope.resetVehicle"] = ("已清除该机型覆盖，回落到全局", "AIRFRAME OVERRIDES CLEARED"),
         ["edit.pick"] = ("手动选择机型", "PICK AIRFRAME"),
         ["pick.title"] = ("选择机型", "SELECT AIRFRAME"),
         ["scope.global"] = ("全局数据", "GLOBAL"),
