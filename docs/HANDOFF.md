@@ -53,6 +53,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.0`（`WarThunderHud.csproj`）
 - 分支：`v0.3.0`（本地与远端一致），tag `v0.3.0-wip`
 - 最近提交（新→旧）：
+  - `9230b12` chore: 0 警告 — D2D/DWrite 工厂判空 + 可空性标注
   - `b033435` chore: 清剩余死代码告警 + 修 fusiontest + DIAG 复制接线（告警 28→11，仅剩可空性）
   - `5afcccb` refactor: 页面统一 Enter* 构造器 + 删确认/捕获遗留状态（扫描器 6 页 CLEAN）
   - `ca72215` docs: 确认页修复记录
@@ -119,6 +120,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 面板保存后 `RebindeKeys(cfg)` + `ApplyHotkeys` 让自定义键立即生效
 - DIAG 页「复制诊断信息」= 把 `/state`、`/indicators`、`/map_obj`、`/map_info` 四段文本写进剪贴板（之前 `DiagState` 的委托从未被宿主接线，那一行是空操作；现在直接实现，剪贴板忙时静默忽略）
 - 自检：`WtHud.exe fusiontest` 三个姿态融合场景全 PASS（顺手修了两个陈旧场景：测试快照没置 `HasHeading` 导致转弯场景恒 0；以及早已删除的 native bias 学习场景）
+- 编译现在是 **0 error / 0 warning**（Debug Rebuild 实测）。图形相关注意（别改回原样）：
+  - `Graphics/HudCanvas.cs` / `Overlay/OverlayWindow.cs` 的 `D2D1CreateFactory` / `DWriteCreateFactory` 的 out 参数**按可空接收后立即判空抛异常**（Vortice 标注为可空，直接信任会吃 CS8600/NRE）
+  - `HudDrawer.CreateTextFormat(..., null!, ...)`：null = 系统字体集合，Vortice 把它标成非空，只能 `null!`
 
 ## 5. 未完成的工作（按优先级）
 
@@ -126,7 +130,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - v0.3.0 changelog + 打包发布（尚未做；用户此前说先不发）
 - 面板剩余页面迁移：Help / Detail / Diag / 主列表 Items（这几页还没进页面层，扫描器未覆盖）
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
-- 剩余 11 条可空性告警（CS8600/8602/8604/8625，集中在 `Graphics/`、`Overlay/`、`Program.cs`）：属于 nullable 标注问题，不是死代码；已无 CS0169/CS0414/CS0162/CS0649/CS0108
+- 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
 - 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
 
 ## 6. 踩过的坑（务必避免重复）
@@ -174,7 +178,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 18. 选机型链路：编辑页「手动选择机型」→ 选中飞机 → 回到编辑页顶栏变「机型数据：xxx」（`pickpicked`）；返回则为原编辑页（`pickback`）
 19. 色板应用：选「红色」→ CONFIRM → 面板立即整体变色（`presetapply` 视图等价）
 20. 自检：`dist-wthud\WtHud.exe fusiontest` → 3 场景全 PASS、exit 0
-21. 编译告警体检：`build.ps1` 不应再出现 CS0169/CS0414/CS0162/CS0649/CS0108（只允许 CS860x/CS8625 可空性告警）
+21. 编译告警体检：`dotnet build -t:Rebuild` → **0 error / 0 warning**（CS0169/CS0414/CS0162/CS0649/CS0108 与可空性告警都应清零）
 
 ## 8. 协作约定
 
