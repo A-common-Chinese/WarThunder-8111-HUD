@@ -81,6 +81,7 @@ public sealed class MfdFrameForm : Form
         _cfg = cfg;
         _baseline = cfg.Clone();
         _work = cfg.Clone();
+        WtHud.Hud.ConfigSnapshots.MarkCancelPoint(cfg);   // CANCEL 回退点（每次 F1 覆盖）
         L10n.LoadFromConfig(_work.Language);
         MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
 
@@ -1769,6 +1770,14 @@ public sealed class MfdFrameForm : Form
 
     private void CancelAndClose()
     {
+        // 丢弃本次会话的全部修改：回到打开 F1 时的快照
+        if (WtHud.Hud.ConfigSnapshots.RestoreCancelPoint(_cfg))
+        {
+            var fresh = _cfg.Clone();
+            foreach (var prop in typeof(HudConfig).GetProperties().Where(pr => pr.CanRead && pr.CanWrite))
+                prop.SetValue(_work, prop.GetValue(fresh));
+        }
+
         if (!_dirty || _forceClose)
         {
             L10n.LoadFromConfig(_cfg.Language);
@@ -1818,6 +1827,7 @@ public sealed class MfdFrameForm : Form
             WtHud.Hud.PitchDetect.ClearPendingSave();
         }
 
+        WtHud.Hud.ConfigSnapshots.SaveHistory(_work, "save");
         Saved = true;
         _dirty = false;
         _forceClose = true;   // 已保存：关闭时不要再弹放弃确认
