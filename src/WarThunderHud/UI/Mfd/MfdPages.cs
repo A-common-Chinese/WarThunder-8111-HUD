@@ -388,11 +388,17 @@ internal static class UpdateState
     }
 }
 
-/// <summary>Small holder for DIAG page requests; wired by the host program.</summary>
+/// <summary>Small holder for DIAG page actions.</summary>
 internal static class DiagState
 {
-    public static Action? CopyRequested;
-    public static Action? CheckUpdateRequested;
+    /// <summary>把当前诊断信息复制到剪贴板（DIAG 页「复制诊断信息」行）；剪贴板被占用时静默忽略。</summary>
+    public static void RequestCopy()
+    {
+        var text = string.Join("\n\n",
+            DiagProbe.StateText, DiagProbe.IndicatorsText, DiagProbe.MapText, DiagProbe.MapInfoText);
+        try { System.Windows.Forms.Clipboard.SetText(text); }
+        catch { /* 剪贴板忙：忽略，不打断面板 */ }
+    }
 
     public static string DuplicateKeyHint(HudConfig c)
     {
@@ -404,9 +410,6 @@ internal static class DiagState
         var dup = keys.GroupBy(k => k).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
         return dup.Length == 0 ? "OK" : string.Join(",", dup);
     }
-
-    public static void RequestCopy() => CopyRequested?.Invoke();
-    public static void RequestCheckUpdate() => CheckUpdateRequested?.Invoke();
 }
 
 

@@ -32,7 +32,6 @@ public static class Program
                 return MfdInteractive();
             case "mfdpreview":
                 return MfdPreview(args.Length > 1 ? args[1] : "mfd-panel.png", args.Length > 2 ? args[2] : "", args.Length > 3 ? int.Parse(args[3]) : 0);
-                return 0;
             case "selftest":
                 return SelfTest();
             case "preview":
@@ -146,7 +145,6 @@ public static class Program
         FusionScenario("loop / high G  bank~0", bankExpected: 0, pitchExpected: 33.7,
             heading: _ => 90, tas: _ => 800, vy: t => 60, aoa: _ => 18.0, ny: _ => 7.0);
 
-        FusionNativeBias();
         return Environment.ExitCode;
     }
 
@@ -163,7 +161,8 @@ public static class Program
             var snap = new TelemetrySnapshot
             {
                 Valid = true, InFlight = true, ElapsedSeconds = t,
-                HeadingDeg = heading(t), TasKmh = tas(t), IasKmh = tas(t) * 0.9,
+                HeadingDeg = heading(t), HasHeading = true,
+                TasKmh = tas(t), IasKmh = tas(t) * 0.9,
                 VyMs = vy(t), AoaDeg = aoa(t), NyG = ny(t), AltM = 2000,
             };
             att = fusion.Update(snap);
@@ -1625,7 +1624,6 @@ public static class Program
     private static double fuelLastSample = -1;
     private static double fuelFlowAt;
     private static OverlayWindow? overlayRef;
-    private static long groundStopSince;
     private static string vneLogged = "";
     private static long pullUpSince;
     private static long sinkRateSince;
@@ -1637,8 +1635,6 @@ public static class Program
     private static double perfBuildMs, perfDrawMs, perfPresentMs;
     private static int perfPresents, perfLoops;
     private static long cursorProbeTicks;
-    private static (int X, int Y, int W, int H)? pendingRect;
-    private static int pendingHits;
 
     private static bool zoomLatched;          // Z key toggle state (RMB adds momentary aiming)
     private static long holdKeyStart;         // long-press hide timer

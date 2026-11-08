@@ -1151,8 +1151,8 @@ public sealed class MfdFrameForm : Form
 
         switch (e.KeyCode)
         {
-            case Keys.Up: Move(-1); break;
-            case Keys.Down: Move(1); break;
+            case Keys.Up: MoveSelection(-1); break;
+            case Keys.Down: MoveSelection(1); break;
             case Keys.Left: Step(-1); break;
             case Keys.Right: Step(1); break;
             case Keys.Enter: Confirm(); break;
@@ -1228,7 +1228,8 @@ public sealed class MfdFrameForm : Form
         _toast = null;
     }
 
-    private void Move(int delta)
+    /// <summary>Moves the selection inside the current page (UP/DOWN).</summary>
+    private void MoveSelection(int delta)
     {
         if (_mode == Mode.Snapshots)
         {
@@ -1797,8 +1798,8 @@ public sealed class MfdFrameForm : Form
         {
             case 0: Confirm(); break;
             case 1: Back(); break;
-            case 2: Move(-1); break;
-            case 3: Move(1); break;
+            case 2: MoveSelection(-1); break;
+            case 3: MoveSelection(1); break;
             case 4:
                 EnterHelp();
                 break;
