@@ -225,6 +225,13 @@ public static class Program
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
 
                     // 面板保存后重新解析键位并刷新热键，否则自定义按键要重启才生效
+                    // 俯仰符号按机型记忆：F-4J 这类反向机设一次就永久生效
+                    if (cfg.PitchSign != 0 && !string.IsNullOrEmpty(AirframeDb.CurrentVehicle))
+                    {
+                        cfg.PitchSignByVehicle[AirframeDb.CurrentVehicle] = cfg.PitchSign;
+                        Console.WriteLine($"pitch sign saved for {AirframeDb.CurrentVehicle}: {cfg.PitchSign}");
+                    }
+
                     RebindeKeys(cfg);
                     overlayRef?.ApplyHotkeys(cfg);
                     overlayRef?.SetCursorHole(cfg.CursorHoleHalfPx);
@@ -329,8 +336,9 @@ public static class Program
 
     private static int RunOverlay(string[] args)
     {
-        double seconds = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 0;   // 0 = run until exit
+        double seconds = args.Length > 1 && double.TryParse(args[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedSeconds) ? parsedSeconds : 0;   // 0 = run until exit
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
+        bool perf = args.Any(a => a.Equals("--perf", StringComparison.OrdinalIgnoreCase));
 
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -1159,16 +1167,45 @@ public static class Program
                                   $"hole=({cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0}) screen={scrW}x{scrH}");
             }
 
+            // 俯仰方向检测：用游戏姿态 vs 航迹角(gamma) 的相关系数判断符号
+            if (WtHud.Hud.PitchDetect.Active)
+                WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, snap.FlightPathAngleDeg);
+
             long key = FrameKey(snap, shown, opt, cal, draw, hiddenByView);
             if (key != lastFrameKey)
             {
                 // Build the symbology only for frames we actually submit.
+                long b0 = perf ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 var prims = draw ? geo.Build(snap, shown, w, h) : empty;
+                long b1 = perf ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 overlay.Present(prims);
+                if (perf)
+                {
+                    var msTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    perfBuildMs += (b1 - b0) * msTick;
+                    perfDrawMs += overlay.LastDrawMs;
+                    perfPresentMs += overlay.LastPresentMs;
+                    perfPresents++;
+                }
                 lastFrameKey = key;
                 presents++;
             }
             frames++;
+
+            if (perf && nowTicks - perfLastPrintTicks > 2000)
+            {
+                var perfDt = (nowTicks - perfLastPrintTicks) / 1000.0;
+                perfLastPrintTicks = nowTicks;
+                var n = Math.Max(1, perfPresents);
+                var fps = perfPresents / Math.Max(0.001, perfDt);
+                Console.WriteLine($"perf: fps={fps:F1} presents={perfPresents} samples={n}  " +
+                                  $"build={perfBuildMs / n:F2}ms draw={perfDrawMs / n:F2}ms present={perfPresentMs / n:F2}ms  " +
+                                  $"loop={perfDt * 1000.0 / Math.Max(1, perfLoops):F2}ms");
+                perfBuildMs = perfDrawMs = perfPresentMs = 0;
+                perfPresents = 0;
+                perfLoops = 0;
+            }
+            perfLoops++;
 
             // Cursor visibility probe: the OS cursor is drawn either by our overlay (invisible
             // class cursor) or by the game window underneath. Log every transition so a stray
@@ -1584,6 +1621,9 @@ public static class Program
     private static DateTime navDbgUtc = DateTime.MinValue;
     private static int lastAircraftMarkers = -1;
     private static long lastFramePollTicks;
+    private static long perfLastPrintTicks;
+    private static double perfBuildMs, perfDrawMs, perfPresentMs;
+    private static int perfPresents, perfLoops;
     private static long cursorProbeTicks;
     private static (int X, int Y, int W, int H)? pendingRect;
     private static int pendingHits;

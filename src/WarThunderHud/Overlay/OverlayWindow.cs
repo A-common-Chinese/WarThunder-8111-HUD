@@ -350,11 +350,30 @@ public sealed class OverlayWindow : IDisposable
     }
 
     /// <summary>Draws one transparent frame and presents it.</summary>
+    /// <summary>Milliseconds spent inside the D2D frame (BeginDraw → EndDraw).</summary>
+    public double LastDrawMs { get; private set; }
+
+    /// <summary>Milliseconds spent in Present.</summary>
+    public double LastPresentMs { get; private set; }
+
     public void Present(IReadOnlyList<HudPrim> prims)
     {
         if (_drawer == null || _swapchain == null) return;
+
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         _drawer.RenderFrame(prims, 0, 0, 0, 0);
-        _swapchain.Present(0, PresentFlags.None);
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        // Composition swap-chains block in Present() while DWM is busy (measured 20-80 ms),
+        // which throttled the whole loop. DoNotWait drops the frame instead of stalling.
+        try { _swapchain.Present(0, PresentFlags.DoNotWait); }
+        catch (Exception) { /* DXGI_ERROR_WAS_STILL_DRAWING: skip this frame */ }
+
+        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        double msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        LastDrawMs = (t1 - t0) * msPerTick;
+        LastPresentMs = (t2 - t1) * msPerTick;
     }
 
     /// <summary>Processes pending window messages; returns false once the window is gone.</summary>

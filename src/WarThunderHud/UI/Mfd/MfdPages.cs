@@ -37,6 +37,9 @@ internal sealed class MfdItem
     public Func<HudConfig, string>? GetPreset { get; init; }
     public Action<HudConfig, string>? SetPreset { get; init; }
     public Action<HudConfig>? Run { get; init; }
+
+    /// <summary>True when the action opens its own sub-page instead of the generic confirm sheet.</summary>
+    public bool Direct { get; init; }
     public string[]? Choices { get; init; }
     public Func<HudConfig, int>? GetChoice { get; init; }
     public Action<HudConfig, int>? SetChoice { get; init; }
@@ -131,6 +134,10 @@ internal static class MfdPages
     private static MfdItem Action(string label, Action<HudConfig> run) =>
         new() { LabelKey = label, Kind = ItemKind.Action, Run = run };
 
+    /// <summary>Action that goes straight to its own page (no "are you sure" sheet).</summary>
+    private static MfdItem ActionDirect(string label, Action<HudConfig> run) =>
+        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true };
+
     private static MfdItem Info(string label, Func<HudConfig, string> text) =>
         new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text };
 
@@ -203,6 +210,7 @@ internal static class MfdPages
             Number("row.rollCouple", c => c.RollCoupling, (c, v) => c.RollCoupling = v, 0.5, 0, 1),
             Enum("row.bankSign", new[] { "opt.normal", "opt.invert" },
                 c => c.BankSign >= 0 ? 0 : 1, (c, i) => c.BankSign = i == 0 ? 1 : -1),
+            Action("row.pitchDetect", _ => WtHud.Hud.PitchDetect.Request()),
             Enum("row.pitchSign", new[] { "opt.auto", "opt.positive", "opt.negative" },
                 c => c.PitchSign switch { > 0 => 1, < 0 => 2, _ => 0 },
                 (c, i) => c.PitchSign = i switch { 1 => 1, 2 => -1, _ => 0 }),

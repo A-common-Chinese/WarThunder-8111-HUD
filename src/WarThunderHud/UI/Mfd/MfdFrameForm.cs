@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle, PitchDetect }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -33,6 +33,8 @@ public sealed class MfdFrameForm : Form
     private readonly List<MfdPage> _pages;
 
     private Mode _mode = Mode.Menu;
+    private readonly Pages.MfdNavigator _nav = new();
+    private Pages.PitchDetectPage? _pitchPage;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -245,6 +247,7 @@ public sealed class MfdFrameForm : Form
             Mode.Confirm => "confirm.title",
             Mode.EditNumber => "edit.title",
             Mode.CaptureKey => "capture.title",
+            Mode.PitchDetect => "row.pitchDetect",
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
@@ -264,6 +267,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
             case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
             case Mode.PickVehicle: DrawPickVehiclePage(g, s, glass, pad); break;
+            case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: DrawItems(g, s, glass, left, pad); break;
         }
 
@@ -275,6 +279,7 @@ public sealed class MfdFrameForm : Form
             Mode.Preset => "selectPreset",
             Mode.Help => "help.pagerHint",
             Mode.PickVehicle => "pick.hint",
+            Mode.PitchDetect => "pitchdetect.hint",
             Mode.EditNumber => "edit.prompt",
             Mode.CaptureKey => "capture.hint",
             _ => "hint.item",
@@ -835,6 +840,9 @@ public sealed class MfdFrameForm : Form
         Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
         Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
+        var shownSign = _work.PitchSignByVehicle.TryGetValue(id, out var storedSign) ? storedSign : _work.PitchSign;
+        Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
+            shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
         Row(L10n.Get(LangScope.Screen, "airframe.stall"), prof.StallAoa > 0 ? $"{prof.StallAoa:F1}°" : (zh ? "未校准" : "DEFAULT"));
 
         y += 8 * s;
@@ -1472,6 +1480,11 @@ public sealed class MfdFrameForm : Form
             case Mode.PickVehicle:
                 ApplyPickedVehicle();
                 break;
+            case Mode.PitchDetect:
+                _nav.Current?.Handle(MfdCommand.Of("confirm.ok"));
+                _toast = _pitchPage?.ResultToast;
+                _mode = Mode.Items;
+                break;
             default:
                 if (SelectedItem is { } item) Activate(item);
                 break;
@@ -1572,8 +1585,20 @@ public sealed class MfdFrameForm : Form
         _pendingAction?.Run?.Invoke(_work);
         _dirty = true;
         _pendingAction = null;
-        _mode = Mode.Items;
         _toast = null;
+
+        // 需要现场采样的动作（俯仰方向检测）确认后进入捕捉页
+        if (WtHud.Hud.PitchDetect.Active)
+        {
+            _pitchPage = new Pages.PitchDetectPage(
+                onFinished: () => { _nav.Clear(); _mode = Mode.Items; _dirty = true; },
+                onCancelled: () => { _nav.Clear(); _mode = Mode.Items; });
+            _nav.Push(_pitchPage);
+            _pitchPage.StartRepaint(Invalidate);
+            _mode = Mode.PitchDetect;
+            return;
+        }
+        _mode = Mode.Items;
     }
 
     private void CancelPending()
@@ -1659,6 +1684,9 @@ public sealed class MfdFrameForm : Form
                 _mode = Mode.Items;
                 _presetTarget = null;
                 _toast = null;
+                break;
+            case Mode.PitchDetect:
+                _nav.Current?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Help:
                 LeaveHelp();
@@ -1896,6 +1924,12 @@ public sealed class MfdFrameForm : Form
         {
             WtHud.Hud.AirframeDb.StoreAlertOverrides(
                 _cfg.AoaWarnDeg, _cfg.OverspeedKmh, _cfg.OverspeedMach);
+        }
+
+        if (WtHud.Hud.PitchDetect.PendingSave is var (veh, sign))
+        {
+            _cfg.PitchSignByVehicle[veh] = sign;
+            WtHud.Hud.PitchDetect.ClearPendingSave();
         }
 
         Saved = true;
