@@ -255,7 +255,7 @@ public sealed class MfdFrameForm : Form
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
-        if (_mode is Mode.Items or Mode.EditNumber)
+        if (_mode is Mode.EditNumber)      // 只有编辑页需要说明正在改哪一层
         {
             var scopeText = WtHud.Hud.EditScope.HeaderText;
             using var scopeFont = MfdTheme.CjkAt(15f * s);
