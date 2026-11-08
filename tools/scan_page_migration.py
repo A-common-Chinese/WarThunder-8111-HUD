@@ -9,6 +9,13 @@ It reports every place that can still bypass a migrated page:
   2. legacy state fields                    -- e.g. _pickSel, _pickPage, _presetSel
   3. legacy draw methods                    -- e.g. DrawPickVehiclePage(...)
 
+What counts as legacy: only state that still exists for the old switch -- a bypass field
+such as `_pickSel` / `_confirmSel` / `_editBuffer`, or an old draw method such as
+`Draw<Mode>Page(...)`. Methods handed to a page constructor as `onOk` / `onCancel` /
+`onApply` / `onCommit` callbacks are the page layer's own building blocks, not leftovers,
+so they are NOT registered as legacy (e.g. RunPending, CancelPending, CommitPreset,
+CommitNumber).
+
 Exception: a `_mode = Mode.X;` assignment placed inside a method whose name starts with
 `Enter` (e.g. `EnterSnapshots`, `EnterSnapshotConfirm`) is a page-constructor entry point
 introduced by the migration, not a direct jump, so it is never reported as a risky spot.
@@ -23,12 +30,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1] / "src" / "WarThunderHud"
 FORM = ROOT / "UI" / "Mfd" / "MfdFrameForm.cs"
 
-# legacy fields per page mode (extend when a new page is migrated)
+# legacy bypass state per page mode (extend when a new page is migrated).
+# Only true leftovers belong here: bypass fields and old helper functions. Methods passed to
+# a page constructor as onOk / onCancel / onApply / onCommit are page-layer callbacks and are
+# deliberately NOT listed (e.g. RunPending, CancelPending, CommitPreset, CommitNumber).
 LEGACY = {
     "PickVehicle": ["_pickSel", "_pickPage", "_pickReturn", "ApplyPickedVehicle"],
-    "Preset": ["_presetSel", "_presetTarget", "ApplyPreset"],
-    "Confirm": ["_confirmSel", "RunPending", "CancelPending"],
-    "EditNumber": ["_editBuffer", "_confirmSel", "CommitNumber"],
+    "Preset": ["_presetSel", "_presetTarget"],
+    "Confirm": ["_confirmSel"],
+    "EditNumber": ["_editBuffer", "_confirmSel"],
     "PitchDetect": ["_detectTimer"],
     "Snapshots": [],          # 快照页由页面层整体接管，没有遗留状态字段
 }

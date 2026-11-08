@@ -72,8 +72,6 @@ internal sealed class NumberEditPage : MfdPageBase
 
     public void Select(int index) => Choice = index < 0 ? Choice : Math.Clamp(index, 0, 2);
 
-    public void MoveChoice(int delta) => Choice = (Choice + delta + 3) % 3;
-
     public override bool Handle(MfdCommand cmd)
     {
         switch (cmd.Id)

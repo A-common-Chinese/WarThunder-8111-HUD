@@ -1859,7 +1859,7 @@ public static class Program
             }
             else if (view == "help") { form.PreviewHelp(0); }
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
-            else if (view == "edit") { form.PreviewEdit(0, 2); }
+            else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "capture") { form.PreviewCapture(3, 0); }
             else if (view == "discard")
             {
@@ -1887,6 +1887,14 @@ public static class Program
                 form.PreviewSnapshotConfirm();
                 form.PreviewConfirmRowClick(0, 2);   // 双击「确认」行：执行恢复
             }
+            else if (view == "detail") { form.PreviewDetail(); }
+            else if (view == "pickvehicle") { form.PreviewPickVehicle(); }
+            else if (view == "editcommit") { form.PreviewEditCommit(); }
+            else if (view == "pickpicked") { form.PreviewPickPicked(); }
+            else if (view == "pickback") { form.PreviewPickBack(); }
+            else if (view == "presetapply") { form.PreviewPresetApply(); }
+            else if (view == "pitch") { form.PreviewPitch(); }
+            else if (view == "detailreset") { form.PreviewDetailReset(); }
             using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
             {

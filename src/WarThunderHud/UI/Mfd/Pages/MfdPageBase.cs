@@ -45,8 +45,6 @@ internal sealed class MfdNavigator
     private readonly List<MfdPageBase> _stack = new();
 
     public MfdPageBase? Current => _stack.Count > 0 ? _stack[^1] : null;
-    public int Depth => _stack.Count;
-    public bool IsEmpty => _stack.Count == 0;
 
     public void Push(MfdPageBase page)
     {
