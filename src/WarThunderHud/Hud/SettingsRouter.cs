@@ -15,9 +15,12 @@ namespace WtHud.Hud;
 public static class SettingsRouter
 {
     /// <summary>Effective value for display: override of the edited/detected airframe, else global.</summary>
+    /// <summary>Vehicle whose overrides are visible: the edited one, else the detected one.</summary>
+    private static string? ResolveVehicle() => EditScope.Target ?? EditScope.DetectedVehicle;
+
     public static double Get(HudConfig cfg, string name, double globalValue)
     {
-        var vehicle = EditScope.Target;
+        var vehicle = ResolveVehicle();
         if (string.IsNullOrEmpty(vehicle)) return globalValue;
         return cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map) && map.TryGetValue(name, out var v)
             ? v
@@ -30,7 +33,8 @@ public static class SettingsRouter
     /// <summary>Routes a write to the global config or to the edited airframe's override map.</summary>
     public static void Set(HudConfig cfg, string name, double value)
     {
-        var vehicle = EditScope.Target;
+        // 自动状态：生效值来自机型覆盖就继续写机型，否则写全局
+        var vehicle = ResolveVehicle();
         if (string.IsNullOrEmpty(vehicle)) return;   // caller writes the global field itself
         if (!cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map))
         {
@@ -43,7 +47,7 @@ public static class SettingsRouter
     /// <summary>True when the edited airframe overrides this setting (drives the [V] badge).</summary>
     public static bool HasOverride(HudConfig cfg, string name)
     {
-        var vehicle = EditScope.Target;
+        var vehicle = ResolveVehicle();
         return !string.IsNullOrEmpty(vehicle)
                && cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map)
                && map.ContainsKey(name);
