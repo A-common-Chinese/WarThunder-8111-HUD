@@ -204,12 +204,8 @@ internal static class MfdPages
         Items =
         {
             Number("row.pitchzero",
-                c => WtHud.Hud.SettingsRouter.Get(c, "pitchZero", c.PitchZeroDeg),
-                (c, v) =>
-                {
-                    if (WtHud.Hud.EditScope.IsGlobal) c.PitchZeroDeg = v;
-                    else WtHud.Hud.SettingsRouter.Set(c, "pitchZero", v);
-                },
+                c => WtHud.Hud.Scoped.Get(c, "row.pitchzero", c.PitchZeroDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.pitchzero", v, () => c.PitchZeroDeg = v),
                 0.1, -20, 20, "°"),
             Enum("row.rollCoupleMode", new[] { "opt.auto", "opt.on", "opt.off" },
                 c => c.RollCouplingMode == "on" ? 1 : c.RollCouplingMode == "off" ? 2 : 0,
