@@ -51,8 +51,7 @@ public sealed class MfdFrameForm : Form
     private int _itemPage;                 // 当前模块内的页号（每页 10 格）
     private (ButtonKind Kind, int Index) _pressed = (ButtonKind.None, -1);
     private string? _toast;
-    private string _editBuffer = "";       // 数值手输缓冲
-    private string _captureText = "";      // 键位捕获结果
+        private string _captureText = "";      // 键位捕获结果
     private readonly HashSet<Keys> _heldKeys = new();   // 捕获时当前按住的键
     private int _helpPage;
     private int _helpSel;
@@ -1089,7 +1088,7 @@ public sealed class MfdFrameForm : Form
                 return;
             }
             var ch = KeyToDigit(e.KeyCode);
-            if (ch != '\0' && _editBuffer.Length < 10)
+            if (ch != '\0' && (_editPage?.Buffer.Length ?? 0) < 10)
             {
                 _editPage?.AppendChar(ch);
                 Invalidate();
@@ -1199,7 +1198,6 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Confirm) { CancelPending(); return; }
         if (_mode == Mode.Preset) { _mode = Mode.Items; _presetTarget = null; return; }
         _mode = Mode.Items;
-        _editBuffer = "";
         _captureText = "";
         _heldKeys.Clear();
         _toast = null;
@@ -1312,7 +1310,7 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        var text = _editBuffer.Replace(",", ".").Trim();
+        var text = (_editPage?.Buffer ?? "").Replace(",", ".").Trim();
         if (double.TryParse(text, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var v))
         {
@@ -1356,8 +1354,8 @@ public sealed class MfdFrameForm : Form
                 _editPage = new Pages.NumberEditPage(
                     texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.Unit),
                     initial: initial,
-                    onCommit: buffer => { _editBuffer = buffer; CommitNumber(); },
-                    onCancel: () => { _nav.Clear(); _editBuffer = ""; _mode = Mode.Items; },
+                    onCommit: buffer => { CommitNumber(); },
+                    onCancel: () => { _nav.Clear(); _mode = Mode.Items; },
                     onPick: () =>
                     {
                         _pickPageUI = new Pages.PickVehiclePage(
