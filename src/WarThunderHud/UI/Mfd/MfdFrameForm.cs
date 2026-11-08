@@ -1781,6 +1781,8 @@ public sealed class MfdFrameForm : Form
     private void CancelAndClose()
     {
         // 丢弃本次会话的全部修改：回到打开 F1 时的快照
+        WtHud.Hud.ConfigSnapshots.EndSession();   // 取消后丢弃本次会话快照
+
         if (WtHud.Hud.ConfigSnapshots.RestoreCancelPoint(_cfg))
         {
             var fresh = _cfg.Clone();
