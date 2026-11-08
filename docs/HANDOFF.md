@@ -53,6 +53,8 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.0`（`WarThunderHud.csproj`）
 - 分支：`v0.3.0`（本地与远端一致），tag `v0.3.0-wip`
 - 最近提交（新→旧）：
+  - `5afcccb` refactor: 页面统一 Enter* 构造器 + 删确认/捕获遗留状态（扫描器 6 页 CLEAN）
+  - `ca72215` docs: 确认页修复记录
   - `0b66417` fix: 二级确认页支持鼠标单击/双击，侧键取消回到来源页
   - `a0b3348` feat: 回归快照（列 temp 下 SAVE 快照 → 二次确认 → 恢复）
   - `0e0c3b3` docs: 快照回退规格
@@ -103,7 +105,13 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 列表只在进入页面 `Build()` 时读盘：面板开着时新 SAVE 的快照要**退出重进**才看得到
 - 扫描器已支持：`python tools\scan_page_migration.py Snapshots` → CLEAN（`Enter*` 方法体里的 `_mode = Mode.X` 不再误报）
 
-### 4.6 其它
+### 4.6 页面构造约定（v0.3.0 重构）
+- **所有二级页必须有 `Enter*` 构造入口**：`EnterConfirm / EnterEditNumber / EnterPickVehicle / EnterPreset / EnterCaptureKey / EnterDetail / EnterPitchDetect / EnterSnapshots / EnterSnapshotConfirm / EnterHelp / EnterPage`。`_mode` 只在 `Enter*` 里赋值；直接赋 `_mode` 会得到空白页
+- 页面回调命名与用途：`RunPending/CancelPending`（ConfirmPage onOk/onCancel）、`CommitNumber(string)`（NumberEditPage onCommit）、`CommitPreset(item,key)`（PresetPage onApply）、`RestoreSnapshot`（快照确认 onOk）
+- 扫描器约定：`_mode = Mode.X;` 只允许出现在 `Enter*` 方法体内；`LEGACY` 只登记真正的遗留旁路状态（`_confirmSel/_editBuffer/_pickSel...`），页面回调不登记
+- **6 个已迁移页全部 CLEAN**：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots` → 全 0 risky
+
+### 4.7 其它
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
 - 中文告警框宽：ASCII 0.62em / 中文 1.0em
 - 机型数据库只收飞机（`tankModels/*` 排除）
@@ -111,19 +119,12 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 5. 未完成的工作（按优先级）
 
-### A. 死代码清理到 CLEAN
-工具：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle`
-当前命中：PickVehicle **1**、Preset **4**、EditNumber **14**、Confirm **21**、PitchDetect **1**
-（扫描器已豁免 `Enter*` 方法体里的 `_mode = Mode.X`，所以 Confirm 从 22 降到 21）
-剩余是**仍被使用**的旧字段与直接跳转，需要逐项确认调用方：
-- `_confirmSel`：`DrawDecisionRows`（L~775）仍读它，调用点 L~422 需确认归属
-- `_mode = Mode.X` 直接赋值若干处 → 换成进入函数
-- 已删：`_pickSel/_pickReturn/_pickPage/_editBuffer/_presetSel/_presetTarget` + 5 个死函数
-
-### B. 其它待办
+### A. 其它待办
 - v0.3.0 changelog + 打包发布（尚未做；用户此前说先不发）
-- 面板剩余页面迁移：Help / Detail / Diag / Items 主列表
+- 面板剩余页面迁移：Help / Detail / Diag / 主列表 Items（这几页还没进页面层，扫描器未覆盖）
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
+- 已知遗留告警（面板外，未动）：`Program.cs` 4 个 CS0169 私有字段 + CS0162 不可达代码；`AttitudeFusion.cs` CS0169×5 + CS0414×2；`MfdPages.cs` 里 `DiagState` 两个 CS0649 字段；`MfdFrameForm.Move(int)` 遮蔽 `Control.Move` 事件的 CS0108（改名可消，但涉及多处调用，暂留）
+- 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
 
 ## 6. 踩过的坑（务必避免重复）
 
@@ -145,6 +146,8 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 | 二级确认页鼠标点了没反应 | `Mode.Confirm` 没接鼠标命中（只有侧键/键盘） | 用 `ConfirmRowHitTest`/`TryClickConfirmRow`：单击选中、双击执行 |
 | 确认页按「取消」侧键后空白页 | 侧键直接调 `CancelPending()`，绕过页面回调 → `_mode = Items`（快照模块 0 行） | 确认页所有输入统一走 `_confirmPage.Handle(...)`，由页面回调决定返回哪一页 |
 | 确认页高亮在「取消」但 CONFIRM 仍是确认 | `Confirm()` 固定发 `confirm.ok` | 已改为跟随 `_confirmPage.Selected` |
+| 扫描器把页面回调报成 legacy | LEGACY 名单里混入了 `RunPending/CancelPending/ApplyPreset/CommitNumber` | 名单只登记遗留**状态字段/旧绘制**；回调是页面层本身 |
+| 删「零引用」成员后编译失败 | 方法组（`onOk: CancelPending`）grep 看不到调用 | 删前同时找 `onOk/onCancel/onApply/onCommit/onPicked` 实参位置 |
 
 ## 7. 验证清单（改完面板必跑）
 
@@ -161,6 +164,12 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 11. 确认页（所有二级确认）：鼠标单击某行 = 选中高亮、双击 = 执行；物理侧键 2/3 也执行；侧键「取消」/BACK 回到来源页（快照确认回到快照列表，不再是空白页）
 12. 确认恢复 → 回首页 toast「已恢复到 xx:xx 的快照」；`temp\session` 消失、多一份 `*-restore.json`；**没有自动 SAVE**（面板仍开着，值已是快照值）
 13. `python tools\scan_page_migration.py Snapshots` → verdict CLEAN
+14. 扫描器 6 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots` → 6 × CLEAN
+15. 页面构造入口没被绕过：`grep "_mode = Mode\." MfdFrameForm.cs` → 全部落在 `Enter*` 方法体内
+16. 预览回归（`mfdpreview` 视图）：`menu/help/preset/edit/capture/confirm/detail/pickvehicle/pitch/detailreset/snapshots/snapconfirm/snapback/snapclick` 都能渲染出内容（无空白页）
+17. 数值提交链路：编辑页输入新值 → CONFIRM → 回到模块页数值已变（`editcommit` 视图等价）
+18. 选机型链路：编辑页「手动选择机型」→ 选中飞机 → 回到编辑页顶栏变「机型数据：xxx」（`pickpicked`）；返回则为原编辑页（`pickback`）
+19. 色板应用：选「红色」→ CONFIRM → 面板立即整体变色（`presetapply` 视图等价）
 
 ## 8. 协作约定
 
