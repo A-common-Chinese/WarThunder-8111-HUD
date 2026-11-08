@@ -31,7 +31,6 @@ public sealed class HudConfig
     [JsonPropertyName("perVehicleOverrides")]
     public Dictionary<string, Dictionary<string, double>> PerVehicleOverrides { get; set; } = new();
 
-    [JsonPropertyName("pitchSignByVehicle")] public System.Collections.Generic.Dictionary<string, int> PitchSignByVehicle { get; set; } = new();
 
     /// <summary>+1 or -1; flips the bank direction if the ladder rotates the wrong way.</summary>
     [JsonPropertyName("bankSign")] public int BankSign { get; set; } = 1;
