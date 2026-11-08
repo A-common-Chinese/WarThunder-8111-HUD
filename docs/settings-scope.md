@@ -5,19 +5,17 @@
 
 优先级：**机型覆盖 > 全局 > 内置默认**
 
-## 按机型覆盖（10 项）
+## 按机型覆盖（8 项）
 
 | 行 key | 原因 |
 |---|---|
 | `row.aoaWarn` | 气动特性 |
-| `row.bankSign` | 个别机型反向 |
 | `row.bankTrim` | 校准值 |
 | `row.fpmTrim` | 校准值 |
 | `row.overspeedIas` | 结构限制 |
 | `row.overspeedMach` | 结构限制 |
 | `row.pitchSign` | 个别机型反向 |
 | `row.pitchzero` | 座舱/装配基准，随机型 |
-| `row.rollCoupleMode` | 座舱视角差异 |
 | `row.stallAoa` | 气动特性 |
 
 ## 显式登记为全局（0 项）

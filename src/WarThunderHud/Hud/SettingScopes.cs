@@ -29,8 +29,6 @@ public static class SettingScopes
         ["row.aoaWarn"] = (SettingScope.Airframe, "气动特性"),
         ["row.overspeedIas"] = (SettingScope.Airframe, "结构限制"),
         ["row.overspeedMach"] = (SettingScope.Airframe, "结构限制"),
-        ["row.rollCoupleMode"] = (SettingScope.Airframe, "座舱视角差异"),
-        ["row.bankSign"] = (SettingScope.Airframe, "个别机型反向"),
         ["row.pitchSign"] = (SettingScope.Airframe, "个别机型反向"),
     };
 
