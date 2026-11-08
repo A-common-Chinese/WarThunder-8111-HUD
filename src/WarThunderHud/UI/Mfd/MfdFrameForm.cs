@@ -255,11 +255,14 @@ public sealed class MfdFrameForm : Form
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
-        var scopeText = WtHud.Hud.EditScope.HeaderText;
-        using (var scopeFont = MfdTheme.CjkAt(15f * s))
-        using (var scopeBrush = new SolidBrush(MfdTheme.Green))
-            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Left + pad, glass.Top + 30 * s,
+        if (_mode is Mode.Items or Mode.EditNumber)
+        {
+            var scopeText = WtHud.Hud.EditScope.HeaderText;
+            using var scopeFont = MfdTheme.CjkAt(15f * s);
+            using var scopeBrush = new SolidBrush(MfdTheme.Green);
+            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Right - pad - 150 * s, glass.Top + 30 * s,
                          StringFormat.GenericTypographic);
+        }
         g.DrawString(title, meta, muted, glass.Left + glass.Width / 2 - g.MeasureString(title, meta).Width / 2,
                      glass.Top + 8 * s);
         var pages = _mode == Mode.Items && CurrentPage != null ? (CurrentPage.Items.Count + 9) / 10 : 1;
@@ -1026,7 +1029,8 @@ public sealed class MfdFrameForm : Form
                 var againC = choice == _lastHitCell && (nowC - _lastHitUtc).TotalMilliseconds < 500;
                 _lastHitCell = choice;
                 _lastHitUtc = nowC;
-                _confirmSel = choice;
+                _editPage?.Select(choice);
+                _confirmSel = _editPage?.Choice ?? choice;
                 if (againC || e.Clicks >= 2) Confirm();
                 Invalidate();
                 return;
@@ -1564,7 +1568,8 @@ public sealed class MfdFrameForm : Form
                                 else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
                                 _dirty = true;
                                 _nav.Clear();
-                                _mode = Mode.EditNumber;
+                                _mode = Mode.Items;      // 回到列表，立即看到该作用域的有效值
+                                Invalidate();
                             },
                             onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
                             layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
