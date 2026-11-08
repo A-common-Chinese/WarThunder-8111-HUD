@@ -1568,7 +1568,7 @@ public sealed class MfdFrameForm : Form
                                 else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
                                 _dirty = true;
                                 _nav.Clear();
-                                _mode = Mode.Items;      // 回到列表，立即看到该作用域的有效值
+                                _mode = Mode.EditNumber;   // 回到编辑页，显示所选数据集的值
                                 Invalidate();
                             },
                             onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
