@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 A-common-Chinese
+// This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3 or later.
+
+using WtHud.UI.Mfd.Controls;
+
+namespace WtHud.UI.Mfd.Pages;
+
+/// <summary>Paged airframe picker: ten cells per page, CONFIRM applies the highlighted entry.</summary>
+internal sealed class PickVehiclePage : MfdPageBase
+{
+    private readonly Action<string> _onPicked;
+    private readonly Action _onCancel;
+    private readonly MfdPageLayout _layout;
+    private List<string> _list = new();
+
+    public PickVehiclePage(Action<string> onPicked, Action onCancel, MfdPageLayout layout) : base("pickvehicle")
+    {
+        _onPicked = onPicked;
+        _onCancel = onCancel;
+        _layout = layout;
+    }
+
+    public override string TitleKey => "pick.title";
+    public override string HintKey => "pick.hint";
+
+    public int PageIndex { get; private set; }
+    public int Selected { get; private set; }
+
+    public override void Build()
+    {
+        _list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+        Buttons.Clear();
+        for (var i = 0; i < 10; i++)
+        {
+            var cell = i;
+            Buttons.Add(new VirtualButton($"pick{cell}", VirtualButtonKind.Action)
+            {
+                Slot = cell % 5,
+                Column = cell / 5,
+                Text = () => cell < _list.Count ? _list[cell] : "",
+            });
+        }
+    }
+
+    public void Move(int delta) => Selected = Math.Clamp(Selected + delta, 0, Math.Max(0, _list.Count - 1));
+
+    public void SelectCell(int cell)
+    {
+        var index = PageIndex * 10 + cell;
+        if (index < _list.Count) Selected = index;
+    }
+
+    public void CyclePage(int delta)
+    {
+        var pages = Math.Max(1, (_list.Count + 9) / 10);
+        PageIndex = Math.Clamp(PageIndex + delta, 0, pages - 1);
+        Selected = Math.Min(Selected, Math.Max(0, _list.Count - 1));
+    }
+
+    public override bool Handle(MfdCommand cmd)
+    {
+        switch (cmd.Id)
+        {
+            case "confirm.ok":
+                if (Selected >= 0 && Selected < _list.Count) _onPicked(_list[Selected]);
+                return true;
+            case "nav.back":
+                _onCancel();
+                return true;
+        }
+        return false;
+    }
+
+    public override void Draw(MfdRenderContext ctx)
+    {
+        var g = ctx.G;
+        var s = ctx.Scale;
+        using var head = MfdTheme.CjkAt(20f * s);
+        using var body = MfdTheme.MonoAt(19f * s);
+        using var text = new SolidBrush(MfdTheme.Text);
+        using var accent = new SolidBrush(MfdTheme.Green);
+
+        var pages = Math.Max(1, (_list.Count + 9) / 10);
+        PageIndex = Math.Clamp(PageIndex, 0, pages - 1);
+
+        for (var i = 0; i < 10; i++)
+        {
+            var index = PageIndex * 10 + i;
+            if (index >= _list.Count) break;
+
+            var row = _layout.ListRowRect(i % 2, i / 2);
+            var selected = index == Selected;
+            if (selected)
+            {
+                using var hi = new SolidBrush(MfdTheme.Green);
+                g.FillRectangle(hi, row);
+            }
+            using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
+            g.DrawString(_list[index], body, fg, row.X + 10 * s, row.Y + 6 * s,
+                         StringFormat.GenericTypographic);
+        }
+    }
+}

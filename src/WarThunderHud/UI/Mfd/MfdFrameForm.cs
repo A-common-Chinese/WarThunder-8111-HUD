@@ -38,6 +38,7 @@ public sealed class MfdFrameForm : Form
     private Pages.ConfirmPage? _confirmPage;
     private Pages.NumberEditPage? _editPage;
     private Pages.PresetPage? _presetPage;
+    private Pages.PickVehiclePage? _pickPageUI;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -269,7 +270,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
             case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
-            case Mode.PickVehicle: DrawPickVehiclePage(g, s, glass, pad); break;
+            case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: DrawItems(g, s, glass, left, pad); break;
         }
@@ -1221,9 +1222,7 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.PickVehicle)
         {
-            var total = WtHud.Hud.AirframeDb.All.Count;
-            var idx = _pickPage * 10 + cell;
-            if (idx < total) _pickSel = idx;
+            _pickPageUI?.SelectCell(cell);
             return;
         }
 
@@ -1417,6 +1416,11 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        if (_mode == Mode.PickVehicle)
+        {
+            _pickPageUI?.Move(delta);
+            return;
+        }
         if (_mode == Mode.Preset)
         {
             _presetPage?.Move(delta);
@@ -1478,7 +1482,7 @@ public sealed class MfdFrameForm : Form
                 _mode = Mode.Items;
                 break;
             case Mode.PickVehicle:
-                ApplyPickedVehicle();
+                _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             case Mode.PitchDetect:
                 _nav.Current?.Handle(MfdCommand.Of("confirm.ok"));
@@ -1545,7 +1549,16 @@ public sealed class MfdFrameForm : Form
                     initial: initial,
                     onCommit: buffer => { _editBuffer = buffer; CommitNumber(); },
                     onCancel: () => { _nav.Clear(); _editBuffer = ""; _mode = Mode.Items; },
-                    onPick: () => { _pickReturn = Mode.EditNumber; _pickSel = 0; _pickPage = 0; _mode = Mode.PickVehicle; },
+                    onPick: () =>
+                    {
+                        _pickReturn = Mode.EditNumber;
+                        _pickPageUI = new Pages.PickVehiclePage(
+                            onPicked: name => { WtHud.Hud.AirframeDb.ManualVehicle = name; _dirty = true; _nav.Clear(); _mode = Mode.EditNumber; },
+                            onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
+                            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+                        _nav.Push(_pickPageUI);
+                        _mode = Mode.PickVehicle;
+                    },
                     layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
                 _nav.Push(_editPage);
                 _mode = Mode.EditNumber;
@@ -1743,7 +1756,7 @@ public sealed class MfdFrameForm : Form
                 _toast = null;
                 break;
             case Mode.PickVehicle:
-                _mode = _pickReturn;
+                _pickPageUI?.Handle(MfdCommand.Of("nav.back"));
                 _toast = null;
                 break;
             case Mode.EditNumber:
@@ -1773,8 +1786,7 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.PickVehicle)
         {
-            var pickPages = Math.Max(1, (WtHud.Hud.AirframeDb.All.Count + 9) / 10);
-            _pickPage = Math.Clamp(_pickPage + delta, 0, pickPages - 1);
+            _pickPageUI?.CyclePage(delta);
             return;
         }
 
