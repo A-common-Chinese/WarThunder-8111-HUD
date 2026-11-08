@@ -210,7 +210,7 @@ internal static class MfdPages
             Number("row.rollCouple", c => c.RollCoupling, (c, v) => c.RollCoupling = v, 0.5, 0, 1),
             Enum("row.bankSign", new[] { "opt.normal", "opt.invert" },
                 c => c.BankSign >= 0 ? 0 : 1, (c, i) => c.BankSign = i == 0 ? 1 : -1),
-            Action("row.pitchDetect", _ => WtHud.Hud.PitchDetect.Request()),
+            Action("row.pitchDetect", _ => WtHud.Hud.PitchDetect.Begin()),
             Enum("row.pitchSign", new[] { "opt.auto", "opt.positive", "opt.negative" },
                 c => c.PitchSign switch { > 0 => 1, < 0 => 2, _ => 0 },
                 (c, i) => c.PitchSign = i switch { 1 => 1, 2 => -1, _ => 0 }),
