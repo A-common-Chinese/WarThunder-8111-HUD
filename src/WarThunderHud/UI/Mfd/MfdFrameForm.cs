@@ -65,7 +65,6 @@ public sealed class MfdFrameForm : Form
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
     private List<RealButton>? _realButtons;
-    private MfdItem? _presetTarget;
     private DateTime _lastClickUtc = DateTime.MinValue;
     private int _lastClickCell = -1;
     private int _lastHitCell = -1;
@@ -922,7 +921,7 @@ public sealed class MfdFrameForm : Form
                     _lastHitCell = rowCell;
                     _lastHitUtc = nowP;
                     _presetPage?.Select(rowCell);
-                    if (againP || e.Clicks >= 2) ApplyPreset();
+                    if (againP || e.Clicks >= 2) _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
                     Invalidate();
                 }
                 return;
@@ -1176,15 +1175,14 @@ public sealed class MfdFrameForm : Form
     };
 
     /// <summary>Applies the highlighted color preset and returns to the panel page.</summary>
-    private void ApplyPreset()
+    private void ApplyPreset(MfdItem? target)
     {
-        if (_presetTarget?.SetPreset is { } set)
+        if (target?.SetPreset is { } set)
         {
             set(_work, MfdTheme.Presets[_presetPage?.Selected ?? 0].Key);
             MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
             _dirty = true;
         }
-        _presetTarget = null;
         _mode = Mode.Items;
         _toast = null;
     }
@@ -1193,7 +1191,7 @@ public sealed class MfdFrameForm : Form
     private void CancelSecondLevel()
     {
         if (_mode == Mode.Confirm) { CancelPending(); return; }
-        if (_mode == Mode.Preset) { _mode = Mode.Items; _presetTarget = null; return; }
+        if (_mode == Mode.Preset) { _mode = Mode.Items; return; }
         _mode = Mode.Items;
         _captureText = "";
         _heldKeys.Clear();
@@ -1388,7 +1386,6 @@ public sealed class MfdFrameForm : Form
                 return;
             case ItemKind.Preset:
             {
-                _presetTarget = item;
                 var target = item;
                 _presetPage = new Pages.PresetPage(
                     currentKey: () => target.GetPreset?.Invoke(_work) ?? "green",
@@ -1396,9 +1393,9 @@ public sealed class MfdFrameForm : Form
                     {
                         // 和双击走同一条路径：ApplyPreset 会同步主题与草稿
                         _nav.Clear();
-                        ApplyPreset();
+                        ApplyPreset(target);
                     },
-                    onCancel: () => { _nav.Clear(); _presetTarget = null; _mode = Mode.Items; },
+                    onCancel: () => { _nav.Clear(); _mode = Mode.Items; },
                     layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
                 _nav.Push(_presetPage);
                 _mode = Mode.Preset;
