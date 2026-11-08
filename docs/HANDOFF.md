@@ -53,6 +53,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.0`（`WarThunderHud.csproj`）
 - 分支：`v0.3.0`（本地与远端一致），tag `v0.3.0-wip`
 - 最近提交（新→旧）：
+  - `2e02771` refactor: Help/Detail 页迁入页面层（扫描器 8 页 CLEAN）
   - `9230b12` chore: 0 警告 — D2D/DWrite 工厂判空 + 可空性标注
   - `b033435` chore: 清剩余死代码告警 + 修 fusiontest + DIAG 复制接线（告警 28→11，仅剩可空性）
   - `5afcccb` refactor: 页面统一 Enter* 构造器 + 删确认/捕获遗留状态（扫描器 6 页 CLEAN）
@@ -109,9 +110,11 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ### 4.6 页面构造约定（v0.3.0 重构）
 - **所有二级页必须有 `Enter*` 构造入口**：`EnterConfirm / EnterEditNumber / EnterPickVehicle / EnterPreset / EnterCaptureKey / EnterDetail / EnterPitchDetect / EnterSnapshots / EnterSnapshotConfirm / EnterHelp / EnterPage`。`_mode` 只在 `Enter*` 里赋值；直接赋 `_mode` 会得到空白页
-- 页面回调命名与用途：`RunPending/CancelPending`（ConfirmPage onOk/onCancel）、`CommitNumber(string)`（NumberEditPage onCommit）、`CommitPreset(item,key)`（PresetPage onApply）、`RestoreSnapshot`（快照确认 onOk）
+- 页面回调命名与用途：`RunPending/CancelPending`（ConfirmPage onOk/onCancel）、`CommitNumber(string)`（NumberEditPage onCommit）、`CommitPreset(item,key)`（PresetPage onApply）、`RestoreSnapshot`（快照确认 onOk）、`DetailPage.onBack/onReset`、`HelpPage.onClose`
 - 扫描器约定：`_mode = Mode.X;` 只允许出现在 `Enter*` 方法体内；`LEGACY` 只登记真正的遗留旁路状态（`_confirmSel/_editBuffer/_pickSel...`），页面回调不登记
-- **6 个已迁移页全部 CLEAN**：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots` → 全 0 risky
+- **8 个已迁移页全部 CLEAN**：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 全 0 risky
+- 页面清单位置：`UI/Mfd/Pages/` 下 `HelpPage`（按键说明 + 结构树 + INFO 说明，页面自持分页/选中/点击）、`DetailPage`（机型能力汇总 + reset/back 回调）、`PageText`（共享换行）、`ConfirmPage/NumberEditPage/PresetPage/PickVehiclePage/PitchDetectPage/SnapshotsPage`
+- **Diag 页**：本来就是数据驱动的 `MfdPage`（`MfdPages.Diag()` 的 Info/Action 行），没有模式分支，不需要迁移；**主列表 Items** 仍是 Form 的默认渲染器，属于纯结构搬运（无遗留分支），评估后暂不做，避免为架构一致性引入核心交互回归
 
 ### 4.7 其它
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
@@ -128,10 +131,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ### A. 其它待办
 - v0.3.0 changelog + 打包发布（尚未做；用户此前说先不发）
-- 面板剩余页面迁移：Help / Detail / Diag / 主列表 Items（这几页还没进页面层，扫描器未覆盖）
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 - 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
 - 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
+- 主列表 Items 若将来要迁页面层（纯结构搬运），见 §4.6 的评估：先做交互回归清单（UP/DOWN/CONFIRM/侧键/翻页/鼠标双击/编辑页入口），再动手
 
 ## 6. 踩过的坑（务必避免重复）
 
@@ -179,6 +182,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 19. 色板应用：选「红色」→ CONFIRM → 面板立即整体变色（`presetapply` 视图等价）
 20. 自检：`dist-wthud\WtHud.exe fusiontest` → 3 场景全 PASS、exit 0
 21. 编译告警体检：`dotnet build -t:Rebuild` → **0 error / 0 warning**（CS0169/CS0414/CS0162/CS0649/CS0108 与可空性告警都应清零）
+22. HELP 页：HELP 打开/再按关闭回到原页面；PAGE 翻到 6/6、UP/DOWN 选中跟随；点击行选中（`help/help3/helpback` 视图）；help 渲染必须与迁移前逐字节一致
+23. 机型详情：进入显示汇总、RESET 弹「重置该机型到默认？」、取消回详情、确认后回详情且数值更新；BACK 回机型列表（`detail/detailreset/detailback` 视图）
+24. 扫描器 8 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 8 × CLEAN
 
 ## 8. 协作约定
 
