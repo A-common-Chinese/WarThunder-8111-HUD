@@ -131,6 +131,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ### A. 其它待办
 - **v0.3.0 发布材料已备好**（changelog/release notes/zip/SHA256 都在 `C:\Users\noapi\Desktop\WtHud-发布\`），**由用户自己发布 release 并 push tag**；本地已打 `v0.3.0` tag，远端尚未推
+- **击落播报（SPLASH）方案已定、未实现**：见 `docs/killfeed-splash-plan.md`。数据源 `/hudmsg` 已实测（`damage` 流、id 增量、本地化文本 + U+200B/颜色标记需清洗、AI 目标带 `AI` 前缀）；**等用户跑真实对局抓一条「击落玩家」的原始条目**后再动手。下次继续前需用户拍板：开关默认值、输入页是否 v1 就做
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 - 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
 - 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
