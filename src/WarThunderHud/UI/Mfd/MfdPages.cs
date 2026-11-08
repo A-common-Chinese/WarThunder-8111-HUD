@@ -203,7 +203,14 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.camera",
         Items =
         {
-            Number("row.pitchzero", c => c.PitchZeroDeg, (c, v) => c.PitchZeroDeg = v, 0.1, -20, 20, "°"),
+            Number("row.pitchzero",
+                c => WtHud.Hud.SettingsRouter.Get(c, "pitchZero", c.PitchZeroDeg),
+                (c, v) =>
+                {
+                    if (WtHud.Hud.EditScope.IsGlobal) c.PitchZeroDeg = v;
+                    else WtHud.Hud.SettingsRouter.Set(c, "pitchZero", v);
+                },
+                0.1, -20, 20, "°"),
             Enum("row.rollCoupleMode", new[] { "opt.auto", "opt.on", "opt.off" },
                 c => c.RollCouplingMode == "on" ? 1 : c.RollCouplingMode == "off" ? 2 : 0,
                 (c, i2) => c.RollCouplingMode = i2 == 1 ? "on" : i2 == 2 ? "off" : "auto"),
