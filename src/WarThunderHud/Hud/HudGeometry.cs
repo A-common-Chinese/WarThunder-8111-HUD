@@ -670,14 +670,14 @@ public sealed class HudGeometry
             var endColor = _opt.EnduranceSeconds < 120 ? _opt.DangerColor
                          : _opt.EnduranceSeconds < 300 ? _opt.WarnColor
                          : col;
-            Row("FUEL", endText, endColor);
+            Row(L10n.Get(LangScope.Alerts, "label.fuel"), endText, endColor);
         }
         else
         {
-            Row("FUEL", "--:--", col);
+            Row(L10n.Get(LangScope.Alerts, "label.fuel"), "--:--", col);
         }
-        Row("ALT", s.AltM.ToString("0"), col);
-        if (!string.IsNullOrEmpty(_opt.GridText)) Row("GRID", _opt.GridText, col);
+        Row(L10n.Get(LangScope.Alerts, "label.alt"), s.AltM.ToString("0"), col);
+        if (!string.IsNullOrEmpty(_opt.GridText)) Row(L10n.Get(LangScope.Alerts, "label.grid"), _opt.GridText, col);
     }
 
 
@@ -733,7 +733,7 @@ public sealed class HudGeometry
         }
         else if (_opt.GearDownSteady)
         {
-            AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, "GEAR DOWN", font, Fade(_opt.Color, 0.9), lineWidth, pxDeg);
+            AddBoxedTextFixed(prims, leftX, gearY, boxWidthDeg, L10n.Get(LangScope.Alerts, "gear.down"), font, Fade(_opt.Color, 0.9), lineWidth, pxDeg);
         }
 
         if (_opt.FlapsTransitActive && !string.IsNullOrEmpty(_opt.FlapsTransitText))
@@ -743,7 +743,7 @@ public sealed class HudGeometry
         }
         else if (_opt.FlapsDeployed)
         {
-            AddBoxedTextFixed(prims, leftX, flapsY, boxWidthDeg, "FLAPS " + _opt.FlapsSteadyText, font,
+            AddBoxedTextFixed(prims, leftX, flapsY, boxWidthDeg, L10n.Get(LangScope.Alerts, "label.flaps") + " " + _opt.FlapsSteadyText, font,
                 Fade(_opt.WarnColor, 0.85), lineWidth, pxDeg);
         }
 
@@ -916,10 +916,21 @@ public sealed class HudGeometry
     /// Box width in degrees, sized to the given text so a longer/shorter translation still fits.
     /// 0.62 * fontSize per glyph is a good average for the HUD's monospace-ish font.
     /// </summary>
+    /// <summary>
+    /// Approximate text width in em: ASCII digits/letters are ~0.62 em in the HUD font while CJK
+    /// glyphs are full-width, so localised labels need a wider box than their character count.
+    /// </summary>
+    private static double TextWidthEm(string text)
+    {
+        double w = 0;
+        foreach (var ch in text) w += ch < 0x80 ? 0.62 : 1.0;
+        return w;
+    }
+
     private static double BoxWidthDeg(string text, double fontSize, double pxDeg, double minimum)
     {
-        var chars = Math.Max(3, text.Length);
-        var widthPx = chars * fontSize * 0.62 + fontSize * 1.1;
+        var em = Math.Max(1.8, TextWidthEm(text));
+        var widthPx = em * fontSize + fontSize * 1.1;
         return Math.Max(minimum, widthPx / Math.Max(1.0, pxDeg));
     }
 
@@ -993,7 +1004,7 @@ public sealed class HudGeometry
     private void AddBoxedText(List<HudPrim> prims, double x, double y, string text, double font, HudAlign align,
         HudColor color, double line, double pxDeg)
     {
-        double w = Math.Max(font * 2.0, text.Length * font * 0.62);
+        double w = Math.Max(font * 2.0, TextWidthEm(text) * font + font * 0.35);
         double h = font * 1.45;
         double left = align == HudAlign.Right ? x - w : (align == HudAlign.Center ? x - w / 2 : x);
         double top = y - h / 2;

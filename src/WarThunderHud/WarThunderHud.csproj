@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.1.8</Version>
+    <Version>0.2.0</Version>
     <LangVersion>latest</LangVersion>
     <AssemblyName>WtHud</AssemblyName>
     <RootNamespace>WtHud</RootNamespace>
@@ -20,6 +20,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Resources\mfd-frame.png" />
     <EmbeddedResource Include="Resources\mfd-geometry.json" />
+    <EmbeddedResource Include="Resources\help-desc-default.json" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +30,9 @@
   </ItemGroup>
 
 </Project>
+
+
+
 
 
 

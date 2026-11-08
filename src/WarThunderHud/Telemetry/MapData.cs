@@ -46,6 +46,9 @@ public sealed class MapData : IDisposable
     public (double X, double Y) MapSizeM { get; private set; }
 
     /// <summary>Size of the last /map_obj.json payload, for diagnostics.</summary>
+    /// <summary>Number of aircraft markers on the map (other than the player).</summary>
+    public int AircraftMarkers { get; private set; }
+
     public int RawBytes { get; private set; }
 
     /// <summary>Last polling exception text, for diagnostics.</summary>
@@ -117,6 +120,7 @@ public sealed class MapData : IDisposable
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
 
         (double, double)? self = null;
+        int aircraftCount = 0;
         var units = new List<(double X, double Y, string Icon, bool Friendly)>();
         var fields = new List<MapPoint>();
 
@@ -124,6 +128,11 @@ public sealed class MapData : IDisposable
         {
             string type = e.TryGetProperty("type", out var tp) ? tp.GetString() ?? "" : "";
             string icon = e.TryGetProperty("icon", out var ic) ? ic.GetString() ?? "" : "";
+
+            if (type == "aircraft")
+            {
+                if (icon != "Player") aircraftCount++;
+            }
 
             if (type == "aircraft" && icon == "Player")
             {
@@ -180,6 +189,7 @@ public sealed class MapData : IDisposable
 
         Self = self;
         GroundUnits = units;
+        AircraftMarkers = aircraftCount;
         Airfields = fields;
 
         // Course over ground: some aircraft expose no compass, but the map position still moves.

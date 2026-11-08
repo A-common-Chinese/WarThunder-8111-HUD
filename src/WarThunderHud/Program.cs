@@ -223,7 +223,13 @@ public static class Program
                 {
                     cal.VerticalFovDeg = cfg.VerticalFovDeg;
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
-                    Console.WriteLine("MFD settings saved");
+
+                    // 面板保存后重新解析键位并刷新热键，否则自定义按键要重启才生效
+                    RebindeKeys(cfg);
+                    overlayRef?.ApplyHotkeys(cfg);
+                    overlayRef?.SetCursorHole(cfg.CursorHoleHalfPx);
+                    overlayRef?.SetCursorHoleCenter(cfg.CursorHoleOffsetX, cfg.CursorHoleOffsetY);
+                    Console.WriteLine("MFD settings saved (keys rebound)");
                 }
             }
             catch (Exception ex)
@@ -327,9 +333,23 @@ public static class Program
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
 
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        int w = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
-        int h = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
-        Console.WriteLine($"overlay {w}x{h} for {(seconds <= 0 ? "unlimited" : seconds + "s")} demo={demo}");
+
+        // 跟随游戏客户区：窗口化 / 副屏 / 非 100% 缩放都能对上；找不到窗口时回退主屏
+        // 覆盖整个虚拟桌面：多显示器时 HUD 不会被限制在主屏
+        int scrX = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        int scrY = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        int scrW = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
+        int scrH = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        if (scrW <= 0 || scrH <= 0)
+        {
+            scrX = scrY = 0;
+            scrW = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
+            scrH = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
+        }
+        int w = scrW, h = scrH;                     // 覆盖层继续铺满整屏
+        bool tracking = GameWindowTracker.TryGetClientRect(out var wx, out var wy, out var gw, out var gh, out _);
+        Console.WriteLine($"overlay virtual {scrX},{scrY} {scrW}x{scrH}  game {(tracking ? $"{wx},{wy} {gw}x{gh}" : "not found")} " +
+                          $"for {(seconds <= 0 ? "unlimited" : seconds + "s")} demo={demo}");
 
         telemetry = new TelemetryClient(0);
         fusion = new AttitudeFusion();
@@ -344,18 +364,25 @@ public static class Program
             {
                 lastVehicle = s.VehicleType;
                 AirframeDb.CurrentVehicle = s.VehicleType;
-                if (viewState != 0) { viewState = 0; Console.WriteLine("view state reset: vehicle changed"); }
-
-                // 机型数据库：换机即按当前遥测能力刷新（游戏更新后会自动跟上）
-                var created = AirframeDb.Refresh(
-                    s.VehicleType,
-                    s.RadioAltM.HasValue,
-                    s.Caps.HasNativeAttitude,
-                    s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry",
-                    s.AoaDeg);
-                Console.WriteLine($"airframe: {s.VehicleType}  RA={(created.RadarAltitude ? "yes" : "no")}  " +
-                                  $"ATT={created.Attitude}  AB={created.Airbrake}");
-            }
+                // 机型数据库只收飞机：坦克/地面载具不参与飞行告警阈值
+                if (s.VehicleType.StartsWith("tankModels", StringComparison.OrdinalIgnoreCase)
+                    || s.VehicleType.StartsWith("tank", StringComparison.OrdinalIgnoreCase))
+                {
+                    AirframeDb.CurrentVehicle = null;
+                }
+                else
+                {
+                    // 机型数据库：换机即按当前遥测能力刷新（游戏更新后会自动跟上）
+                    var created = AirframeDb.Refresh(
+                        s.VehicleType,
+                        s.RadioAltM.HasValue,
+                        s.Caps.HasNativeAttitude,
+                        s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry",
+                        s.AoaDeg);
+                    Console.WriteLine($"airframe: {s.VehicleType}  RA={(created.RadarAltitude ? "yes" : "no")}  " +
+                                      $"ATT={created.Attitude}  AB={created.Airbrake}");
+                }
+                }
             if (s.Valid && !prevValid)
             {
                 viewState = 0;
@@ -399,27 +426,45 @@ public static class Program
             : cfg.RollCouplingMode == "on" ? 1.0
             : cfg.RollCouplingMode == "off" ? 0.0 : cfg.RollCoupling;
         var cal = new HudCalibration { VerticalFovDeg = cfg.VerticalFovDeg, LayoutOffsetYDeg = cfg.LayoutOffsetYDeg, RollCoupling = coupling };
+        void ApplyWindowGeometry()
+        {
+            if (GameWindowTracker.TryGetClientRect(out var gx0, out var gy0, out var gw0, out var gh0, out _))
+            {
+                cal.CenterOffsetX = gx0 + gw0 / 2.0 - (scrX + scrW / 2.0);
+                cal.CenterOffsetY = gy0 + gh0 / 2.0 - (scrY + scrH / 2.0);
+                cal.PxReferenceHeight = gh0;         // 角度→像素用游戏窗口高度
+                overlayRef?.SetCursorHoleCenter((int)Math.Round(cal.CenterOffsetX), (int)Math.Round(cal.CenterOffsetY));
+                Console.WriteLine($"geometry -> game {gx0},{gy0} {gw0}x{gh0} offset {cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0} pxRef={cal.PxReferenceHeight:F0}");
+            }
+            else
+            {
+                cal.CenterOffsetX = 0; cal.CenterOffsetY = 0; cal.PxReferenceHeight = 0;
+                Console.WriteLine("geometry -> fallback (no game window)");
+            }
+        }
+        ApplyWindowGeometry();
         var geo = new HudGeometry(opt, cal);
         var empty = new List<HudPrim>();
 
         bool show = true;
-        using var overlay = new OverlayWindow(w, h);
+        using var overlay = new OverlayWindow(scrW, scrH, scrX, scrY);
 
         // The overlay is a console app; its console window steals the foreground and makes
         // Windows paint the arrow cursor over the game. Redirect output to a log file and
         // hide the console, then give focus back to the game.
         var logPath = Path.Combine(AppContext.BaseDirectory, "wthud-overlay.log");
         try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true })); } catch { }
-        Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {w}x{h}");
+        Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {scrW}x{scrH} dpiScale={overlay.DpiScale:F3}");
         overlayRef = overlay;
         overlay.ApplyHotkeys(cfg);
         overlay.SetCursorHole(cfg.CursorHoleHalfPx);
+        overlay.SetCursorHoleCenter(cfg.CursorHoleOffsetX, cfg.CursorHoleOffsetY);
         overlay.NudgeForegroundCursor();
         var console = NativeMethods.GetConsoleWindow();
         if (console != IntPtr.Zero) NativeMethods.ShowWindow(console, NativeMethods.SW_HIDE);
         var game = System.Diagnostics.Process.GetProcessesByName("aces").FirstOrDefault();
         int gamePid = game?.Id ?? 0;
-        if (game?.MainWindowHandle is IntPtr gh && gh != IntPtr.Zero) NativeMethods.SetForegroundWindow(gh);
+        if (game?.MainWindowHandle is IntPtr gameHwnd && gameHwnd != IntPtr.Zero) NativeMethods.SetForegroundWindow(gameHwnd);
 
         overlay.HotkeyPressed += id =>
         {
@@ -973,8 +1018,8 @@ public static class Program
             {
                 if (lastGear >= 0 && Math.Abs(gearNow - lastGear) > 0.05)
                 {
-                    if (gearNow > lastGear + 0.05) opt.GearTransitText = "GEAR DOWN";
-                    else if (gearNow < lastGear - 0.05) opt.GearTransitText = "GEAR UP";
+                    if (gearNow > lastGear + 0.05) opt.GearTransitText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "gear.down");
+                    else if (gearNow < lastGear - 0.05) opt.GearTransitText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "gear.up");
                 }
                 lastGear = gearNow;
             }
@@ -1000,7 +1045,9 @@ public static class Program
             long nowTicks = Environment.TickCount64;
             if (flapsNow >= 0 && lastFlaps >= 0 && Math.Abs(flapsNow - lastFlaps) > 1.0)
             {
-                opt.FlapsTransitText = flapsNow > lastFlaps ? "FLAPS DOWN" : "FLAPS UP";
+                opt.FlapsTransitText = flapsNow > lastFlaps
+                    ? WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "flaps.down")
+                    : WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "flaps.up");
                 lastFlapsChangeTicks = nowTicks;
             }
             lastFlaps = flapsNow;
@@ -1022,10 +1069,12 @@ public static class Program
             }
             else
             {
-                opt.AirbrakeSteadyText = "AIRBRAKE";
+                opt.AirbrakeSteadyText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "brake.steady");
                 if (abNow >= 0 && lastAirbrake >= 0 && Math.Abs(abNow - lastAirbrake) > 1.0)
                 {
-                    opt.AirbrakeTransitText = abNow > lastAirbrake ? "AIRBRAKE OUT" : "AIRBRAKE IN";
+                    opt.AirbrakeTransitText = abNow > lastAirbrake
+                    ? WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "brake.out")
+                    : WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "brake.in");
                     lastAirbrakeChangeTicks = nowTicks;
                 }
                 lastAirbrake = abNow;
@@ -1059,6 +1108,45 @@ public static class Program
 
             // Only submit a frame when something actually changed: the API updates at 17-25 Hz
             // while we would otherwise recompose the full 4K surface at 100+ Hz.
+        // 每帧刷新坡度耦合：auto = 地图无其它飞机标记时视为全真（座舱）→ 开
+        var simLike = lastAircraftMarkers == 0;
+        cal.RollCoupling = cfg.RollCouplingMode == "auto"
+            ? (simLike ? 1.0 : 0.0)
+            : cfg.RollCouplingMode == "on" ? 1.0
+            : cfg.RollCouplingMode == "off" ? 0.0 : cfg.RollCoupling;
+
+            // 跟随游戏窗口：覆盖层铺满整屏，只调整 HUD 的中心偏移和角度比例
+            if (nowTicks - lastFramePollTicks > 400)
+            {
+                lastFramePollTicks = nowTicks;
+                if (GameWindowTracker.IsActive
+                    && GameWindowTracker.TryGetClientRect(out var fx, out var fy, out var fw2, out var fh2, out _))
+                {
+                    var ox = fx + fw2 / 2.0 - (scrX + scrW / 2.0);
+                    var oy = fy + fh2 / 2.0 - (scrY + scrH / 2.0);
+                    if (Math.Abs(ox - cal.CenterOffsetX) > 0.5 || Math.Abs(oy - cal.CenterOffsetY) > 0.5
+                        || Math.Abs(cal.PxReferenceHeight - fh2) > 0.5)
+                    {
+                        cal.CenterOffsetX = ox;
+                        cal.CenterOffsetY = oy;
+                        cal.PxReferenceHeight = fh2;
+                        overlay.SetCursorHoleCenter((int)Math.Round(ox), (int)Math.Round(oy));
+                        lastFrameKey = -1;
+                        Console.WriteLine($"overlay follow -> game {fx},{fy} {fw2}x{fh2} offset {ox:F0},{oy:F0}");
+                    }
+                }
+            }
+
+            if (Environment.GetEnvironmentVariable("WT_CURSORDBG") == "1"
+                && nowTicks - cursorProbeTicks > 2000
+                && NativeMethods.GetCursorPos(out var curPos))
+            {
+                cursorProbeTicks = nowTicks;
+                Console.WriteLine($"cursor probe: cursor={curPos.X},{curPos.Y} " +
+                                  $"offset=({cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0}) " +
+                                  $"hole=({cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0}) screen={scrW}x{scrH}");
+            }
+
             long key = FrameKey(snap, shown, opt, cal, draw, hiddenByView);
             if (key != lastFrameKey)
             {
@@ -1191,6 +1279,8 @@ public static class Program
                               $"self={(map?.Self is null ? "null" : "ok")} units={map?.GroundUnits.Count ?? -1} " +
                               $"fields={map?.Airfields.Count ?? -1}");
         }
+
+        lastAircraftMarkers = map.AircraftMarkers;
 
         // --- nearest friendly / enemy airfield ---
         double bestFriendly = double.MaxValue, bestEnemy = double.MaxValue;
@@ -1480,6 +1570,11 @@ public static class Program
     private static long pullUpSince;
     private static long sinkRateSince;
     private static DateTime navDbgUtc = DateTime.MinValue;
+    private static int lastAircraftMarkers = -1;
+    private static long lastFramePollTicks;
+    private static long cursorProbeTicks;
+    private static (int X, int Y, int W, int H)? pendingRect;
+    private static int pendingHits;
 
     private static bool zoomLatched;          // Z key toggle state (RMB adds momentary aiming)
     private static long holdKeyStart;         // long-press hide timer
@@ -1631,15 +1726,15 @@ public static class Program
         if (variant == "gear" || variant == "gearzoom")
         {
             opt.GearTransitActive = true;
-            opt.GearTransitText = "GEAR DOWN";
+            opt.GearTransitText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "gear.down");
             if (variant == "gearzoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }
         }
         if (variant == "cfg")
         {
-            opt.GearTransitActive = true; opt.GearTransitText = "GEAR DOWN";
+            opt.GearTransitActive = true; opt.GearTransitText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "gear.down");
             opt.GearDownSteady = true;
             opt.FlapsDeployed = true; opt.FlapsSteadyText = "50";
-            opt.AirbrakeDeployed = true; opt.AirbrakeSteadyText = "AIRBRAKE";
+            opt.AirbrakeDeployed = true; opt.AirbrakeSteadyText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "brake.steady");
             opt.OnlyConfigBoxes = true;
             opt.ForceTransitVisible = true;
         }

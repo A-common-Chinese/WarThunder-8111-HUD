@@ -18,6 +18,9 @@ public sealed class HudCalibration
     public double VerticalFovDeg { get; set; } = 45.0;
 
     /// <summary>Boresight offset from the screen centre, in pixels (positive = down/right).</summary>
+    /// <summary>Viewport height used for the degrees-to-pixels scale (0 = full height).</summary>
+    public double PxReferenceHeight { get; set; }
+
     public double CenterOffsetX { get; set; }
     public double CenterOffsetY { get; set; }
 
@@ -43,7 +46,9 @@ public sealed class HudCalibration
 
     /// <summary>Vertical field of view implied by the current calibration.</summary>
     public double EffectivePxPerDeg(int viewportHeight) =>
-        PixelsPerDegree > 0.01 ? PixelsPerDegree : viewportHeight / Math.Max(5.0, VerticalFovDeg);
+        PixelsPerDegree > 0.01
+            ? PixelsPerDegree
+            : (PxReferenceHeight > 0 ? PxReferenceHeight : viewportHeight) / Math.Max(5.0, VerticalFovDeg);
 }
 
 

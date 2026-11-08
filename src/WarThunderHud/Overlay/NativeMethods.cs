@@ -128,6 +128,10 @@ internal static class NativeMethods
     public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     public const int SM_CXSCREEN = 0;
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
     public const int SM_CYSCREEN = 1;
 
     public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
@@ -274,6 +278,20 @@ internal static class NativeMethods
 
     public const int GWL_STYLE = -16;
     public const int WS_CHILD = 0x40000000;
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();

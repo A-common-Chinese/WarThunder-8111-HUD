@@ -2,6 +2,7 @@
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
+using System.Numerics;
 using System.Runtime.InteropServices;
 using Vortice.DCommon;
 using Vortice.Direct2D1;
@@ -49,8 +50,10 @@ public sealed class OverlayWindow : IDisposable
     /// <summary>Raised with the hotkey id: 1 = F10 toggle HUD, 2 = F9 toggle body-fixed mode.</summary>
     public Action<int>? HotkeyPressed;
 
-    public OverlayWindow(int width, int height)
+    public OverlayWindow(int width, int height, int originX = 0, int originY = 0)
     {
+        _originX = originX;
+        _originY = originY;
         Width = width;
         Height = height;
 
@@ -93,7 +96,7 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.RegisterHotKey(_hwnd, 14, NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_H);
 
         NativeMethods.ShowWindow(_hwnd, NativeMethods.SW_SHOWNOACTIVATE);
-        NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, 0, 0, width, height,
+        NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, originX, originY, width, height,
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
 
         _winW = width; _winH = height;
@@ -108,6 +111,11 @@ public sealed class OverlayWindow : IDisposable
     /// hole does not remove any symbology.
     /// </summary>
     private int _winW, _winH;
+    private int _originX, _originY;
+    private int _holeDx, _holeDy;
+
+    /// <summary>Last DPI factor applied to the composition visual (1.0 = 96 dpi).</summary>
+    public float DpiScale { get; private set; } = 1f;
 
     /// <summary>Half-size in pixels of the transparent centre hole (0 = no hole).</summary>
     public int CursorHoleHalfPx { get; private set; } = 70;
@@ -169,6 +177,61 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.PostMessage(fg, NativeMethods.WM_SETCURSOR, fg, lParam);
     }
 
+    /// <summary>
+    /// Moves/resizes the overlay to follow the game client area. Recreates the swap-chain buffers
+    /// when the size changes so the HUD is never stretched or clipped.
+    /// </summary>
+    public void SetFrame(int x, int y, int width, int height)
+    {
+        if (width < 64 || height < 64) return;
+        if (x == _originX && y == _originY && width == _winW && height == _winH) return;
+
+        bool resized = width != _winW || height != _winH;
+        _originX = x; _originY = y;
+
+        NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, x, y, width, height,
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+
+        if (resized)
+        {
+            _winW = width; _winH = height;
+            Width = width; Height = height;
+            try
+            {
+                _swapchain!.ResizeBuffers(2, (uint)width, (uint)height,
+                    Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DXGI.SwapChainFlags.None);
+                CreateRenderTarget();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("overlay resize failed: " + ex.Message);
+            }
+        }
+
+        ApplyDpiScale();
+        ApplyCursorHoleRegion(width, height);
+        Console.WriteLine($"overlay frame -> {x},{y} {width}x{height}");
+    }
+
+    /// <summary>Cuts the hole at an absolute position inside the overlay (usually the game cursor).</summary>
+    public void SetCursorHoleAt(int x, int y)
+    {
+        var dx = x - _winW / 2;
+        var dy = y - _winH / 2;
+        if (dx == _holeDx && dy == _holeDy) return;
+        _holeDx = dx; _holeDy = dy;
+        ApplyCursorHoleRegion(_winW, _winH);
+    }
+
+    /// <summary>Moves the cursor hole by an offset from the window centre (game viewport offset).</summary>
+    public void SetCursorHoleCenter(int dx, int dy)
+    {
+        if (dx == _holeDx && dy == _holeDy) return;
+        _holeDx = dx; _holeDy = dy;
+        Console.WriteLine($"hole center -> dx={dx} dy={dy} (window {_originX},{_originY} {_winW}x{_winH})");
+        ApplyCursorHoleRegion(_winW, _winH);
+    }
+
     /// <summary>Resize the centre hole; smaller values occlude less HUD symbology.</summary>
     public void SetCursorHole(int halfPx)
     {
@@ -197,7 +260,8 @@ public sealed class OverlayWindow : IDisposable
 
         int cx = width / 2, cy = height / 2;
         IntPtr full = NativeMethods.CreateRectRgn(0, 0, width, height);
-        IntPtr holeRgn = NativeMethods.CreateRectRgn(cx - hole, cy - hole, cx + hole, cy + hole);
+        IntPtr holeRgn = NativeMethods.CreateRectRgn(cx + _holeDx - hole, cy + _holeDy - hole,
+                                                     cx + _holeDx + hole, cy + _holeDy + hole);
         NativeMethods.CombineRgn(full, full, holeRgn, NativeMethods.RGN_DIFF);
         NativeMethods.SetWindowRgn(_hwnd, full, true);
         NativeMethods.DeleteObject(holeRgn);
@@ -242,10 +306,34 @@ public sealed class OverlayWindow : IDisposable
         _target = compTarget;
         _visual = _dcomp.CreateVisual();
         _visual.SetContent(_swapchain);
+        ApplyDpiScale();
         _target.SetRoot(_visual);
         _dcomp.Commit();
 
         CreateRenderTarget();
+    }
+
+    /// <summary>
+    /// Composition visuals are measured in DIPs; with a 125/150% display the swap-chain would be
+    /// scaled up and the HUD would drift toward the top-left. Scale the visual by 1/dpi so one
+    /// swap-chain pixel maps to exactly one physical pixel.
+    /// </summary>
+    private void ApplyDpiScale()
+    {
+        try
+        {
+            var dpi = NativeMethods.GetDpiForWindow(_hwnd);
+            if (dpi == 0) dpi = 96;
+            var scale = 96f / dpi;
+            // 实测：CreateTargetForHwnd 在 per-monitor aware 进程里按物理像素工作，
+            // 再做 96/dpi 反缩放反而把内容缩到左上角，所以保持 1:1。
+            _visual!.SetTransform(Matrix3x2.Identity);
+            DpiScale = 1f;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("dpi scale failed: " + ex.Message);
+        }
     }
 
     private void CreateRenderTarget()
@@ -302,6 +390,8 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.ShowWindow(_hwnd, visible ? NativeMethods.SW_SHOWNOACTIVATE : NativeMethods.SW_HIDE);
         if (visible)
         {
+            ApplyDpiScale();
+            ApplyCursorHoleRegion(_winW, _winH);
             // A child window must not be pushed to the topmost band.
             IntPtr insertAfter = _parent != IntPtr.Zero ? IntPtr.Zero : (IntPtr)NativeMethods.HWND_TOPMOST;
             NativeMethods.SetWindowPos(_hwnd, insertAfter, 0, 0, Width, Height,

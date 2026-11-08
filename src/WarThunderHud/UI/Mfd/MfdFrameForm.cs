@@ -88,7 +88,13 @@ public sealed class MfdFrameForm : Form
         _bezel = LoadBezel();
 
         // 自适应：按工作区大小缩放，最多 100%，最小 55%（1080p 屏可完整显示）
-        var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        // 面板跟随游戏所在显示器：多屏时不会开到主屏上
+        Rectangle work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+        if (WtHud.Overlay.GameWindowTracker.TryGetClientRect(out var gx, out var gy, out var gw, out var gh, out _))
+        {
+            var screen = Screen.FromRectangle(new Rectangle(gx, gy, gw, gh));
+            if (screen != null) work = screen.WorkingArea;
+        }
         var fit = Math.Min(1.0f, Math.Min(work.Width * 0.92f / _bezel.Width, work.Height * 0.92f / _bezel.Height));
         var envFit = Environment.GetEnvironmentVariable("WT_MFD_FIT");
         if (float.TryParse(envFit, System.Globalization.NumberStyles.Float,

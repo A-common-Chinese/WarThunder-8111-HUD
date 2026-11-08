@@ -33,6 +33,28 @@ internal static class HelpDescriptions
         {
             if (!File.Exists(FilePath))
             {
+                // 首次运行：把内置的完整模板（71 条中英文）写到 exe 同目录，用户可直接改
+                var asm = typeof(HelpDescriptions).Assembly;
+                var res = asm.GetManifestResourceNames()
+                    .FirstOrDefault(n => n.EndsWith("help-desc-default.json", StringComparison.OrdinalIgnoreCase));
+
+                if (res != null)
+                {
+                    using var stream = asm.GetManifestResourceStream(res);
+                    if (stream != null)
+                    {
+                        using var reader = new StreamReader(stream);
+                        var defJson = reader.ReadToEnd();
+                        File.WriteAllText(FilePath, defJson);
+                        var defData = JsonSerializer.Deserialize<Dictionary<string, Entry>>(
+                            defJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (defData != null)
+                            _map = new Dictionary<string, Entry>(defData, StringComparer.OrdinalIgnoreCase);
+                        return;
+                    }
+                }
+
+                // 兜底：极简模板
                 var template = new Dictionary<string, Entry>
                 {
                     ["_default"] = new("暂无说明。可在 help-desc.json 中补充。", "No description yet."),

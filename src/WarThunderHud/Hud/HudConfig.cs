@@ -139,6 +139,10 @@ public sealed class HudConfig
     /// Half-size (px) of the transparent hole at screen centre that lets the game draw its cursor.
     /// Smaller = less HUD occlusion near the boresight; 0 disables the hole.
     /// </summary>
+    /// <summary>Cursor-hole offset from the screen centre (pixels, manual placement).</summary>
+    [JsonPropertyName("cursorHoleOffsetX")] public int CursorHoleOffsetX { get; set; }
+    [JsonPropertyName("cursorHoleOffsetY")] public int CursorHoleOffsetY { get; set; }
+
     [JsonPropertyName("cursorHoleHalfPx")] public int CursorHoleHalfPx { get; set; } = 16;   // 32 px hole: hides the game cursor, keeps the FPM ring visible
 
     /// <summary>Use Mach instead of IAS for the manual overspeed warning.</summary>

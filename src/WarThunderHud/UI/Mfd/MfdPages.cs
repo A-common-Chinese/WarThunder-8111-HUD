@@ -167,15 +167,20 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.display",
         Items =
         {
+            Toggle("row.hideCockpit", c => c.HideInCockpit, (c, v) => c.HideInCockpit = v),
+            Toggle("row.hideNose", c => c.HideInNose, (c, v) => c.HideInNose = v),
+            Toggle("row.extrapolate", c => c.Extrapolate, (c, v) => c.Extrapolate = v),
+            Toggle("row.hideGround", c => c.HideOnGround, (c, v) => c.HideOnGround = v),
+            Number("row.groundSpeed", c => c.GroundHideSpeedKmh, (c, v) => c.GroundHideSpeedKmh = v, 5, 0, 100, "km/h"),
             Toggle("row.showHud", c => c.HudVisible, (c, v) => c.HudVisible = v),
             Toggle("row.hideBg", c => c.HideWhenInactive, (c, v) => c.HideWhenInactive = v),
             Number("row.fov", c => c.VerticalFovDeg, (c, v) => c.VerticalFovDeg = v, 1, 15, 120, "°"),
             Number("row.yoff", c => c.LayoutOffsetYDeg, (c, v) => c.LayoutOffsetYDeg = v, 0.5, -10, 10, "°"),
-            Number("row.pitchzero", c => c.PitchZeroDeg, (c, v) => c.PitchZeroDeg = v, 0.1, -20, 20, "°"),
+            Number("row.holeX", c => c.CursorHoleOffsetX, (c, v) => c.CursorHoleOffsetX = (int)v, 4, -1200, 1200, "px"),
+            Number("row.holeY", c => c.CursorHoleOffsetY, (c, v) => c.CursorHoleOffsetY = (int)v, 4, -1200, 1200, "px"),
             Number("row.hole", c => c.CursorHoleHalfPx, (c, v) => c.CursorHoleHalfPx = (int)v, 2, 0, 200, "px"),
             Toggle("row.ladder", c => c.ShowPitchLadder, (c, v) => c.ShowPitchLadder = v),
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
-            Toggle("row.extrapolate", c => c.Extrapolate, (c, v) => c.Extrapolate = v),
             Info("row.diagState", _ => DiagProbe.StateText),
             Info("row.diagInd", _ => DiagProbe.IndicatorsText),
             Info("row.diagMap", _ => DiagProbe.MapText),
@@ -191,8 +196,7 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.camera",
         Items =
         {
-            Toggle("row.hideCockpit", c => c.HideInCockpit, (c, v) => c.HideInCockpit = v),
-            Toggle("row.hideNose", c => c.HideInNose, (c, v) => c.HideInNose = v),
+            Number("row.pitchzero", c => c.PitchZeroDeg, (c, v) => c.PitchZeroDeg = v, 0.1, -20, 20, "°"),
             Enum("row.rollCoupleMode", new[] { "opt.auto", "opt.on", "opt.off" },
                 c => c.RollCouplingMode == "on" ? 1 : c.RollCouplingMode == "off" ? 2 : 0,
                 (c, i2) => c.RollCouplingMode = i2 == 1 ? "on" : i2 == 2 ? "off" : "auto"),
@@ -225,8 +229,6 @@ internal static class MfdPages
             Number("row.bingo", c => c.BingoFuelSeconds, (c, v) => c.BingoFuelSeconds = v, 15, 0, 3600, "s"),
             Number("row.afAlert", c => c.EnemyAirfieldAlertKm, (c, v) => c.EnemyAirfieldAlertKm = v, 1, 0, 100, "km"),
             Number("row.edgeMargin", c => c.EdgeMarginFraction, (c, v) => c.EdgeMarginFraction = v, 0.01, 0.01, 0.4),
-            Number("row.groundSpeed", c => c.GroundHideSpeedKmh, (c, v) => c.GroundHideSpeedKmh = v, 5, 0, 100, "km/h"),
-            Toggle("row.hideGround", c => c.HideOnGround, (c, v) => c.HideOnGround = v),
         },
     };
 
