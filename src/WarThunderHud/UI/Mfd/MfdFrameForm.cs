@@ -37,6 +37,7 @@ public sealed class MfdFrameForm : Form
     private Pages.PitchDetectPage? _pitchPage;
     private Pages.ConfirmPage? _confirmPage;
     private Pages.NumberEditPage? _editPage;
+    private Pages.PresetPage? _presetPage;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -265,7 +266,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
-            case Mode.Preset: DrawPresetPage(g, s, glass, pad); break;
+            case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
             case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
             case Mode.PickVehicle: DrawPickVehiclePage(g, s, glass, pad); break;
@@ -1415,6 +1416,13 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        if (_mode == Mode.Preset)
+        {
+            _presetPage?.Move(delta);
+            _presetSel = _presetPage?.Selected ?? 0;
+            _toast = null;
+            return;
+        }
         if (_mode == Mode.Confirm)
         {
             _confirmPage?.Move(delta);
@@ -1465,7 +1473,8 @@ public sealed class MfdFrameForm : Form
                 CommitCapture();
                 break;
             case Mode.Preset:
-                ApplyPreset();
+                _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
+                _mode = Mode.Items;
                 break;
             case Mode.PickVehicle:
                 ApplyPickedVehicle();
@@ -1550,11 +1559,19 @@ public sealed class MfdFrameForm : Form
                 _mode = Mode.Detail;
                 return;
             case ItemKind.Preset:
+            {
                 _presetTarget = item;
-                var cur = item.GetPreset?.Invoke(_work) ?? "green";
-                _presetSel = Math.Max(0, Array.FindIndex(MfdTheme.Presets, p => p.Key == cur));
+                var target = item;
+                _presetPage = new Pages.PresetPage(
+                    currentKey: () => target.GetPreset?.Invoke(_work) ?? "green",
+                    onApply: key => { target.SetPreset?.Invoke(_work, key); _nav.Clear(); _mode = Mode.Items; _dirty = true; },
+                    onCancel: () => { _nav.Clear(); _presetTarget = null; _mode = Mode.Items; },
+                    layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+                _presetSel = _presetPage.Selected;
+                _nav.Push(_presetPage);
                 _mode = Mode.Preset;
                 return;
+            }
             case ItemKind.ReadOnly:
                 _toast = L10n.Get(LangScope.Screen, "hint.readonly");
                 return;
@@ -1705,9 +1722,7 @@ public sealed class MfdFrameForm : Form
                 _toast = null;
                 break;
             case Mode.Preset:
-                _mode = Mode.Items;
-                _presetTarget = null;
-                _toast = null;
+                _presetPage?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.PitchDetect:
                 _nav.Current?.Handle(MfdCommand.Of("nav.back"));
