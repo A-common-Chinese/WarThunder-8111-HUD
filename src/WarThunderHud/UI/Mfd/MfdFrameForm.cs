@@ -1114,7 +1114,8 @@ public sealed class MfdFrameForm : Form
                                  (nowP - _lastHitUtc).TotalMilliseconds < 400;
                     _lastHitCell = rowCell;
                     _lastHitUtc = nowP;
-                    _presetSel = rowCell;
+                    _presetPage?.Select(rowCell);
+            _presetSel = _presetPage?.Selected ?? rowCell;
                     if (againP || e.Clicks >= 2) ApplyPreset();
                     Invalidate();
                 }
@@ -1207,7 +1208,7 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.Preset)
         {
-            if (cell < MfdTheme.Presets.Length) _presetSel = cell;
+            if (cell < MfdTheme.Presets.Length) { _presetPage?.Select(cell); _presetSel = _presetPage?.Selected ?? cell; }
             return;
         }
 
@@ -1564,7 +1565,7 @@ public sealed class MfdFrameForm : Form
                 var target = item;
                 _presetPage = new Pages.PresetPage(
                     currentKey: () => target.GetPreset?.Invoke(_work) ?? "green",
-                    onApply: key => { target.SetPreset?.Invoke(_work, key); _nav.Clear(); _mode = Mode.Items; _dirty = true; },
+                    onApply: key => { target.SetPreset?.Invoke(_work, key); target.SetPreset?.Invoke(_cfg, key); _nav.Clear(); _mode = Mode.Items; _dirty = true; },
                     onCancel: () => { _nav.Clear(); _presetTarget = null; _mode = Mode.Items; },
                     layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
                 _presetSel = _presetPage.Selected;
@@ -1818,7 +1819,7 @@ public sealed class MfdFrameForm : Form
                     _closeConfirm = false;
                     _pendingAction = null;
                     _confirmSel = 0;
-                    _mode = Mode.Confirm;
+                    EnterConfirm();
                 }
                 else ResetPage();
                 break;
@@ -1931,7 +1932,7 @@ public sealed class MfdFrameForm : Form
         _pendingAction = null;
         _closeConfirm = true;
         _confirmSel = 0;                 // 默认停在“取消”，避免误按
-        _mode = Mode.Confirm;
+        EnterConfirm();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
