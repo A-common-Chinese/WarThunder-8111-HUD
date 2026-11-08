@@ -228,7 +228,7 @@ public static class Program
                     // 俯仰符号按机型记忆：F-4J 这类反向机设一次就永久生效
                     if (cfg.PitchSign != 0 && !string.IsNullOrEmpty(AirframeDb.CurrentVehicle))
                     {
-                        cfg.PitchSignByVehicle[AirframeDb.CurrentVehicle] = cfg.PitchSign;
+                        WtHud.Hud.SettingsRouter.SetFor(cfg, AirframeDb.CurrentVehicle, "row.pitchSign", cfg.PitchSign);
                         Console.WriteLine($"pitch sign saved for {AirframeDb.CurrentVehicle}: {cfg.PitchSign}");
                     }
 
@@ -773,14 +773,14 @@ public static class Program
             // vehicle; whatever the detector decides is stored per vehicle so it never flips again.
             pendingPitchSign = cfg.PitchSign;
             if (pendingPitchSign == 0 && !string.IsNullOrEmpty(snap.VehicleType)
-                && cfg.PitchSignByVehicle.TryGetValue(snap.VehicleType, out int storedSign))
+                && WtHud.Hud.SettingsRouter.GetFor(cfg, snap.VehicleType, "row.pitchSign", out var storedSign))
             {
                 pendingPitchSign = storedSign;
             }
             if (cfg.PitchSign == 0 && pitchSignDecided && !string.IsNullOrEmpty(pitchSignVehicle)
-                && !cfg.PitchSignByVehicle.ContainsKey(pitchSignVehicle))
+                && !WtHud.Hud.SettingsRouter.HasFor(cfg, pitchSignVehicle, "row.pitchSign"))
             {
-                cfg.PitchSignByVehicle[pitchSignVehicle] = detectedPitchSign;
+                WtHud.Hud.SettingsRouter.SetFor(cfg, pitchSignVehicle, "row.pitchSign", detectedPitchSign);
                 cfg.Save();
                 Console.WriteLine($"pitch sign for {pitchSignVehicle} = {detectedPitchSign} (saved to config)");
             }

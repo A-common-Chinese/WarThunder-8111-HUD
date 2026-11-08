@@ -857,7 +857,7 @@ public sealed class MfdFrameForm : Form
         Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
         Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
-        var shownSign = _work.PitchSignByVehicle.TryGetValue(id, out var storedSign) ? storedSign : _work.PitchSign;
+        var shownSign = WtHud.Hud.SettingsRouter.GetFor(_work, id, "row.pitchSign", out var storedSign) ? storedSign : _work.PitchSign;
         Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
             shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
         Row(L10n.Get(LangScope.Screen, "airframe.stall"), prof.StallAoa > 0 ? $"{prof.StallAoa:F1}°" : (zh ? "未校准" : "DEFAULT"));
@@ -2020,7 +2020,7 @@ public sealed class MfdFrameForm : Form
 
         if (WtHud.Hud.PitchDetect.PendingSave is var (veh, sign))
         {
-            _cfg.PitchSignByVehicle[veh] = sign;
+            WtHud.Hud.SettingsRouter.SetFor(_cfg, veh, "row.pitchSign", sign);
             WtHud.Hud.PitchDetect.ClearPendingSave();
         }
 

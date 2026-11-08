@@ -44,6 +44,34 @@ public static class SettingsRouter
         map[name] = value;
     }
 
+    // ---- explicit-vehicle variants (pitch sign detection and other per-airframe writers) ----
+
+    public static bool GetFor(HudConfig cfg, string vehicle, string name, out int value)
+    {
+        value = 0;
+        if (string.IsNullOrEmpty(vehicle)) return false;
+        if (!cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map)) return false;
+        if (!map.TryGetValue(name, out var raw)) return false;
+        value = (int)Math.Round(raw);
+        return true;
+    }
+
+    public static void SetFor(HudConfig cfg, string vehicle, string name, double value)
+    {
+        if (string.IsNullOrEmpty(vehicle)) return;
+        if (!cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map))
+        {
+            map = new Dictionary<string, double>();
+            cfg.PerVehicleOverrides[vehicle] = map;
+        }
+        map[name] = value;
+    }
+
+    public static bool HasFor(HudConfig cfg, string vehicle, string name) =>
+        !string.IsNullOrEmpty(vehicle)
+        && cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map)
+        && map.ContainsKey(name);
+
     /// <summary>True when the edited airframe overrides this setting (drives the [V] badge).</summary>
     public static bool HasOverride(HudConfig cfg, string name)
     {

@@ -326,7 +326,7 @@ internal static class MfdPages
             Info("row.mapFlip", c => c.MapYFlip ? "Y" : "N"),
             Info("row.configDebug", c => c.ConfigDebug ? "ON" : "OFF"),
             Info("row.stallMem", c => c.StallAoaByVehicle.Count + " veh"),
-            Info("row.pitchMem", c => c.PitchSignByVehicle.Count + " veh"),
+            Info("row.pitchMem", c => c.PerVehicleOverrides.Count + " veh"),
             Info("row.dupKeys", c => DiagState.DuplicateKeyHint(c)),
             Action("row.copyDiag", _ => DiagState.RequestCopy()),
             Info("row.update", _ => UpdateState.Text),
