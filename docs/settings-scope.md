@@ -16,11 +16,12 @@
 | `row.overspeedMach` | 超速 Mach |
 
 ### 枚举
-| 行 key | 名称 |
-|---|---|
-| `row.rollCoupleMode` | 滚转耦合方式 |
-| `row.bankSign` | 坡度方向 |
-| `row.pitchSign` | 俯仰符号 |
+| 行 key | 名称 | 说明 |
+|---|---|---|
+| `row.pitchSign` | 俯仰符号 | 唯一按机型的枚举，由检测/校准写入 |
+
+> `row.rollCoupleMode`（滚转耦合方式）与 `row.bankSign`（坡度方向）属于**点击式开关**，
+> 没有编辑页、无法选择作用域，按规则一律全局。
 
 ## 仅全局（其余全部）
 
