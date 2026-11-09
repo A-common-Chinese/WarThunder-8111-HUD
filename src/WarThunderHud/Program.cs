@@ -221,6 +221,33 @@ public static class Program
         CheckSource("no value on any layer = None", sA10Aoa, WtHud.Hud.ValueSource.None);
         Check("no value on any layer = 0", vA10Aoa, 0);
 
+        // 「自动」写入层：识别到机型时应写该机型覆盖，而不是全局（v0.3.2 的 bug）
+        WtHud.Hud.AirframeDb.CurrentVehicle = "f-4j";
+        WtHud.Hud.EditScope.UseAuto();
+        cfg.PerVehicleOverrides.Clear();
+        cfg.OverspeedKmh = 1400;
+        WtHud.Hud.Scoped.Set(cfg, "row.overspeedIas", 1600, () => cfg.OverspeedKmh = 1600);
+        Check("auto write -> airframe override",
+            WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.overspeedIas", -1), 1600);
+        Check("auto write keeps global", cfg.OverspeedKmh, 1400);
+
+        WtHud.Hud.EditScope.UseGlobal();
+        WtHud.Hud.Scoped.Set(cfg, "row.overspeedIas", 1500, () => cfg.OverspeedKmh = 1500);
+        Check("explicit global writes global", cfg.OverspeedKmh, 1500);
+        Check("explicit global leaves override",
+            WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.overspeedIas", -1), 1600);
+
+        WtHud.Hud.AirframeDb.CurrentVehicle = "";
+        WtHud.Hud.EditScope.UseAuto();
+        WtHud.Hud.Scoped.Set(cfg, "row.overspeedIas", 1700, () => cfg.OverspeedKmh = 1700);
+        Check("auto without airframe writes global", cfg.OverspeedKmh, 1700);
+
+        WtHud.Hud.AirframeDb.CurrentVehicle = "f-4j";
+        WtHud.Hud.Scoped.Set(cfg, "row.realisticKeys", 1, () => cfg.Mfd.RealisticKeys = true);
+        Check("global row always global", cfg.Mfd.RealisticKeys ? 1 : 0, 1);
+        Check("global row never override",
+            WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.realisticKeys", -1), -1);
+
         Console.WriteLine(failed == 0 ? "scopetest done" : $"scopetest FAILED ({failed})");
         return failed == 0 ? 0 : 1;
     }

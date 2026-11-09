@@ -62,10 +62,22 @@ public static class Scoped
     /// <summary>Routes a write; <paramref name="writeGlobal"/> performs the plain global assignment.</summary>
     public static void Set(HudConfig cfg, string key, double value, Action writeGlobal)
     {
-        if (SettingScopes.IsAirframe(key) && !EditScope.IsGlobal)
-            SettingsRouter.Set(cfg, key, value);
-        else
+        if (!SettingScopes.IsAirframe(key) || EditScope.ExplicitGlobal)
+        {
             writeGlobal();
+            return;
+        }
+
+        // 自动模式：有识别到的机型就写该机型的覆盖（不是全局！），否则才退回全局。
+        // 之前用 EditScope.IsGlobal（Target==null）判断，导致「自动」永远写全局，
+        // 必须手动选一次机型才会写覆盖。
+        if (!string.IsNullOrEmpty(EditScope.ResolvedVehicle))
+        {
+            SettingsRouter.Set(cfg, key, value);
+            return;
+        }
+
+        writeGlobal();
     }
 
     public static bool HasOverride(HudConfig cfg, string key) =>

@@ -50,9 +50,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 3. 当前版本与提交
 
-- 版本号：`0.3.2`（`WarThunderHud.csproj`；发布材料已备好，等用户手动发 release）
-- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（当前 HEAD）
+- 版本号：`0.3.3`（`WarThunderHud.csproj`；0.3.2 已由用户手动发布，0.3.3 修复「自动写入层」bug，发布材料待用户要）
+- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（`02f3cd7`，已随发布推远端）
 - 最近提交（新→旧）：
+  - 待提交：fix(scope): 自动写入层失效（Scoped.Set 在自动模式写全局）
   - `02f3cd7` fix(telemetry): radio_altitude 是英尺 → 换算成米（RA/PULL UP 偏高 3.28 倍）
   - `97855ca` refactor(panel): 旧设置窗体剩余项迁入 MFD，删除 SettingsForm/OpenSettings
   - `164e086` feat(keys): 恢复战雷 .blk 按键导入（按键页第 2 页）
@@ -107,6 +108,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   全局回退必须标「（全局）」，否则用户会以为改了机型没生效（实际是改到了全局层）
 - **编辑页顶部显示写入层**（`NumberEditPage`）：`写入层：机型 x / 全局（未识别机型，会影响所有机型）`，
   非按机型的行显示「全局设置（所有机型共用）」。没识别到机型时写的是全局层，会影响所有未覆盖机型
+- **写入路由（`Scoped.Set`）**：非按机型行 / 显式全局 → 全局；**自动且识别到机型 → 写该机型覆盖**；
+  自动且没识别到机型 → 退回全局。别再用 `EditScope.IsGlobal` 判断（`Target==null` 在自动模式也成立，
+  v0.3.2 因此出现「自动也写全局、必须手动选一次」的 bug）
 - `AirframeDb.StoreAlertOverrides` 已删除（旧逻辑 SAVE 时把全局值写进当前机型档案，形成第二套按机型数据）
 
 ### 4.3 面板页面层（重构进行中）
