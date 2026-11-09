@@ -50,9 +50,14 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 3. 当前版本与提交
 
-- 版本号：`0.3.1`（`WarThunderHud.csproj`；v0.3.1 之后的作用域修复在「未发布」里，发布时再 bump 0.3.2）
-- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）
+- 版本号：`0.3.2`（`WarThunderHud.csproj`；发布材料已备好，等用户手动发 release）
+- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（当前 HEAD）
 - 最近提交（新→旧）：
+  - `97855ca` refactor(panel): 旧设置窗体剩余项迁入 MFD，删除 SettingsForm/OpenSettings
+  - `164e086` feat(keys): 恢复战雷 .blk 按键导入（按键页第 2 页）
+  - `d497c1c` feat(panel): 告警页下降率（三层）+ 按键页补全可编辑键/固定只读键
+  - `ff5e52b` fix(scope): 编辑页显示写入层 + 详情页显示数值来源
+  - `dfa72ee` docs: HANDOFF 记录作用域修复提交
   - `69e47a4` fix(scope): 按机型覆盖真正生效 + 详情页按本页机型读值（j16 覆盖 f4j 的 bug）
   - `98ceb9f` release: v0.3.1（版本号/CHANGELOG/RELEASE_NOTES）
   - `57755f5` feat(hud): 地平线加长加粗 + 机头基准短线（v0.3.1）
@@ -160,7 +165,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 ## 5. 未完成的工作（按优先级）
 
 ### A. 其它待办
-- **v0.3.1 发布材料已备好**（`CHANGELOG.md` v0.3.1 段、`RELEASE_NOTES_v0.3.1.md`、zip+SHA256 在 `C:\Users\noapi\Desktop\WtHud-发布\`），**由用户手动发布 release（不代推）**；本地 tag `v0.3.1` 已打、远端未推
+- **v0.3.2 发布材料已备好**（`CHANGELOG.md` v0.3.2 段、`RELEASE_NOTES_v0.3.2.md`、`WtHud-v0.3.2-win-x64.zip` + SHA256 在 `C:\Users\noapi\Desktop\WtHud-发布\`），**由用户手动发布 release（不代推）**；本地 tag `v0.3.2` 已打、远端未推。zip SHA256 见 `SHA256.txt`
 - **击落播报（SPLASH）方案已定、未实现**：见 `docs/killfeed-splash-plan.md`。数据源 `/hudmsg` 已实测（`damage` 流、id 增量、本地化文本 + U+200B/颜色标记需清洗、AI 目标带 `AI` 前缀）；**等用户跑真实对局抓一条「击落玩家」的原始条目**后再动手。下次继续前需用户拍板：开关默认值、输入页是否 v1 就做
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 - 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
