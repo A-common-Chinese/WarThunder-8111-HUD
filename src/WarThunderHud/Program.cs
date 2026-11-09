@@ -1420,14 +1420,10 @@ public static class Program
         }
 
         double total = (splashUntilUtc - splashStartUtc).TotalSeconds;
-        double elapsed = (now - splashStartUtc).TotalSeconds;
-        double alpha = 1.0;
-        if (elapsed < 0.08) alpha = elapsed / 0.08;
-        else if (elapsed > total - 0.25) alpha = Math.Max(0, (total - elapsed) / 0.25);
-
+        _ = total;
         opt.SplashMain = "SPLASH";
         opt.SplashSub = splashTarget;
-        opt.SplashAlpha = alpha;
+        opt.SplashAlpha = 1.0;      // 无动画：直接出现，到点直接消失
     }
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)

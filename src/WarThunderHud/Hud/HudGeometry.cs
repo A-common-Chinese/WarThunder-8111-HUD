@@ -300,35 +300,41 @@ public sealed class HudGeometry
     {
         if (string.IsNullOrEmpty(_opt.SplashMain) || _opt.SplashAlpha <= 0.02) return;
         double alpha = Math.Clamp(_opt.SplashAlpha, 0, 1);
-        var col = Fade(_opt.Color, alpha);
         double big = font * 2.6;
-        double y = cy;                                   // 屏幕中心附近，最醒目
-        var bg = Fade(new HudColor(2, 22, 10, 210), alpha * 0.55);
-
-        // 半透明底 + 加粗外框，比单纯描边更抓眼
-        double w = Math.Max(big * 2.0, TextWidthEm(_opt.SplashMain) * big + big * 0.35);
+        double y = cy - 6.0 * pxDeg;                     // 屏幕中心上方，正对俯仰梯中部
+        double w = Math.Max(big * 2.0, TextWidthEm(_opt.SplashMain) * big + big * 0.50);
         double h = big * 1.45;
+        double left = cx - w / 2;
+        double top = y - h / 2;
+
+        // 实心绿底：HudPrim 的 Polyline 只描边，用横线扫描填充（无动画，直接出现/消失）
+        var fill = Fade(_opt.Color, alpha * 0.92);
+        const int rows = 18;
+        double rh = h / rows;
+        for (int i = 0; i < rows; i++)
+        {
+            double ly = top + rh * (i + 0.5);
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = rh + 0.6, Color = fill,
+                Points = { (left, ly), (left + w, ly) },
+            });
+        }
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Polyline, Filled = true, Color = bg,
-            Points =
-            {
-                (cx - w / 2 - 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
-                (cx + w / 2 + 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
-                (cx + w / 2 + 0.35 * pxDeg, y + h / 2 + 0.25 * pxDeg),
-                (cx - w / 2 - 0.35 * pxDeg, y + h / 2 + 0.25 * pxDeg),
-                (cx - w / 2 - 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
-            },
+            Kind = HudPrimKind.Text, Text = _opt.SplashMain, Align = HudAlign.Center, FontSize = big,
+            Color = Fade(new HudColor(2, 20, 10, 255), alpha),
+            Points = { (cx, y) },
         });
-        AddBoxedText(prims, cx, y, _opt.SplashMain, big, HudAlign.Center, col, line * 3.0, pxDeg);
 
+        // 被击落目标名：无框，普通绿字，放在框下面一点
         if (!string.IsNullOrEmpty(_opt.SplashSub))
         {
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = _opt.SplashSub, Align = HudAlign.Center,
                 FontSize = font * 1.15, Color = Fade(_opt.Color, alpha * 0.95),
-                Points = { (cx, y + big * 0.9) },
+                Points = { (cx, y + h / 2 + font * 1.45) },
             });
         }
     }
