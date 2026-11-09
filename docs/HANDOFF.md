@@ -97,6 +97,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   座舱 Vne > 档案 > 全局。（v0.3.1 前这 7 项只在面板显示，HUD 实际没读覆盖表）
 - **显示某台具体机型**的页面必须用 `SettingsRouter.GetForVehicle(cfg, id, ...)`；用 `Scoped.Get` 会跟着
   面板当前编辑的机型走 → 所有详情页显示同一台的值（"j16 覆盖 f4j" 的 bug）
+- **详情页显示来源**（`EffectiveSettings.Resolve` → `机型/档案/全局`）：没有按机型覆盖时不能只显示「默认」，
+  全局回退必须标「（全局）」，否则用户会以为改了机型没生效（实际是改到了全局层）
+- **编辑页顶部显示写入层**（`NumberEditPage`）：`写入层：机型 x / 全局（未识别机型，会影响所有机型）`，
+  非按机型的行显示「全局设置（所有机型共用）」。没识别到机型时写的是全局层，会影响所有未覆盖机型
 - `AirframeDb.StoreAlertOverrides` 已删除（旧逻辑 SAVE 时把全局值写进当前机型档案，形成第二套按机型数据）
 
 ### 4.3 面板页面层（重构进行中）
@@ -200,7 +204,8 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 22. HELP 页：HELP 打开/再按关闭回到原页面；PAGE 翻到 6/6、UP/DOWN 选中跟随；点击行选中（`help/help3/helpback` 视图）；help 渲染必须与迁移前逐字节一致
 23. 机型详情：进入显示汇总、RESET 弹「重置该机型到默认？」、取消回详情、确认后回详情且数值更新；BACK 回机型列表（`detail/detailreset/detailback` 视图）
 24. 扫描器 8 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 8 × CLEAN
-25. 作用域自检：`WtHud.exe scopetest` → 17 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
+25. 作用域自检：`WtHud.exe scopetest` → 25 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
+26. 编辑页写入层：`mfdpreview out.png editscoped` → 未识别机型时必须是琥珀色「写入层：全局（未识别机型，会影响所有机型）」；`mfdpreview out.png detail a_10a` 的 IAS/Mach 应显示「（全局）」而不是「默认」
 
 ## 8. 协作约定
 

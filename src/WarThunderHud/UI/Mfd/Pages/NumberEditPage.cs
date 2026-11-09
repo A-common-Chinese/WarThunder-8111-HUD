@@ -17,12 +17,14 @@ internal sealed class NumberEditPage : MfdPageBase
     private readonly Action _onCancel;
     private readonly Action _onPick;
     private readonly MfdPageLayout _layout;
+    private readonly string _settingKey;
 
-    public NumberEditPage(Func<(string Label, string Unit)> texts, string initial,
+    public NumberEditPage(Func<(string Label, string Unit)> texts, string settingKey, string initial,
                           Action<string> onCommit, Action onCancel, Action onPick,
                           MfdPageLayout layout) : base("editnumber")
     {
         _texts = texts;
+        _settingKey = settingKey;
         Buffer = initial;
         _onCommit = onCommit;
         _onCancel = onCancel;
@@ -107,12 +109,43 @@ internal sealed class NumberEditPage : MfdPageBase
         var cx = glass.Left + glass.Width / 2;
 
         var zh = L10n.Screen == Lang.Zh;
-        var vehicle = WtHud.Hud.AirframeDb.EffectiveVehicle;
+        // 只有「按机型」的行才提示写入层；普通全局行显示全局即可。
+        // 没有选机型时写入的是全局层，会同时影响所有没有覆盖的机型（很容易误以为在改当前机型）。
+        string vText;
+        Color vColor;
+        if (!WtHud.Hud.SettingScopes.IsAirframe(_settingKey))
+        {
+            vText = zh ? "全局设置（所有机型共用）" : "GLOBAL SETTING (SHARED BY ALL)";
+            vColor = MfdTheme.Muted;
+        }
+        else
+        {
+            var scopeTarget = WtHud.Hud.EditScope.Target;
+            var detected = WtHud.Hud.AirframeDb.EffectiveVehicle;
+            if (scopeTarget is { } picked)
+            {
+                vText = zh ? "写入层：机型 " + picked : "WRITE TO: AIRFRAME " + picked;
+                vColor = MfdTheme.Text;
+            }
+            else if (WtHud.Hud.EditScope.ExplicitGlobal)
+            {
+                vText = zh ? "写入层：全局（所有未覆盖机型）" : "WRITE TO: GLOBAL (ALL AIRFRAMES)";
+                vColor = Color.FromArgb(255, 176, 64);
+            }
+            else if (!string.IsNullOrWhiteSpace(detected))
+            {
+                vText = zh ? "写入层：机型 " + detected + "（自动）" : "WRITE TO: AIRFRAME " + detected + " (AUTO)";
+                vColor = MfdTheme.Text;
+            }
+            else
+            {
+                vText = zh ? "写入层：全局（未识别机型，会影响所有机型）" : "WRITE TO: GLOBAL (NO AIRFRAME - AFFECTS ALL)";
+                vColor = Color.FromArgb(255, 176, 64);
+            }
+        }
         using var vFont = MfdTheme.CjkAt(17f * s);
-        var vText = string.IsNullOrWhiteSpace(vehicle)
-            ? (zh ? "当前机型：未读取到机型数据" : "AIRFRAME: NOT DETECTED")
-            : (zh ? "当前机型：" + vehicle : "AIRFRAME: " + vehicle);
-        g.DrawString(vText, vFont, string.IsNullOrWhiteSpace(vehicle) ? muted : text,
+        using var vBrush = new SolidBrush(vColor);
+        g.DrawString(vText, vFont, vBrush,
                      cx - g.MeasureString(vText, vFont).Width / 2, glass.Top + 26 * s,
                      StringFormat.GenericTypographic);
 

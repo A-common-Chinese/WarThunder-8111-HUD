@@ -170,6 +170,29 @@ public static class Program
         Check("detail page j_16 IAS = own override", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "j_16", "row.overspeedIas", j16.OverspeedIas), 1500);
         Check("detail page f-4j does not leak j_16 stall", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.stallAoa", f4.StallAoa), 0);
 
+        // 详情页「来源」标注：全局回退必须标成 Global，否则会被显示成「默认」，看着像没生效。
+        void CheckSource(string name, WtHud.Hud.ValueSource got, WtHud.Hud.ValueSource want)
+        {
+            bool pass = got == want;
+            if (!pass) failed++;
+            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {name,-46} got={got} want={want}");
+        }
+        var (vIas, sIas) = WtHud.Hud.EffectiveSettings.Resolve(cfg, "f-4j", "row.overspeedIas", f4.OverspeedIas, cfg.OverspeedKmh);
+        Check("f-4j IAS source = Override", vIas, 1458);
+        CheckSource("f-4j IAS source tag", sIas, WtHud.Hud.ValueSource.Override);
+        var (vMach, sMach) = WtHud.Hud.EffectiveSettings.Resolve(cfg, "f-4j", "row.overspeedMach", f4.OverspeedMach, cfg.OverspeedMach);
+        CheckSource("f-4j Mach source tag = Profile", sMach, WtHud.Hud.ValueSource.Profile);
+        Check("f-4j Mach resolved value", vMach, 2.00);
+        var (vA10Ias, sA10Ias) = WtHud.Hud.EffectiveSettings.Resolve(cfg, "a_10a", "row.overspeedIas", 0, 850);
+        Check("a_10a falls back to global IAS", vA10Ias, 850);
+        CheckSource("a_10a IAS source tag = Global", sA10Ias, WtHud.Hud.ValueSource.Global);
+        var (vA10Stall, sA10Stall) = WtHud.Hud.EffectiveSettings.Resolve(cfg, "a_10a", "row.stallAoa", 0, cfg.StallAoaDeg);
+        Check("a_10a falls back to global stall", vA10Stall, 25);
+        CheckSource("a_10a stall source tag = Global", sA10Stall, WtHud.Hud.ValueSource.Global);
+        var (vA10Aoa, sA10Aoa) = WtHud.Hud.EffectiveSettings.Resolve(cfg, "a_10a", "row.aoaWarn", 0, 0);
+        CheckSource("no value on any layer = None", sA10Aoa, WtHud.Hud.ValueSource.None);
+        Check("no value on any layer = 0", vA10Aoa, 0);
+
         Console.WriteLine(failed == 0 ? "scopetest done" : $"scopetest FAILED ({failed})");
         return failed == 0 ? 0 : 1;
     }
@@ -1922,6 +1945,7 @@ public static class Program
             else if (view == "help") { form.PreviewHelp(0); }
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
+            else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）
             else if (view == "capture") { form.PreviewCapture(3, 0); }
             else if (view == "discard")
             {

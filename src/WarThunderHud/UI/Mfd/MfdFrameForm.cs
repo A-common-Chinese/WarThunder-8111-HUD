@@ -1105,6 +1105,7 @@ public sealed class MfdFrameForm : Form
             .TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
         _editPage = new Pages.NumberEditPage(
             texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.Unit),
+            settingKey: target.LabelKey,
             initial: initial,
             onCommit: CommitNumber,
             onCancel: () => { _nav.Clear(); _mode = Mode.Items; },

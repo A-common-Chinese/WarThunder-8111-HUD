@@ -4,6 +4,19 @@
 
 namespace WtHud.Hud;
 
+/// <summary>某个数值当前来自哪一层（详情页/诊断显示用）。</summary>
+public enum ValueSource
+{
+    /// <summary>三层都没有非零值。</summary>
+    None,
+    /// <summary>机型覆盖（perVehicleOverrides），只影响这一台。</summary>
+    Override,
+    /// <summary>机型档案（airframes.json）。</summary>
+    Profile,
+    /// <summary>全局配置，影响所有没覆盖的机型。</summary>
+    Global,
+}
+
 /// <summary>
 /// 运行时生效值：机型覆盖（perVehicleOverrides）→ 机型档案（airframes.json）→ 全局配置。
 ///
@@ -36,4 +49,20 @@ public static class EffectiveSettings
     public static double StallAoaDeg(HudConfig cfg, string? vehicle, AirframeProfile profile) =>
         SettingsRouter.GetForVehicle(cfg, vehicle, "row.stallAoa",
             profile.StallAoa > 0 ? profile.StallAoa : cfg.StallAoaDeg);
+
+    /// <summary>
+    /// 解析「某一台机型」的生效值和来源：覆盖 &gt; 档案 &gt; 全局。
+    /// 详情页必须按这个顺序显示，否则全局值被显示成「默认」，看起来像没生效。
+    /// </summary>
+    public static (double Value, ValueSource Source) Resolve(
+        HudConfig cfg, string? vehicle, string key, double profileValue, double globalValue)
+    {
+        if (SettingsRouter.TryGetForVehicle(cfg, vehicle, key, out var overridden))
+            return (overridden, ValueSource.Override);
+        if (profileValue > 0)
+            return (profileValue, ValueSource.Profile);
+        if (globalValue > 0)
+            return (globalValue, ValueSource.Global);
+        return (0, ValueSource.None);
+    }
 }
