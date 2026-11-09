@@ -293,8 +293,8 @@ public sealed class HudGeometry
     }
 
     /// <summary>
-    /// SPLASH：自己击落敌机时的播报，大号带框文字 + 目标名。
-    /// 放在中心下方，避开俯仰梯/数据块；透明度由渲染循环的淡入淡出控制。
+    /// SPLASH：自己击落敌机时的播报（中文「击落」/ 英文 SPLASH），实心绿底 + 目标名。
+    /// 位于中心上方；无动画，由渲染循环直接开关。
     /// </summary>
     private void AddSplash(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double line)
     {
@@ -302,7 +302,15 @@ public sealed class HudGeometry
         double alpha = Math.Clamp(_opt.SplashAlpha, 0, 1);
         double big = font * 2.6;
         double y = cy - 6.0 * pxDeg;                     // 屏幕中心上方，正对俯仰梯中部
-        double w = Math.Max(big * 2.0, TextWidthEm(_opt.SplashMain) * big + big * 0.50);
+
+        // 中文「击落」：两个字按固定字距排、框宽按内容收紧。
+        // 直接用一段文本居中会「只有中间有字」或「分得太开」，两种都难看。
+        string main = _opt.SplashMain;
+        bool cjkPair = main.Length == 2 && main[0] >= 0x2E80 && main[1] >= 0x2E80;
+        double glyphW = big;
+        double charGap = big * 0.28;
+        double textW = cjkPair ? glyphW * 2 + charGap : TextWidthEm(main) * big;
+        double w = Math.Max(big * 2.0, textW + big * 0.55);
         double h = big * 1.10;                           // 扁一点，别顶到上下
         double left = cx - w / 2;
         double top = y - h / 2;
@@ -320,12 +328,28 @@ public sealed class HudGeometry
                 Points = { (left, ly), (left + w, ly) },
             });
         }
-        prims.Add(new HudPrim
+        if (cjkPair)
         {
-            Kind = HudPrimKind.Text, Text = _opt.SplashMain, Align = HudAlign.Center, FontSize = big,
-            Color = Fade(new HudColor(2, 20, 10, 255), alpha),
-            Points = { (cx, y) },
-        });
+            double dx = (glyphW + charGap) / 2;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = main[0].ToString(), Align = HudAlign.Center, FontSize = big,
+                Color = Fade(new HudColor(2, 20, 10, 255), alpha), Points = { (cx - dx, y) },
+            });
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = main[1].ToString(), Align = HudAlign.Center, FontSize = big,
+                Color = Fade(new HudColor(2, 20, 10, 255), alpha), Points = { (cx + dx, y) },
+            });
+        }
+        else
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = main, Align = HudAlign.Center, FontSize = big,
+                Color = Fade(new HudColor(2, 20, 10, 255), alpha), Points = { (cx, y) },
+            });
+        }
 
         // 被击落目标名：无框，普通绿字，放在框下面一点
         if (!string.IsNullOrEmpty(_opt.SplashSub))

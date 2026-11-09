@@ -317,6 +317,7 @@ public static class L10n
         ["stall"] = ("失速", "STALL"),
         ["aoa"] = ("迎角", "AOA"),
         ["pullup"] = ("拉起", "PULL UP"),
+        ["splash"] = ("击落", "SPLASH"),
         ["sinkrate"] = ("下降率", "SINK RATE"),
         ["reducespeed"] = ("减速", "REDUCE SPEED"),
         ["return"] = ("返回战区", "RETURN"),

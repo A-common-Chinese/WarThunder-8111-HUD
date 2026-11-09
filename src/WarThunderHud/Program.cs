@@ -1421,7 +1421,7 @@ public static class Program
 
         double total = (splashUntilUtc - splashStartUtc).TotalSeconds;
         _ = total;
-        opt.SplashMain = "SPLASH";
+        opt.SplashMain = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "splash");
         opt.SplashSub = splashTarget;
         opt.SplashAlpha = 1.0;      // 无动画：直接出现，到点直接消失
     }
@@ -1921,7 +1921,7 @@ public static class Program
         if (variant == "sink") { opt.SinkRateAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "splash")
         {
-            opt.SplashMain = "SPLASH";
+            opt.SplashMain = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "splash");
             opt.SplashSub = "=FdX= Ghost (F-4S)";
             opt.SplashAlpha = 1.0;
         }
