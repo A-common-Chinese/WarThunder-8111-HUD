@@ -336,87 +336,6 @@ public static class Program
         thread.Start();
     }
 
-    /// <summary>Opens the settings dialog on a dedicated STA thread (the overlay has its own pump).</summary>
-    private static void OpenSettings(HudConfig cfg, HudCalibration cal, HudOptions opt, bool currentShow, Action<bool> setShow)
-    {
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                settingsOpen = true;
-                NativeMethods.SetCursor(NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512));
-                using var form = new WtHud.UI.SettingsForm(cfg, currentShow, opt.BodyFixedOnly);
-                if (form.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-                {
-                    cfg.Extrapolate = form.Extrapolate;
-                    cfg.HudVisible = form.HudVisible;
-                    cfg.RollCoupling = form.RollCoupling;
-                    cfg.BankSign = form.BankSign;
-                    cfg.HideInCockpit = form.HideCockpit;
-                    cfg.HideInNose = form.HideNose;
-                    if (!string.IsNullOrWhiteSpace(form.ViewKey)) cfg.ViewKey = form.ViewKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.ZoomKey)) cfg.ZoomKey = form.ZoomKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.MapKey)) cfg.MapKey = form.MapKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.ScoreboardKey)) cfg.ScoreboardKey = form.ScoreboardKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.HoldHideKey)) cfg.HoldHideKey = form.HoldHideKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.SettingsKey)) cfg.SettingsKey = form.SettingsKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.PitchZeroKey)) cfg.PitchZeroKey = form.PitchZeroKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.BankFlipKey)) cfg.BankFlipKey = form.BankFlipKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.BodyFixedKey)) cfg.BodyFixedKey = form.BodyFixedKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.ShowKey)) cfg.ShowKey = form.ShowKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.ExitKey)) cfg.ExitKey = form.ExitKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.SaveKey)) cfg.SaveKey = form.SaveKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.CursorHoleKey)) cfg.CursorHoleKey = form.CursorHoleKey.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(form.ResetKey)) cfg.ResetKey = form.ResetKey.Trim().ToUpperInvariant();
-                    cfg.AimOnRightMouse = form.AimOnRightMouse;
-                    cfg.HideWhenInactive = form.HideWhenInactive;
-                    cfg.ConfigDebug = form.ConfigDebug;
-                    cfg.HideOnGround = form.HideOnGround;
-                    cfg.GroundHideDelayMs = form.GroundHideDelayMs;
-                    cfg.TapeRadarAltitude = form.TapeRadarAltitude;
-                    cfg.EnemyAirfieldAlertKm = form.EnemyAirfieldAlertKm;
-                    cfg.AoaWarnDeg = form.AoaWarnDeg;
-                    cfg.BingoFuelSeconds = form.BingoFuelMinutes * 60.0;
-                    cfg.ShowPitchLadder = form.ShowPitchLadder;
-                    cfg.ShowFpm = form.ShowFpm;
-                    RebindeKeys(cfg);
-                    overlayRef?.ApplyHotkeys(cfg);
-                    cfg.VerticalFovDeg = form.Fov;
-                    cfg.LayoutOffsetYDeg = form.OffsetY;
-                    cfg.PitchZeroDeg = form.PitchZero;
-                    cfg.OverspeedKmh = form.OverspeedKmh;
-                    cfg.OverspeedMach = form.OverspeedMach;
-                    cfg.OverspeedByMach = form.OverspeedByMach;
-                    cfg.EnduranceScale = form.EnduranceScale;
-                    cfg.CursorHoleHalfPx = form.CursorHoleHalfPx;
-                    if (!string.IsNullOrWhiteSpace(form.AirbrakeKey)) cfg.AirbrakeKey = form.AirbrakeKey.Trim().ToUpperInvariant();
-
-                    cal.VerticalFovDeg = cfg.VerticalFovDeg;
-                    cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
-                    cal.RollCoupling = cfg.RollCouplingMode == "auto"
-            ? 1.0   // 座舱为主的拟真玩法：自动即耦合（普通模式可用“关”）
-            : cfg.RollCouplingMode == "on" ? 1.0
-            : cfg.RollCouplingMode == "off" ? 0.0 : cfg.RollCoupling;
-                    opt.BodyFixedOnly = form.BodyFixedOnly;
-                    setShow(form.HudVisible);
-                    cfg.Save();
-                    Console.WriteLine("settings applied and saved");
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("settings error: " + ex.Message);
-            }
-            finally
-            {
-                settingsOpen = false;
-            }
-        })
-        { IsBackground = true, Name = "settings" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-    }
-
     private static int RunOverlay(string[] args)
     {
         double seconds = args.Length > 1 && double.TryParse(args[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedSeconds) ? parsedSeconds : 0;   // 0 = run until exit
@@ -1967,6 +1886,8 @@ public static class Program
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
+            else if (view == "display") { form.PreviewOpen(0, 0); }
+            else if (view == "diag") { form.PreviewOpen(7, 0); }
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }
             else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）
