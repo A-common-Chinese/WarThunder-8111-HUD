@@ -53,6 +53,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 版本号：`0.3.2`（`WarThunderHud.csproj`；发布材料已备好，等用户手动发 release）
 - 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（当前 HEAD）
 - 最近提交（新→旧）：
+  - `02f3cd7` fix(telemetry): radio_altitude 是英尺 → 换算成米（RA/PULL UP 偏高 3.28 倍）
   - `97855ca` refactor(panel): 旧设置窗体剩余项迁入 MFD，删除 SettingsForm/OpenSettings
   - `164e086` feat(keys): 恢复战雷 .blk 按键导入（按键页第 2 页）
   - `d497c1c` feat(panel): 告警页下降率（三层）+ 按键页补全可编辑键/固定只读键
