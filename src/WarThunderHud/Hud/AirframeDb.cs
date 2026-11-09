@@ -184,23 +184,10 @@ public static class AirframeDb
     }
 
     /// <summary>
-    /// Stores the alert thresholds the player just edited in the panel into the current
-    /// airframe, so they persist per aircraft instead of being global defaults.
+    /// 已废弃：旧版本把面板里改的全局告警阈值写进当前机型档案，形成与 perVehicleOverrides
+    /// 并存的第二套「按机型」数据（也是「j16 覆盖 f4j」显示混乱的来源之一）。保留此说明，
+    /// 逻辑已删除；按机型的值只走 HudConfig.PerVehicleOverrides，全局值不再改机型档案。
     /// </summary>
-    public static void StoreAlertOverrides(double aoaWarn, double overspeedIas, double overspeedMach)
-    {
-        EnsureLoaded();
-        var target = EffectiveVehicle;
-        if (string.IsNullOrWhiteSpace(target)) return;
-        if (!_map.TryGetValue(target, out var profile) || profile == null) return;
-
-        var changed = false;
-        if (Math.Abs(profile.AoaWarn - aoaWarn) > 0.001) { profile.AoaWarn = aoaWarn; changed = true; }
-        if (Math.Abs(profile.OverspeedIas - overspeedIas) > 0.001) { profile.OverspeedIas = overspeedIas; changed = true; }
-        if (Math.Abs(profile.OverspeedMach - overspeedMach) > 0.001) { profile.OverspeedMach = overspeedMach; changed = true; }
-
-        if (changed) Save();
-    }
 
     /// <summary>Clears the per-aircraft overrides so the global defaults apply again.</summary>
     public static void ResetOverrides(string vehicleType)

@@ -29,7 +29,6 @@ public sealed class MfdFrameForm : Form
     private readonly Bitmap _bezel;
     private readonly HudConfig _cfg;
     private readonly HudConfig _work;
-    private readonly HudConfig _baseline;
     private readonly List<MfdPage> _pages;
 
     private Mode _mode = Mode.Menu;
@@ -73,7 +72,6 @@ public sealed class MfdFrameForm : Form
     {
         _savePath = savePath;
         _cfg = cfg;
-        _baseline = cfg.Clone();
         _work = cfg.Clone();
         WtHud.Hud.ConfigSnapshots.MarkCancelPoint(cfg);   // CANCEL 回退点（每次 F1 覆盖）
         WtHud.Hud.ConfigSnapshots.BeginSession();          // 本次未保存操作的快照目录
@@ -1699,6 +1697,18 @@ public sealed class MfdFrameForm : Form
         if (SelectedItem is { } item) Activate(item);
     }
 
+    /// <summary>Preview helper: opens the detail page of one specific airframe (by id).</summary>
+    public void PreviewDetailVehicle(string vehicleId)
+    {
+        var idx = _pages.FindIndex(p => p.TitleKey == "page.airframe");
+        if (idx < 0) return;
+        _page = idx;
+        _menuSel = idx;
+        _itemSel = 0;
+        _mode = Mode.Items;
+        EnterDetail(new MfdItem { LabelKey = vehicleId, Kind = ItemKind.Detail });
+    }
+
     /// <summary>Preview helper: opens the airframe picker through 数值编辑页 → 手动选择机型.</summary>
     public void PreviewPickVehicle(int pageIndex = 0, int itemIndex = 7)
     {
@@ -1810,14 +1820,9 @@ public sealed class MfdFrameForm : Form
         _cfg.CopyFrom(_work);
         if (_savePath != null) _cfg.SaveTo(_savePath); else _cfg.Save();
 
-        // 告警类阈值改动同时写进当前机型条目（按机型持久化）
-        if (Math.Abs(_cfg.AoaWarnDeg - _baseline.AoaWarnDeg) > 0.001
-            || Math.Abs(_cfg.OverspeedKmh - _baseline.OverspeedKmh) > 0.001
-            || Math.Abs(_cfg.OverspeedMach - _baseline.OverspeedMach) > 0.001)
-        {
-            WtHud.Hud.AirframeDb.StoreAlertOverrides(
-                _cfg.AoaWarnDeg, _cfg.OverspeedKmh, _cfg.OverspeedMach);
-        }
+        // 以前这里会把「全局告警阈值」写进当前机型档案（StoreAlertOverrides），形成第二套
+        // per-aircraft 数据源，和 perVehicleOverrides 打架。现在按机型的值只走覆盖表，
+        // 全局值就是全局，不再偷偷改机型档案。
 
         if (WtHud.Hud.PitchDetect.PendingSave is var (veh, sign))
         {

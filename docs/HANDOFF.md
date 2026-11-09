@@ -90,6 +90,12 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 作用域三态：`EditScope.Auto / ExplicitGlobal / UseVehicle`；`ResolvedVehicle` 决定读写层
 - 面板顶栏只在**编辑页**显示当前层（`全局数据` / `机型数据：xxx`），列表页只显示生效值
 - RESET：机型作用域清该机型全部覆盖并保持作用域；全局作用域恢复默认
+- **运行时解析**走 `Hud/EffectiveSettings.cs`（覆盖 > 机型档案 > 全局）：`pitchzero/bankTrim/fpmTrim/
+  stallAoa/aoaWarn/overspeedIas/overspeedMach` 已全部接入 HUD 主循环；极速阈值优先级 = 机型覆盖 >
+  座舱 Vne > 档案 > 全局。（v0.3.1 前这 7 项只在面板显示，HUD 实际没读覆盖表）
+- **显示某台具体机型**的页面必须用 `SettingsRouter.GetForVehicle(cfg, id, ...)`；用 `Scoped.Get` 会跟着
+  面板当前编辑的机型走 → 所有详情页显示同一台的值（"j16 覆盖 f4j" 的 bug）
+- `AirframeDb.StoreAlertOverrides` 已删除（旧逻辑 SAVE 时把全局值写进当前机型档案，形成第二套按机型数据）
 
 ### 4.3 面板页面层（重构进行中）
 新页面（`UI/Mfd/Pages/`）：`MfdPageBase`、`MfdRenderContext`、`MfdNavigator`、`ConfirmPage`、`PitchDetectPage`、`NumberEditPage`、`PresetPage`、`PickVehiclePage`
@@ -192,6 +198,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 22. HELP 页：HELP 打开/再按关闭回到原页面；PAGE 翻到 6/6、UP/DOWN 选中跟随；点击行选中（`help/help3/helpback` 视图）；help 渲染必须与迁移前逐字节一致
 23. 机型详情：进入显示汇总、RESET 弹「重置该机型到默认？」、取消回详情、确认后回详情且数值更新；BACK 回机型列表（`detail/detailreset/detailback` 视图）
 24. 扫描器 8 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 8 × CLEAN
+25. 作用域自检：`WtHud.exe scopetest` → 17 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
 
 ## 8. 协作约定
 

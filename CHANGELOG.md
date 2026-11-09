@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布（v0.3.2 候选）
+
+### 修复
+- **机型详情页串台**：详情页改用 `SettingsRouter.GetForVehicle(cfg, 本页机型, ...)` 读取；
+  之前用 `Scoped.Get` 会跟随面板当前编辑的机型，导致后改的 j16 数据覆盖 f4j 的显示。
+- **按机型参数真正生效**：`perVehicleOverrides` 接入 HUD 运行时（新增 `Hud/EffectiveSettings.cs`）——
+  俯仰零点 / 坡度修正 / 矢量修正 / 失速迎角 / 迎角告警 / 极速 IAS / 极速 Mach 现在都按当前机型解析
+  （机型覆盖 > 机型档案 > 全局）。之前这 7 项只在面板里显示，HUD 实际仍用档案/全局值。
+- 极速阈值优先级：机型显式覆盖 > 座舱 Vne > 机型档案 > 全局（用户设置优先）。
+- 删除遗留的 `AirframeDb.StoreAlertOverrides`：旧逻辑在 SAVE 时把全局告警值写进当前机型档案，
+  形成和 `perVehicleOverrides` 并存的第二套按机型数据（也是数值对不上的来源之一）。
+
+### 工具
+- 新增自检 `WtHud.exe scopetest`（17 项：覆盖独立、优先级、回退、详情页不串台）。
+- `mfdpreview <out.png> detail <机型id>` 可直接渲染指定机型的详情页。
+
 ## v0.3.1 — 2026-11-08
 
 ### 调整

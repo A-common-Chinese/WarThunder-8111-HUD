@@ -31,9 +31,19 @@ public static class Program
             case "mfd":
                 return MfdInteractive();
             case "mfdpreview":
-                return MfdPreview(args.Length > 1 ? args[1] : "mfd-panel.png", args.Length > 2 ? args[2] : "", args.Length > 3 ? int.Parse(args[3]) : 0);
+            {
+                // 第 3 个参数既可能是数值（edit 页序号），也可能是文本（detail <机型>），按能否解析区分。
+                string a3 = args.Length > 3 ? args[3] : "";
+                bool hasItem = int.TryParse(a3, NumberStyles.Integer, CultureInfo.InvariantCulture, out int itemIdx);
+                return MfdPreview(args.Length > 1 ? args[1] : "mfd-panel.png",
+                    args.Length > 2 ? args[2] : "",
+                    hasItem ? itemIdx : 0,
+                    !hasItem ? a3 : (args.Length > 4 ? args[4] : ""));
+            }
             case "selftest":
                 return SelfTest();
+            case "scopetest":
+                return ScopeTest();
             case "preview":
                 return Preview(args);
             case "dumpgeo":
@@ -108,6 +118,60 @@ public static class Program
 
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
+    }
+
+    /// <summary>
+    /// 按机型设置的作用域自检：每台机型只读自己的覆盖值（不能串台）、优先级 覆盖 &gt; 档案 &gt; 全局。
+    /// 曾经的问题：详情页用 Scoped.Get（跟着面板当前编辑的机型走）读值，导致 j16 的数据覆盖 f4j 的显示；
+    /// 且运行时根本没读 perVehicleOverrides，这些「按机型」参数实际不生效。
+    /// </summary>
+    private static int ScopeTest()
+    {
+        Console.WriteLine("=== per-airframe setting scope ===");
+        int failed = 0;
+        void Check(string name, double got, double want)
+        {
+            bool pass = Math.Abs(got - want) < 1e-6;
+            if (!pass) failed++;
+            Console.WriteLine($"  {(pass ? "PASS" : "FAIL")}  {name,-46} got={got,8:F2} want={want,8:F2}");
+        }
+
+        var cfg = new HudConfig
+        {
+            AoaWarnDeg = 18, OverspeedKmh = 1400, OverspeedMach = 1.80,
+            StallAoaDeg = 25, PitchZeroDeg = 0.5, BankTrimDeg = 0.2, FpmTrimDeg = -0.1,
+        };
+        cfg.PerVehicleOverrides.Clear();
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "f-4j", "row.overspeedIas", 1458);
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "f-4j", "row.pitchzero", 1.5);
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "j_16", "row.overspeedIas", 1500);
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "j_16", "row.overspeedMach", 2.20);
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "j_16", "row.stallAoa", 9.5);
+
+        var f4 = new AirframeProfile { OverspeedIas = 1300, OverspeedMach = 2.00, AoaWarn = 16 };
+        var j16 = new AirframeProfile();
+        var f16 = new AirframeProfile { OverspeedIas = 1400, AoaWarn = 18 };
+
+        Check("f-4j IAS override > profile", WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, "f-4j", f4), 1458);
+        Check("j_16 IAS override independent", WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, "j_16", j16), 1500);
+        Check("j_16 Mach override", WtHud.Hud.EffectiveSettings.OverspeedMach(cfg, "j_16", j16), 2.20);
+        Check("j_16 stall override", WtHud.Hud.EffectiveSettings.StallAoaDeg(cfg, "j_16", j16), 9.5);
+        Check("f-4j Mach keeps profile value", WtHud.Hud.EffectiveSettings.OverspeedMach(cfg, "f-4j", f4), 2.00);
+        Check("f-4j aoaWarn keeps profile value", WtHud.Hud.EffectiveSettings.AoaWarnDeg(cfg, "f-4j", f4), 16);
+        Check("f_16a profile IAS (no override)", WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, "f_16a_block_10", f16), 1400);
+        Check("unknown vehicle falls back to global IAS", WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, "zzz_none", new AirframeProfile()), 1400);
+        Check("unknown vehicle falls back to global Mach", WtHud.Hud.EffectiveSettings.OverspeedMach(cfg, "zzz_none", new AirframeProfile()), 1.80);
+        Check("unknown vehicle falls back to global aoaWarn", WtHud.Hud.EffectiveSettings.AoaWarnDeg(cfg, "zzz_none", new AirframeProfile()), 18);
+        Check("unknown vehicle falls back to global stall", WtHud.Hud.EffectiveSettings.StallAoaDeg(cfg, "zzz_none", new AirframeProfile()), 25);
+        Check("f-4j pitch-zero override", WtHud.Hud.EffectiveSettings.PitchZeroDeg(cfg, "f-4j"), 1.5);
+        Check("j_16 pitch-zero falls back to global", WtHud.Hud.EffectiveSettings.PitchZeroDeg(cfg, "j_16"), 0.5);
+        Check("f-4j bank-trim falls back to global", WtHud.Hud.EffectiveSettings.BankTrimDeg(cfg, "f-4j"), 0.2);
+        Check("detail page f-4j IAS = own override", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.overspeedIas", f4.OverspeedIas), 1458);
+        Check("detail page j_16 IAS = own override", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "j_16", "row.overspeedIas", j16.OverspeedIas), 1500);
+        Check("detail page f-4j does not leak j_16 stall", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.stallAoa", f4.StallAoa), 0);
+
+        Console.WriteLine(failed == 0 ? "scopetest done" : $"scopetest FAILED ({failed})");
+        return failed == 0 ? 0 : 1;
     }
 
     private static int DumpGeometry(string[] args)
@@ -761,15 +825,17 @@ public static class Program
                 Console.WriteLine($"pitch sign for {pitchSignVehicle} = {detectedPitchSign} (saved to config)");
             }
 
-            // Apply the live calibration on top of the raw solution.
+            // Apply the live calibration on top of the raw solution. 校准值可以是机型覆盖
+            // （EffectiveSettings：机型 > 档案 > 全局），不是只有全局配置。
+            var liveVehicle = snap.VehicleType;
             var shown = new AttitudeSolution
             {
-                PitchDeg = att.PitchDeg + cfg.PitchZeroDeg,
-                BankDeg = att.BankDeg * cfg.BankSign + cfg.BankTrimDeg,
+                PitchDeg = att.PitchDeg + WtHud.Hud.EffectiveSettings.PitchZeroDeg(cfg, liveVehicle),
+                BankDeg = att.BankDeg * cfg.BankSign + WtHud.Hud.EffectiveSettings.BankTrimDeg(cfg, liveVehicle),
                 Source = att.Source,
                 Confidence = att.Confidence,
             };
-            opt.FpmTrimDeg = cfg.FpmTrimDeg;
+            opt.FpmTrimDeg = WtHud.Hud.EffectiveSettings.FpmTrimDeg(cfg, liveVehicle);
 
             // ---- stall warning ----
             //   calibrated per vehicle (B) > cockpit AOA indexer (C) > generic rule (A)
@@ -788,7 +854,9 @@ public static class Program
                     stallCalWarned = snap.VehicleType;
                     Console.WriteLine($"stall calibration for {snap.VehicleType} ignored ({storedAoa:F1} deg < 12); recalibrate in a buffet");
                 }
-                double threshold = hasCal ? calibratedAoa : cfg.StallAoaDeg;
+                double threshold = hasCal
+                    ? calibratedAoa
+                    : WtHud.Hud.EffectiveSettings.StallAoaDeg(cfg, snap.VehicleType, AirframeDb.Get(snap.VehicleType));
                 double aoa = snap.AoaDeg;
                 bool decel = accelMs2 < -0.6;                 // losing speed
                 // A hard pull at high speed reaches a big AOA while still loaded (Ny well above 1).
@@ -868,9 +936,12 @@ public static class Program
             accelLastTas = tasMsNow;
             accelLastTime = tNow;
             opt.AccelMs2 = accelMs2;
-            // Overspeed threshold: use the aircraft's own Vne when the cockpit exposes it
-            // (m/s -> km/h); fall back to the configured fixed value otherwise.
-            if (snap.VneMs is double vneMs && vneMs > 10)
+            // Overspeed threshold: 机型显式覆盖 > 座舱 Vne > 机型档案 > 全局。
+            // 用户按机型改过阈值时必须以用户为准，否则面板里的值永远不会生效。
+            var alertProfile = AirframeDb.Get(snap.VehicleType);
+            bool iasOverride = WtHud.Hud.SettingsRouter.TryGetForVehicle(cfg, snap.VehicleType, "row.overspeedIas", out double iasOverrideKmh);
+            bool machOverride = WtHud.Hud.SettingsRouter.TryGetForVehicle(cfg, snap.VehicleType, "row.overspeedMach", out double machOverrideValue);
+            if (!iasOverride && !machOverride && snap.VneMs is double vneMs && vneMs > 10)
             {
                 opt.OverspeedKmh = vneMs * 3.6;
                 opt.OverspeedByMach = false;
@@ -883,15 +954,17 @@ public static class Program
             else
             {
                 // Manual threshold: IAS (km/h) or Mach, whichever the user selected.
-                // 按机型覆盖告警阈值（0 = 用全局默认）
-            var af = AirframeDb.Get(snap.VehicleType);
-            opt.OverspeedKmh = af.OverspeedIas > 0 ? af.OverspeedIas : cfg.OverspeedKmh;
+                opt.OverspeedKmh = iasOverride
+                    ? iasOverrideKmh
+                    : WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, snap.VehicleType, alertProfile);
                 opt.OverspeedByMach = cfg.OverspeedByMach;
-                opt.OverspeedMach = af.OverspeedMach > 0 ? af.OverspeedMach : cfg.OverspeedMach;
+                opt.OverspeedMach = machOverride
+                    ? machOverrideValue
+                    : WtHud.Hud.EffectiveSettings.OverspeedMach(cfg, snap.VehicleType, alertProfile);
             }
 
             opt.FpmAosSign = cfg.FpmAosSign != 0 ? Math.Sign(cfg.FpmAosSign) : -1;
-            var aoaWarn = AirframeDb.Get(snap.VehicleType).AoaWarn is var aw && aw > 0 ? aw : cfg.AoaWarnDeg;
+            var aoaWarn = WtHud.Hud.EffectiveSettings.AoaWarnDeg(cfg, snap.VehicleType, alertProfile);
             opt.AoaWarnAlert = snap.InFlight && snap.AoaDeg > aoaWarn;
             opt.BingoFuelAlert = opt.EnduranceSeconds >= 0 && opt.EnduranceSeconds < cfg.BingoFuelSeconds;
             // Radar altitude only when the aircraft actually reports one: the API exposes no
@@ -1824,7 +1897,7 @@ public static class Program
         return 0;
     }
     /// <summary>Renders the MFD panel to a PNG (headless verification of the bezel + text).</summary>
-    private static int MfdPreview(string outPath, string view = "", int item = 0)
+    private static int MfdPreview(string outPath, string view = "", int item = 0, string extra = "")
     {
         var cfg = HudConfig.Load();
         WtHud.UI.L10n.LoadFromConfig(cfg.Language);
@@ -1876,7 +1949,11 @@ public static class Program
                 form.PreviewSnapshotConfirm();
                 form.PreviewConfirmRowClick(0, 2);   // 双击「确认」行：执行恢复
             }
-            else if (view == "detail") { form.PreviewDetail(); }
+            else if (view == "detail")
+            {
+                if (!string.IsNullOrEmpty(extra)) form.PreviewDetailVehicle(extra);
+                else form.PreviewDetail();
+            }
             else if (view == "detailback") { form.PreviewDetailBack(); }
             else if (view == "help3") { form.PreviewHelpLast(); }
             else if (view == "helpback") { form.PreviewHelpToggle(); }

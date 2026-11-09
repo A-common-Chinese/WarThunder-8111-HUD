@@ -56,6 +56,24 @@ public static class SettingsRouter
         return true;
     }
 
+    /// <summary>Explicit-vehicle lookup for a double setting (never resolves through EditScope).</summary>
+    public static bool TryGetForVehicle(HudConfig cfg, string? vehicle, string name, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrEmpty(vehicle)) return false;
+        if (!cfg.PerVehicleOverrides.TryGetValue(vehicle, out var map)) return false;
+        if (!map.TryGetValue(name, out value)) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the override of one explicit airframe. Pages that display a *specific* airframe must
+    /// use this instead of <see cref="Get"/>, otherwise every page shows the airframe the panel is
+    /// currently editing (that was the "j16 value overwrites f4j" bug).
+    /// </summary>
+    public static double GetForVehicle(HudConfig cfg, string? vehicle, string name, double fallback) =>
+        TryGetForVehicle(cfg, vehicle, name, out var value) ? value : fallback;
+
     public static void SetFor(HudConfig cfg, string vehicle, string name, double value)
     {
         if (string.IsNullOrEmpty(vehicle)) return;
