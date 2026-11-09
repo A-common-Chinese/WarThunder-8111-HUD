@@ -152,6 +152,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   `.blk 导入` → 按键页；其余开关/数值/键位原本 MFD 面板就有。
   唯一未保留的是「纯机体固连」复选（运行态不写配置，F9 键切换即可）
 - 告警页「下降率告警」：`row.sinkRate`，单位 ` m/s`，范围 5–200，默认全局 `sinkRateMs=40`
+- **8111 的 `radio_altitude` 是英尺**（不是米）：`TelemetryParser` 解析时 ×0.3048 存成 `RadioAltM`。
+  证据：同一帧 baro=91 m 时 raw=205，按米算 AGL>绝对高度不可能；205 ft=62 m 才合理。
+  别改回去，否则 RA 带和 PULL UP 会偏高 3.28 倍（2026-11-09 修复）
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
 - 中文告警框宽：ASCII 0.62em / 中文 1.0em
 - 机型数据库只收飞机（`tankModels/*` 排除）
@@ -227,6 +230,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 28. 按键页两页：`mfdpreview out.png keys`（1/2）与 `keys2`（2/2）→ 第 2 页 6 个新增可编辑键（F7/F8/F9/F5/U/CTRL+ALT+S）+ 3 个固定只读键（CTRL+ALT+↑↓ / PgUp/PgDn / R）+ 「从战雷 (.blk) 导入按键」动作行，固定行标签不能被右侧键位压住
 29. .blk 导入：`WtHud.exe selftest` → 3 项 blk 检查 PASS；进面板按键页第 2 页点导入 → 选一个 war thunder controls .blk → toast 显示导入结果，SAVE 后 `hud-config.json` 的 `airbrakeKey`/`scoreboardKey` 更新
 30. 旧窗体迁移项：`mfdpreview out.png display`（2 页）→ 有 `地面延迟 ms` / `续航系数` / `构型调试块`；`alerts` → 有 `极速依据 IAS/MACH`；`diag` 第 2 页仍有「检查更新」。`grep SettingsForm` 无残留、`OpenSettings` 无残留
+31. 雷达高度单位：`WtHud.exe selftest` → 2 项 `radio altitude` PASS（1000 ft → 304.8 m）；进游戏低空看 RA 带 ≈ 座舱英尺读数 × 0.3048，PULL UP 不再偏晚
 
 ## 8. 协作约定
 

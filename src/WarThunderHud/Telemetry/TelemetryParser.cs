@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -13,6 +13,12 @@ namespace WtHud.Telemetry;
 /// </summary>
 public static class TelemetryParser
 {
+    /// <summary>
+    /// 8111 的 <c>radio_altitude</c> 是**英尺**（实测：同帧 baro=91 m 时 raw=205，若当米算
+    /// AGL &gt; 绝对高度，物理上不可能；按英尺 205 ft = 62 m AGL 才合理）。内部统一存米。
+    /// </summary>
+    private const double FeetToMetres = 0.3048;
+
     public static TelemetrySnapshot Parse(string? stateJson, string? indicatorsJson, TimeSpan elapsed, DateTime utcNow)
     {
         double ias = 0, tas = 0, mach = 0, alt = 0, vy = 0, aoa = 0, aos = 0, ny = 1, wx = 0;
@@ -42,7 +48,7 @@ public static class TelemetryParser
             gearPct = GetDouble(r, "gear, %", -1);
             flapsPct = GetDouble(r, "flaps, %", -1);
             airbrakePct = GetDouble(r, "airbrake, %", -1);
-            if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
+            if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude") * FeetToMetres;
         }
 
         string vehicle = "";
@@ -76,7 +82,7 @@ public static class TelemetryParser
             if (r.TryGetProperty("aviahorizon_roll", out _)) bank = -GetDouble(r, "aviahorizon_roll");
             else if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
             if (r.TryGetProperty("turn", out _)) turn = GetDouble(r, "turn");
-            if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
+            if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude") * FeetToMetres;
             if (r.TryGetProperty("aoa_indexer1", out _)) aoaIndexer = GetDouble(r, "aoa_indexer1");
             if (r.TryGetProperty("vne", out _)) vne = GetDouble(r, "vne");   // cockpit Vne, m/s
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");

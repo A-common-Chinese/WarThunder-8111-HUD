@@ -116,6 +116,14 @@ public static class Program
         Check("ground not inflight", !g.InFlight);
         Check("ground aoa zeroed", Math.Abs(g.AoaDeg) < 0.001);
 
+        // 雷达高度：8111 的 radio_altitude 是英尺，解析时换算成米（1000 ft -> 304.8 m）
+        const string indRalt = """{"valid":true,"type":"f-4j","radio_altitude":1000,"compass":90}""";
+        var ralt = TelemetryParser.Parse(state, indRalt, TimeSpan.Zero, DateTime.UtcNow);
+        Check("radio altitude ft->m", ralt.RadioAltM is double rm && Math.Abs(rm - 304.8) < 0.01);
+        const string indRaltZero = """{"valid":true,"type":"f-4j","radio_altitude":0,"compass":90}""";
+        var ralt0 = TelemetryParser.Parse(state, indRaltZero, TimeSpan.Zero, DateTime.UtcNow);
+        Check("radio altitude zero", ralt0.RadioAltM is double rz && Math.Abs(rz) < 0.001);
+
         // 战雷 controls .blk 导入：解析 + 组合键还原（减速板 H / 计分板 CTRL+N）
         const string blk = """
         ID_AIR_BRAKE { keyboardKey:i=35; }
@@ -936,7 +944,7 @@ public static class Program
             if (hasRadioAlt && !radioAltLogged)
             {
                 radioAltLogged = true;
-                Console.WriteLine($"radio altimeter available on {snap.VehicleType}: {snap.RadioAltM:F0} m (native)");
+                Console.WriteLine($"radio altimeter available on {snap.VehicleType}: {snap.RadioAltM:F0} m AGL (8111 feet -> m)");
             }
             bool showRadarAlt = cfg.TapeRadarAltitude && hasRadioAlt;
             opt.AltTapeIsRadar = showRadarAlt;

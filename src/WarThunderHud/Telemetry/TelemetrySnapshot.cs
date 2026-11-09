@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -57,7 +57,10 @@ public sealed class TelemetrySnapshot
     /// <summary>Cockpit Vne (never-exceed speed) in m/s when the aircraft exposes it (null otherwise).</summary>
     public double? VneMs { get; init; }
 
-    /// <summary>Real radio altimeter reading when the aircraft exposes one (null otherwise).</summary>
+    /// <summary>
+    /// 真雷达高度（离地），**米**。8111 原始字段 <c>radio_altitude</c> 是英尺，
+    /// 已在 <see cref="TelemetryParser"/> 里换算成米（2026-11-09 修正）。
+    /// </summary>
     public double? RadioAltM { get; init; }
 
     /// <summary>Airbrake position, 0..100 % (from /state "airbrake, %").</summary>

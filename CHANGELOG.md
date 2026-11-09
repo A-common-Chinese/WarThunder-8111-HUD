@@ -22,6 +22,10 @@
   `CTRL+ALT+↑/↓`（HUD 上下偏移）、`CTRL+ALT+PgUp/PgDn`（视场角 ∓1°）、`CTRL+ALT+R`（滚转耦合 0/1）。
 
 ### 修复
+- **雷达高度单位（重要）**：8111 的 `radio_altitude` 实际是**英尺**，之前当米用，导致 HUD 的 RA（雷达高度带）
+  和 PULL UP 判定偏高 **3.28 倍**。现在解析时换算成米（1000 ft → 304.8 m），RA 阈值（<50 m 黄 / <10 m 红）
+  和 PULL UP 的 tti 估算随之正确。
+  验证方法：同一帧里 baro=91 m 时 raw=205，若按米算「离地 > 绝对高度」物理上不可能；按英尺 205 ft = 62 m AGL 才合理。
 - **机型详情页串台**：详情页改用 `SettingsRouter.GetForVehicle(cfg, 本页机型, ...)` 读取；
   之前用 `Scoped.Get` 会跟随面板当前编辑的机型，导致后改的 j16 数据覆盖 f4j 的显示。
 - **按机型参数真正生效**：`perVehicleOverrides` 接入 HUD 运行时（新增 `Hud/EffectiveSettings.cs`）——
