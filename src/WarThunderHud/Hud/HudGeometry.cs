@@ -303,7 +303,7 @@ public sealed class HudGeometry
         double big = font * 2.6;
         double y = cy - 6.0 * pxDeg;                     // 屏幕中心上方，正对俯仰梯中部
         double w = Math.Max(big * 2.0, TextWidthEm(_opt.SplashMain) * big + big * 0.50);
-        double h = big * 1.45;
+        double h = big * 1.10;                           // 扁一点，别顶到上下
         double left = cx - w / 2;
         double top = y - h / 2;
 
@@ -334,7 +334,7 @@ public sealed class HudGeometry
             {
                 Kind = HudPrimKind.Text, Text = _opt.SplashSub, Align = HudAlign.Center,
                 FontSize = font * 1.15, Color = Fade(_opt.Color, alpha * 0.95),
-                Points = { (cx, y + h / 2 + font * 1.45) },
+                Points = { (cx, y + h / 2 + font * 1.35) },
             });
         }
     }
