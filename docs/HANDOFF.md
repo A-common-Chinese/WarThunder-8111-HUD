@@ -50,9 +50,11 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 3. 当前版本与提交
 
-- 版本号：`0.3.1`（`WarThunderHud.csproj`）
-- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（当前 HEAD）
+- 版本号：`0.3.1`（`WarThunderHud.csproj`；v0.3.1 之后的作用域修复在「未发布」里，发布时再 bump 0.3.2）
+- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）
 - 最近提交（新→旧）：
+  - `69e47a4` fix(scope): 按机型覆盖真正生效 + 详情页按本页机型读值（j16 覆盖 f4j 的 bug）
+  - `98ceb9f` release: v0.3.1（版本号/CHANGELOG/RELEASE_NOTES）
   - `57755f5` feat(hud): 地平线加长加粗 + 机头基准短线（v0.3.1）
   - `2e02771` refactor: Help/Detail 页迁入页面层（扫描器 8 页 CLEAN）
   - `9230b12` chore: 0 警告 — D2D/DWrite 工厂判空 + 可空性标注
