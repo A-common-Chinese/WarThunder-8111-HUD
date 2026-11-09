@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -37,6 +37,9 @@ internal sealed class MfdItem
     public Func<HudConfig, string>? GetPreset { get; init; }
     public Action<HudConfig, string>? SetPreset { get; init; }
     public Action<HudConfig>? Run { get; init; }
+
+    /// <summary>True when the action opens its own sub-page instead of the generic confirm sheet.</summary>
+    public bool Direct { get; init; }
     public string[]? Choices { get; init; }
     public Func<HudConfig, int>? GetChoice { get; init; }
     public Action<HudConfig, int>? SetChoice { get; init; }
@@ -108,13 +111,16 @@ internal sealed class MfdPage
     public required string MenuKey { get; init; }
     public required string MenuHintKey { get; init; }
     public List<MfdItem> Items { get; init; } = new();
+
+    /// <summary>首页显示的数量：动态页面（如回归快照）用它替代 <see cref="Items"/>.Count。</summary>
+    public Func<int>? LiveCount { get; init; }
 }
 
 internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), Airframes(), Diag(),
+        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), Airframes(), Diag(), Snapshots(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set) =>
@@ -130,6 +136,10 @@ internal static class MfdPages
 
     private static MfdItem Action(string label, Action<HudConfig> run) =>
         new() { LabelKey = label, Kind = ItemKind.Action, Run = run };
+
+    /// <summary>Action that goes straight to its own page (no "are you sure" sheet).</summary>
+    private static MfdItem ActionDirect(string label, Action<HudConfig> run) =>
+        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true };
 
     private static MfdItem Info(string label, Func<HudConfig, string> text) =>
         new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text };
@@ -196,18 +206,28 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.camera",
         Items =
         {
-            Number("row.pitchzero", c => c.PitchZeroDeg, (c, v) => c.PitchZeroDeg = v, 0.1, -20, 20, "°"),
+            Number("row.pitchzero",
+                c => WtHud.Hud.Scoped.Get(c, "row.pitchzero", c.PitchZeroDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.pitchzero", v, () => c.PitchZeroDeg = v),
+                0.1, -20, 20, "°"),
             Enum("row.rollCoupleMode", new[] { "opt.auto", "opt.on", "opt.off" },
                 c => c.RollCouplingMode == "on" ? 1 : c.RollCouplingMode == "off" ? 2 : 0,
                 (c, i2) => c.RollCouplingMode = i2 == 1 ? "on" : i2 == 2 ? "off" : "auto"),
             Number("row.rollCouple", c => c.RollCoupling, (c, v) => c.RollCoupling = v, 0.5, 0, 1),
             Enum("row.bankSign", new[] { "opt.normal", "opt.invert" },
-                c => c.BankSign >= 0 ? 0 : 1, (c, i) => c.BankSign = i == 0 ? 1 : -1),
+                c => c.BankSign >= 0 ? 0 : 1,
+                (c, i) => c.BankSign = i == 0 ? 1 : -1),
             Enum("row.pitchSign", new[] { "opt.auto", "opt.positive", "opt.negative" },
                 c => c.PitchSign switch { > 0 => 1, < 0 => 2, _ => 0 },
                 (c, i) => c.PitchSign = i switch { 1 => 1, 2 => -1, _ => 0 }),
-            Number("row.bankTrim", c => c.BankTrimDeg, (c, v) => c.BankTrimDeg = v, 0.5, -30, 30, "°"),
-            Number("row.fpmTrim", c => c.FpmTrimDeg, (c, v) => c.FpmTrimDeg = v, 0.5, -20, 20, "°"),
+            Number("row.bankTrim",
+                c => WtHud.Hud.Scoped.Get(c, "row.bankTrim", c.BankTrimDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.bankTrim", v, () => c.BankTrimDeg = v),
+                0.5, -30, 30, "°"),
+            Number("row.fpmTrim",
+                c => WtHud.Hud.Scoped.Get(c, "row.fpmTrim", c.FpmTrimDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.fpmTrim", v, () => c.FpmTrimDeg = v),
+                0.5, -20, 20, "°"),
             Toggle("row.tapeRadar", c => c.TapeRadarAltitude, (c, v) => c.TapeRadarAltitude = v),
             Toggle("row.aimRmb", c => c.AimOnRightMouse, (c, v) => c.AimOnRightMouse = v),
             Info("row.source", c => c.PitchSign == 0 ? "AUTO" : (c.PitchSign > 0 ? "+1" : "-1")),
@@ -221,11 +241,23 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.alerts",
         Items =
         {
-            Number("row.stallAoa", c => c.StallAoaDeg, (c, v) => c.StallAoaDeg = v, 1, 5, 40, "°"),
+            Number("row.stallAoa",
+                c => WtHud.Hud.Scoped.Get(c, "row.stallAoa", c.StallAoaDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.stallAoa", v, () => c.StallAoaDeg = v),
+                1, 5, 40, "°"),
             Number("row.spaaRange", c => c.FriendlySpaaKm, (c, v) => c.FriendlySpaaKm = v, 5, 0, 200, "km"),
-            Number("row.aoaWarn", c => c.AoaWarnDeg, (c, v) => c.AoaWarnDeg = v, 1, 5, 45, "°"),
-            Number("row.overspeedMach", c => c.OverspeedMach, (c, v) => c.OverspeedMach = v, 0.05, 0.5, 5, "M"),
-            Number("row.overspeedIas", c => c.OverspeedKmh, (c, v) => c.OverspeedKmh = v, 50, 200, 3000, "km/h"),
+            Number("row.aoaWarn",
+                c => WtHud.Hud.Scoped.Get(c, "row.aoaWarn", c.AoaWarnDeg),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.aoaWarn", v, () => c.AoaWarnDeg = v),
+                1, 5, 45, "°"),
+            Number("row.overspeedMach",
+                c => WtHud.Hud.Scoped.Get(c, "row.overspeedMach", c.OverspeedMach),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.overspeedMach", v, () => c.OverspeedMach = v),
+                0.05, 0.5, 5, "M"),
+            Number("row.overspeedIas",
+                c => WtHud.Hud.Scoped.Get(c, "row.overspeedIas", c.OverspeedKmh),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.overspeedIas", v, () => c.OverspeedKmh = v),
+                50, 200, 3000, "km/h"),
             Number("row.bingo", c => c.BingoFuelSeconds, (c, v) => c.BingoFuelSeconds = v, 15, 0, 3600, "s"),
             Number("row.afAlert", c => c.EnemyAirfieldAlertKm, (c, v) => c.EnemyAirfieldAlertKm = v, 1, 0, 100, "km"),
             Number("row.edgeMargin", c => c.EdgeMarginFraction, (c, v) => c.EdgeMarginFraction = v, 0.01, 0.01, 0.4),
@@ -298,6 +330,15 @@ internal static class MfdPages
             .Select(Airframe).Cast<MfdItem>().ToList(),
     };
 
+    /// <summary>回归快照：没有固定行，列表由 <c>SnapshotsPage</c> 直接绘制，这里只占首页一个模块位。</summary>
+    private static MfdPage Snapshots() => new()
+    {
+        TitleKey = "page.snapshots",
+        MenuKey = "page.snapshots",
+        MenuHintKey = "menu.hint.snapshots",
+        LiveCount = () => WtHud.Hud.ConfigSnapshots.ListRestorable().Count,
+    };
+
     private static MfdPage Diag() => new()
     {
         TitleKey = "page.diag",
@@ -315,7 +356,7 @@ internal static class MfdPages
             Info("row.mapFlip", c => c.MapYFlip ? "Y" : "N"),
             Info("row.configDebug", c => c.ConfigDebug ? "ON" : "OFF"),
             Info("row.stallMem", c => c.StallAoaByVehicle.Count + " veh"),
-            Info("row.pitchMem", c => c.PitchSignByVehicle.Count + " veh"),
+            Info("row.pitchMem", c => c.PerVehicleOverrides.Count + " veh"),
             Info("row.dupKeys", c => DiagState.DuplicateKeyHint(c)),
             Action("row.copyDiag", _ => DiagState.RequestCopy()),
             Info("row.update", _ => UpdateState.Text),
@@ -347,11 +388,17 @@ internal static class UpdateState
     }
 }
 
-/// <summary>Small holder for DIAG page requests; wired by the host program.</summary>
+/// <summary>Small holder for DIAG page actions.</summary>
 internal static class DiagState
 {
-    public static Action? CopyRequested;
-    public static Action? CheckUpdateRequested;
+    /// <summary>把当前诊断信息复制到剪贴板（DIAG 页「复制诊断信息」行）；剪贴板被占用时静默忽略。</summary>
+    public static void RequestCopy()
+    {
+        var text = string.Join("\n\n",
+            DiagProbe.StateText, DiagProbe.IndicatorsText, DiagProbe.MapText, DiagProbe.MapInfoText);
+        try { System.Windows.Forms.Clipboard.SetText(text); }
+        catch { /* 剪贴板忙：忽略，不打断面板 */ }
+    }
 
     public static string DuplicateKeyHint(HudConfig c)
     {
@@ -363,9 +410,6 @@ internal static class DiagState
         var dup = keys.GroupBy(k => k).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
         return dup.Length == 0 ? "OK" : string.Join(",", dup);
     }
-
-    public static void RequestCopy() => CopyRequested?.Invoke();
-    public static void RequestCheckUpdate() => CheckUpdateRequested?.Invoke();
 }
 
 

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -32,9 +32,9 @@ public readonly struct AttitudeSolution
 /// Produces a usable attitude for both vehicle generations.
 ///
 /// NATIVE (props / early jets): /indicators exposes aviahorizon_pitch and bank.
-/// aviahorizon_pitch carries a per-vehicle constant bias (measured -4.3 deg while a
-/// parked MiG-19 reads level), so the bias is learned online by low-passing
-/// (native - synthetic) while airborne; the native reading then stays authoritative.
+/// The reading is used directly; what has to be decided per vehicle is only its sign
+/// (some aircraft report the horizon pitch inverted), voted online against the
+/// physical estimate and stored per airframe.
 ///
 /// SYNTHETIC (top-tier jets, no attitude in the API):
 ///   pitch = flight path angle + AoA            (both from /state)
@@ -56,18 +56,12 @@ public sealed class AttitudeFusion
     private readonly double _alpha;
     private readonly Queue<(double T, double Hdg)> _hdg = new();
 
-    private double _pitchBias;
-    private bool _biasInit;
     private double _pitchSmooth;
     private double _bankSmooth;
     private double _turnRateDegS;   // low-passed
     private double _confidence = 1;
     private double _bankIntegrated; // from Wx roll rate
-    private double _rollSmooth;     // low-passed roll rate used by the compass-less fallback
     private double _lastTime = double.NaN;
-    private double _nativeDot;       // correlation between native pitch and synthesis
-    private int _nativeSamples;
-    private int _nativeSign = 1;
 
     /// <summary>0 = auto-detect the native pitch sign, +1 / -1 = forced by the user.</summary>
     public int ForcedPitchSign { get; set; }
@@ -81,8 +75,6 @@ public sealed class AttitudeFusion
 
     /// <summary>True once the automatic sign vote produced a result for the current vehicle.</summary>
     public bool SignDecided { get; private set; }
-    private double _nativeTrust = 1.0;
-    private double _nativeDissentSec;
 
     public AttitudeFusion(double smoothing = 0.45)
     {

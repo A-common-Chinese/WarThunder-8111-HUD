@@ -27,7 +27,10 @@ public sealed class HudConfig
     [JsonPropertyName("pitchSign")] public int PitchSign { get; set; }
 
     /// <summary>Per-vehicle native pitch sign learned automatically (vehicle id -> +/-1).</summary>
-    [JsonPropertyName("pitchSignByVehicle")] public System.Collections.Generic.Dictionary<string, int> PitchSignByVehicle { get; set; } = new();
+    /// <summary>Per-airframe overrides: vehicle -> setting name -> value (survives restarts).</summary>
+    [JsonPropertyName("perVehicleOverrides")]
+    public Dictionary<string, Dictionary<string, double>> PerVehicleOverrides { get; set; } = new();
+
 
     /// <summary>+1 or -1; flips the bank direction if the ladder rotates the wrong way.</summary>
     [JsonPropertyName("bankSign")] public int BankSign { get; set; } = 1;

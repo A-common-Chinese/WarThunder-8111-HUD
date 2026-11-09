@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -54,11 +54,12 @@ public sealed class HudCanvas : IDisposable
         Target = Device.CreateTexture2D(desc);
         using var surface = Target.QueryInterface<IDXGISurface>();
 
-        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory d2dFactory).CheckError();
-        D2DFactory = d2dFactory.QueryInterface<ID2D1Factory1>();
+        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory? d2dFactory).CheckError();
+        D2DFactory = (d2dFactory ?? throw new InvalidOperationException("D2D1 factory unavailable"))
+            .QueryInterface<ID2D1Factory1>();
 
-        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory writeFactory).CheckError();
-        WriteFactory = writeFactory;
+        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory? writeFactory).CheckError();
+        WriteFactory = writeFactory ?? throw new InvalidOperationException("DWrite factory unavailable");
 
         var props = new RenderTargetProperties(
             RenderTargetType.Default,

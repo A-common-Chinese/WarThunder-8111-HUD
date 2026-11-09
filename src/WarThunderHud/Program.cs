@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 
 
@@ -32,7 +32,6 @@ public static class Program
                 return MfdInteractive();
             case "mfdpreview":
                 return MfdPreview(args.Length > 1 ? args[1] : "mfd-panel.png", args.Length > 2 ? args[2] : "", args.Length > 3 ? int.Parse(args[3]) : 0);
-                return 0;
             case "selftest":
                 return SelfTest();
             case "preview":
@@ -146,7 +145,6 @@ public static class Program
         FusionScenario("loop / high G  bank~0", bankExpected: 0, pitchExpected: 33.7,
             heading: _ => 90, tas: _ => 800, vy: t => 60, aoa: _ => 18.0, ny: _ => 7.0);
 
-        FusionNativeBias();
         return Environment.ExitCode;
     }
 
@@ -163,7 +161,8 @@ public static class Program
             var snap = new TelemetrySnapshot
             {
                 Valid = true, InFlight = true, ElapsedSeconds = t,
-                HeadingDeg = heading(t), TasKmh = tas(t), IasKmh = tas(t) * 0.9,
+                HeadingDeg = heading(t), HasHeading = true,
+                TasKmh = tas(t), IasKmh = tas(t) * 0.9,
                 VyMs = vy(t), AoaDeg = aoa(t), NyG = ny(t), AltM = 2000,
             };
             att = fusion.Update(snap);
@@ -225,6 +224,13 @@ public static class Program
                     cal.LayoutOffsetYDeg = cfg.LayoutOffsetYDeg;
 
                     // 面板保存后重新解析键位并刷新热键，否则自定义按键要重启才生效
+                    // 俯仰符号按机型记忆：F-4J 这类反向机设一次就永久生效
+                    if (cfg.PitchSign != 0 && !string.IsNullOrEmpty(AirframeDb.CurrentVehicle))
+                    {
+                        WtHud.Hud.SettingsRouter.SetFor(cfg, AirframeDb.CurrentVehicle, "row.pitchSign", cfg.PitchSign);
+                        Console.WriteLine($"pitch sign saved for {AirframeDb.CurrentVehicle}: {cfg.PitchSign}");
+                    }
+
                     RebindeKeys(cfg);
                     overlayRef?.ApplyHotkeys(cfg);
                     overlayRef?.SetCursorHole(cfg.CursorHoleHalfPx);
@@ -329,8 +335,9 @@ public static class Program
 
     private static int RunOverlay(string[] args)
     {
-        double seconds = args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 0;   // 0 = run until exit
+        double seconds = args.Length > 1 && double.TryParse(args[1], NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedSeconds) ? parsedSeconds : 0;   // 0 = run until exit
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
+        bool perf = args.Any(a => a.Equals("--perf", StringComparison.OrdinalIgnoreCase));
 
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -371,7 +378,7 @@ public static class Program
                 if (s.VehicleType.StartsWith("tankModels", StringComparison.OrdinalIgnoreCase)
                     || s.VehicleType.StartsWith("tank", StringComparison.OrdinalIgnoreCase))
                 {
-                    AirframeDb.CurrentVehicle = null;
+                    AirframeDb.CurrentVehicle = "";   // 空串 = 不是飞机，不参与飞行阈值
                 }
                 else
                 {
@@ -765,14 +772,14 @@ public static class Program
             // vehicle; whatever the detector decides is stored per vehicle so it never flips again.
             pendingPitchSign = cfg.PitchSign;
             if (pendingPitchSign == 0 && !string.IsNullOrEmpty(snap.VehicleType)
-                && cfg.PitchSignByVehicle.TryGetValue(snap.VehicleType, out int storedSign))
+                && WtHud.Hud.SettingsRouter.GetFor(cfg, snap.VehicleType, "row.pitchSign", out var storedSign))
             {
                 pendingPitchSign = storedSign;
             }
             if (cfg.PitchSign == 0 && pitchSignDecided && !string.IsNullOrEmpty(pitchSignVehicle)
-                && !cfg.PitchSignByVehicle.ContainsKey(pitchSignVehicle))
+                && !WtHud.Hud.SettingsRouter.HasFor(cfg, pitchSignVehicle, "row.pitchSign"))
             {
-                cfg.PitchSignByVehicle[pitchSignVehicle] = detectedPitchSign;
+                WtHud.Hud.SettingsRouter.SetFor(cfg, pitchSignVehicle, "row.pitchSign", detectedPitchSign);
                 cfg.Save();
                 Console.WriteLine($"pitch sign for {pitchSignVehicle} = {detectedPitchSign} (saved to config)");
             }
@@ -1159,16 +1166,56 @@ public static class Program
                                   $"hole=({cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0}) screen={scrW}x{scrH}");
             }
 
+            // 俯仰方向检测：用游戏姿态 vs 航迹角(gamma) 的相关系数判断符号
+            if (WtHud.Hud.PitchDetect.Active)
+                WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, att.PitchDeg);   // att = 实际画到 HUD 上的俯仰
+
+            if (WtHud.Hud.PitchDetect.Active && nowTicks - lastPitchProbeTicks > 2000)
+            {
+                lastPitchProbeTicks = nowTicks;
+                var dbgPitch = snap.PitchDeg;
+                Console.WriteLine("pitchdetect probe: pitch=" +
+                                  (dbgPitch.HasValue ? dbgPitch.Value.ToString("F1") : "null") +
+                                  " gamma=" + snap.FlightPathAngleDeg.ToString("F1") +
+                                  " samples=" + WtHud.Hud.PitchDetect.SampleCount +
+                                  " skip=" + WtHud.Hud.PitchDetect.Rejected);
+            }
+
             long key = FrameKey(snap, shown, opt, cal, draw, hiddenByView);
             if (key != lastFrameKey)
             {
                 // Build the symbology only for frames we actually submit.
+                long b0 = perf ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 var prims = draw ? geo.Build(snap, shown, w, h) : empty;
+                long b1 = perf ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                 overlay.Present(prims);
+                if (perf)
+                {
+                    var msTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    perfBuildMs += (b1 - b0) * msTick;
+                    perfDrawMs += overlay.LastDrawMs;
+                    perfPresentMs += overlay.LastPresentMs;
+                    perfPresents++;
+                }
                 lastFrameKey = key;
                 presents++;
             }
             frames++;
+
+            if (perf && nowTicks - perfLastPrintTicks > 2000)
+            {
+                var perfDt = (nowTicks - perfLastPrintTicks) / 1000.0;
+                perfLastPrintTicks = nowTicks;
+                var n = Math.Max(1, perfPresents);
+                var fps = perfPresents / Math.Max(0.001, perfDt);
+                Console.WriteLine($"perf: fps={fps:F1} presents={perfPresents} samples={n}  " +
+                                  $"build={perfBuildMs / n:F2}ms draw={perfDrawMs / n:F2}ms present={perfPresentMs / n:F2}ms  " +
+                                  $"loop={perfDt * 1000.0 / Math.Max(1, perfLoops):F2}ms");
+                perfBuildMs = perfDrawMs = perfPresentMs = 0;
+                perfPresents = 0;
+                perfLoops = 0;
+            }
+            perfLoops++;
 
             // Cursor visibility probe: the OS cursor is drawn either by our overlay (invisible
             // class cursor) or by the game window underneath. Log every transition so a stray
@@ -1287,9 +1334,9 @@ public static class Program
             && (DateTime.UtcNow - navDbgUtc).TotalSeconds >= 2)
         {
             navDbgUtc = DateTime.UtcNow;
-            Console.WriteLine($"[navdbg] enter map={(map == null ? "null" : "ok")} " +
-                              $"self={(map?.Self is null ? "null" : "ok")} units={map?.GroundUnits.Count ?? -1} " +
-                              $"fields={map?.Airfields.Count ?? -1}");
+            Console.WriteLine($"[navdbg] enter map=ok " +
+                              $"self={(map.Self is null ? "null" : "ok")} units={map.GroundUnits.Count} " +
+                              $"fields={map.Airfields.Count}");
         }
 
         lastAircraftMarkers = map.AircraftMarkers;
@@ -1577,16 +1624,17 @@ public static class Program
     private static double fuelLastSample = -1;
     private static double fuelFlowAt;
     private static OverlayWindow? overlayRef;
-    private static long groundStopSince;
     private static string vneLogged = "";
     private static long pullUpSince;
     private static long sinkRateSince;
     private static DateTime navDbgUtc = DateTime.MinValue;
     private static int lastAircraftMarkers = -1;
     private static long lastFramePollTicks;
+    private static long lastPitchProbeTicks;
+    private static long perfLastPrintTicks;
+    private static double perfBuildMs, perfDrawMs, perfPresentMs;
+    private static int perfPresents, perfLoops;
     private static long cursorProbeTicks;
-    private static (int X, int Y, int W, int H)? pendingRect;
-    private static int pendingHits;
 
     private static bool zoomLatched;          // Z key toggle state (RMB adds momentary aiming)
     private static long holdKeyStart;         // long-press hide timer
@@ -1807,7 +1855,7 @@ public static class Program
             }
             else if (view == "help") { form.PreviewHelp(0); }
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
-            else if (view == "edit") { form.PreviewEdit(0, 2); }
+            else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "capture") { form.PreviewCapture(3, 0); }
             else if (view == "discard")
             {
@@ -1817,6 +1865,32 @@ public static class Program
             {
                 form.PreviewConfirm(5, 9);   // DIAG 页的“检查更新”
             }
+            else if (view == "snapshots") { form.PreviewSnapshots(); }
+            else if (view == "snapconfirm") { form.PreviewSnapshotConfirm(); }
+            else if (view == "snaprestore") { form.PreviewRestoreNewest(); }
+            else if (view == "snapback")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewSideKey(3);          // 确认页上的「取消」侧键
+            }
+            else if (view == "snapclick")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewConfirmRowClick(1);  // 单击「取消」行：只选中，不执行
+            }
+            else if (view == "snapclickok")
+            {
+                form.PreviewSnapshotConfirm();
+                form.PreviewConfirmRowClick(0, 2);   // 双击「确认」行：执行恢复
+            }
+            else if (view == "detail") { form.PreviewDetail(); }
+            else if (view == "pickvehicle") { form.PreviewPickVehicle(); }
+            else if (view == "editcommit") { form.PreviewEditCommit(); }
+            else if (view == "pickpicked") { form.PreviewPickPicked(); }
+            else if (view == "pickback") { form.PreviewPickBack(); }
+            else if (view == "presetapply") { form.PreviewPresetApply(); }
+            else if (view == "pitch") { form.PreviewPitch(); }
+            else if (view == "detailreset") { form.PreviewDetailReset(); }
             using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
             {

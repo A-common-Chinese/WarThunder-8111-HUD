@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -178,6 +178,18 @@ public static class L10n
         ["row.rollCoupleMode"] = ("坡度耦合方式", "ROLL COUPLING MODE"),
         ["row.rollCouple"] = ("相机随滚转", "ROLL COUPLING"),
         ["row.bankSign"] = ("坡度方向", "BANK DIRECTION"),
+        ["scope.resetVehicle"] = ("已清除该机型覆盖，回落到全局", "AIRFRAME OVERRIDES CLEARED"),
+        ["edit.pick"] = ("手动选择机型", "PICK AIRFRAME"),
+        ["pick.title"] = ("选择机型", "SELECT AIRFRAME"),
+        ["scope.global"] = ("全局数据", "GLOBAL"),
+        ["scope.vehicle"] = ("机型数据：", "AIRFRAME: "),
+        ["row.pitchDetect"] = ("自动判断俯仰方向", "AUTO PITCH SIGN"),
+        ["pitchdetect.title"] = ("俯仰方向检测", "PITCH SIGN CHECK"),
+        ["pitchdetect.running"] = ("正在捕捉姿态，建议持续 5 秒", "Capturing attitude - keep flying for 5 s"),
+        ["pitchdetect.samples"] = ("样本", "samples"),
+        ["pitchdetect.hint"] = ("CONFIRM 完成 · CANCEL 返回", "CONFIRM finish - CANCEL back"),
+        ["pitchdetect.ok"] = ("已保存", "saved"),
+        ["pitchdetect.fail"] = ("信号不足，请爬升或俯冲后再试", "not enough signal - climb or dive and retry"),
         ["row.pitchSign"] = ("俯仰符号", "PITCH SIGN"),
         ["row.bankTrim"] = ("坡度修正", "BANK TRIM"),
         ["row.fpmTrim"] = ("矢量修正", "MARKER TRIM"),
@@ -239,6 +251,7 @@ public static class L10n
         ["airframe.ra"] = ("雷达高度", "RADAR ALT"),
         ["airframe.att"] = ("姿态来源", "ATTITUDE"),
         ["airframe.ab"] = ("减速板", "AIRBRAKE"),
+        ["airframe.pitchSign"] = ("俯仰符号", "PITCH SIGN"),
         ["airframe.stall"] = ("失速迎角", "STALL AOA"),
         ["airframe.aoa"] = ("迎角告警", "AOA WARN"),
         ["airframe.sink"] = ("下降率告警", "SINK RATE"),
@@ -271,6 +284,16 @@ public static class L10n
         ["hint.confirm"] = ("左移/右移 选择 · 确认 执行 · 返回 取消", "LEFT/RIGHT SELECT · CONFIRM RUN · BACK CANCEL"),        ["hint.root"] = ("已在主菜单 · 取消 关闭面板", "AT ROOT · CANCEL TO CLOSE"),
         ["help.lang"] = ("分别设置机框、屏幕、告警的语言；跟随系统开启后三项自动跟随系统语言。",
                          "Set the language of the bezel, the screen and the HUD alerts. FOLLOW SYSTEM mirrors the OS language."),
+        // 回归快照
+        ["page.snapshots"] = ("回归快照", "SNAPSHOTS"),
+        ["menu.hint.snapshots"] = ("恢复到历史保存点", "RESTORE SAVED STATES"),
+        ["snap.title"] = ("回归快照", "SNAPSHOTS"),
+        ["snap.hint"] = ("确认 恢复 · 返回 上一级", "CONFIRM RESTORE · BACK"),
+        ["snap.empty"] = ("暂无保存快照，先 SAVE 一次", "NO SAVED SNAPSHOTS YET - SAVE FIRST"),
+        ["snap.confirmAsk"] = ("恢复到 {0} 的 save 快照？", "RESTORE THE {0} SAVE SNAPSHOT?"),
+        ["snap.confirmSub"] = ("确认 恢复 · 取消 返回", "CONFIRM: RESTORE · CANCEL: BACK"),
+        ["snap.toast.restored"] = ("已恢复到 {0} 的快照", "RESTORED TO {0}"),
+        ["snap.toast.failed"] = ("恢复失败：快照不可读取", "RESTORE FAILED - SNAPSHOT UNREADABLE"),
     };
 
     private static readonly Dictionary<string, (string Zh, string En)> AlertStrings = new()

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle, PitchDetect, Snapshots }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -33,6 +33,13 @@ public sealed class MfdFrameForm : Form
     private readonly List<MfdPage> _pages;
 
     private Mode _mode = Mode.Menu;
+    private readonly Pages.MfdNavigator _nav = new();
+    private Pages.PitchDetectPage? _pitchPage;
+    private Pages.ConfirmPage? _confirmPage;
+    private Pages.NumberEditPage? _editPage;
+    private Pages.PresetPage? _presetPage;
+    private Pages.PickVehiclePage? _pickPageUI;
+    private Pages.SnapshotsPage? _snapPageUI;
     private int _page;
     private int _menuSel;
     private int _itemSel;
@@ -40,11 +47,9 @@ public sealed class MfdFrameForm : Form
     private bool _dirty;
     private bool _closeConfirm;
     private bool _forceClose;
-    private int _confirmSel;               // 0 = 确认, 1 = 取消
     private int _itemPage;                 // 当前模块内的页号（每页 10 格）
     private (ButtonKind Kind, int Index) _pressed = (ButtonKind.None, -1);
     private string? _toast;
-    private string _editBuffer = "";       // 数值手输缓冲
     private string _captureText = "";      // 键位捕获结果
     private readonly HashSet<Keys> _heldKeys = new();   // 捕获时当前按住的键
     private int _helpPage;
@@ -53,19 +58,11 @@ public sealed class MfdFrameForm : Form
     private Mode _helpPrevMode = Mode.Menu;
     private int _helpPrevPage;
     private int _helpPrevItemSel;
-    private bool _helpOpen;
     private MfdItem? _detailTarget;
     private bool _resetConfirm;
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
     private List<RealButton>? _realButtons;
-    private int _pickSel;
-    private int _pickPage;
-    private Mode _pickReturn = Mode.EditNumber;
-    private MfdItem? _presetTarget;
-    private int _presetSel;
-    private DateTime _lastClickUtc = DateTime.MinValue;
-    private int _lastClickCell = -1;
     private int _lastHitCell = -1;
     private DateTime _lastHitUtc = DateTime.MinValue;
 
@@ -80,6 +77,8 @@ public sealed class MfdFrameForm : Form
         _cfg = cfg;
         _baseline = cfg.Clone();
         _work = cfg.Clone();
+        WtHud.Hud.ConfigSnapshots.MarkCancelPoint(cfg);   // CANCEL 回退点（每次 F1 覆盖）
+        WtHud.Hud.ConfigSnapshots.BeginSession();          // 本次未保存操作的快照目录
         L10n.LoadFromConfig(_work.Language);
         MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
 
@@ -245,9 +244,23 @@ public sealed class MfdFrameForm : Form
             Mode.Confirm => "confirm.title",
             Mode.EditNumber => "edit.title",
             Mode.CaptureKey => "capture.title",
+            Mode.PitchDetect => "row.pitchDetect",
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
+        if (_mode is Mode.EditNumber)      // 只有编辑页需要说明正在改哪一层
+        {
+            var scopeText = WtHud.Hud.EditScope.HeaderText;
+            using var scopeFont = MfdTheme.CjkAt(15f * s);
+            using var scopeBrush = new SolidBrush(MfdTheme.Green);
+
+            // 左侧显示；机型名过长就截断，避免越过边框
+            var maxW = glass.Width * 0.45f;
+            while (scopeText.Length > 4 && g.MeasureString(scopeText, scopeFont).Width > maxW)
+                scopeText = scopeText[..^2] + "…";
+            g.DrawString(scopeText, scopeFont, scopeBrush, glass.Left + pad, glass.Top + 30 * s,
+                         StringFormat.GenericTypographic);
+        }
         g.DrawString(title, meta, muted, glass.Left + glass.Width / 2 - g.MeasureString(title, meta).Width / 2,
                      glass.Top + 8 * s);
         var pages = _mode == Mode.Items && CurrentPage != null ? (CurrentPage.Items.Count + 9) / 10 : 1;
@@ -257,13 +270,15 @@ public sealed class MfdFrameForm : Form
         switch (_mode)
         {
             case Mode.Menu: DrawMenu(g, s, glass, left, pad); break;
-            case Mode.Confirm: DrawConfirm(g, s, glass, left, pad); break;
-            case Mode.EditNumber: DrawEditPage(g, s, glass, pad); break;
+            case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
-            case Mode.Preset: DrawPresetPage(g, s, glass, pad); break;
+            case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Help: DrawHelpStructure(g, s, glass, pad); break;
             case Mode.Detail: DrawAirframePage(g, s, glass, pad); break;
-            case Mode.PickVehicle: DrawPickVehiclePage(g, s, glass, pad); break;
+            case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: DrawItems(g, s, glass, left, pad); break;
         }
 
@@ -275,6 +290,8 @@ public sealed class MfdFrameForm : Form
             Mode.Preset => "selectPreset",
             Mode.Help => "help.pagerHint",
             Mode.PickVehicle => "pick.hint",
+            Mode.PitchDetect => "pitchdetect.hint",
+            Mode.Snapshots => "snap.hint",
             Mode.EditNumber => "edit.prompt",
             Mode.CaptureKey => "capture.hint",
             _ => "hint.item",
@@ -314,7 +331,8 @@ public sealed class MfdFrameForm : Form
             var page = _pages[i];
             g.DrawString(L10n.Get(LangScope.Screen, page.MenuKey), name, fgBrush, x + 16 * s, y + 5 * s,
                          StringFormat.GenericTypographic);
-            var countText = page.Items.Count + (L10n.Screen == Lang.Zh ? " 项" : " ITEMS");
+            var countText = (page.LiveCount?.Invoke() ?? page.Items.Count)
+                            + (L10n.Screen == Lang.Zh ? " 项" : " ITEMS");
             var hw = g.MeasureString(countText, hintF).Width;
             g.DrawString(countText, hintF, fgBrush, x + colW - hw, y + 12 * s, StringFormat.GenericTypographic);
         }
@@ -368,123 +386,7 @@ public sealed class MfdFrameForm : Form
         }
     }
 
-    /// <summary>Second-level page: manual numeric entry.</summary>
-    private void DrawEditPage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var title = MfdTheme.CjkAt(26f * s);
-        using var mono = MfdTheme.MonoBoldAt(56f * s);
-        using var hint = MfdTheme.CjkAt(18f * s);
-        using var green = new SolidBrush(MfdTheme.Green);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
 
-        var name = L10n.Get(LangScope.Screen, SelectedItem?.LabelKey ?? "");
-        var cx = glass.Left + glass.Width / 2;
-
-        var zh2 = L10n.Screen == Lang.Zh;
-        var vehicle = WtHud.Hud.AirframeDb.EffectiveVehicle;
-        using var vFont = MfdTheme.CjkAt(17f * s);
-        var vText = string.IsNullOrWhiteSpace(vehicle)
-            ? (zh2 ? "当前机型：未读取到机型数据" : "AIRFRAME: NOT DETECTED")
-            : (zh2 ? "当前机型：" + vehicle : "AIRFRAME: " + vehicle);
-        g.DrawString(vText, vFont, string.IsNullOrWhiteSpace(vehicle) ? muted : text,
-                     cx - g.MeasureString(vText, vFont).Width / 2, glass.Top + 26 * s,
-                     StringFormat.GenericTypographic);
-
-        g.DrawString(name, title, muted, cx - g.MeasureString(name, title).Width / 2, glass.Top + 62 * s,
-                     StringFormat.GenericTypographic);
-
-        var shown = _editBuffer.Length == 0 ? "_" : _editBuffer + "_";
-        var w = g.MeasureString(shown, mono).Width;
-        var boxW = Math.Max(w + 80 * s, 320 * s);
-        var boxH = 90 * s;
-        var bx = cx - boxW / 2;
-        var by = glass.Top + glass.Height * 0.28f;
-
-        using (var boxBg = new SolidBrush(Color.FromArgb(210, 6, 16, 10)))
-            g.FillRectangle(boxBg, bx, by, boxW, boxH);
-        g.DrawRectangle(new Pen(MfdTheme.Green, 2.5f * s), bx, by, boxW, boxH);
-        g.DrawString(shown, mono, green, cx - w / 2, by + 12 * s, StringFormat.GenericTypographic);
-
-        var unit = SelectedItem?.Unit ?? "";
-        if (!string.IsNullOrEmpty(unit))
-            g.DrawString(unit, title, muted, bx + boxW + 10 * s, by + boxH / 2 - 14 * s, StringFormat.GenericTypographic);
-
-        DrawDecisionRows(g, s, glass, pad);
-        // 第三个选项（右侧第 3 键）：手动指定机型，常驻并可高亮
-        {
-            var rowH3 = 44 * s;
-            var colW3 = (glass.Width - pad * 2) / 2 - 34 * s;
-            var optX3 = glass.Left + glass.Width / 2 + pad * 0.4f;
-            var btn3 = _layout.SideButtons[7];
-            var by3 = btn3.Y + btn3.Height / 2 - rowH3 / 2;
-            var pickSelected = _confirmSel == 2;
-
-            if (pickSelected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, optX3 - 2 * s, by3, colW3 + 4 * s, rowH3);
-            }
-            else
-            {
-                using var frame = new Pen(MfdTheme.Green, 1.5f * s);
-                g.DrawRectangle(frame, optX3 - 2 * s, by3, colW3 + 4 * s, rowH3);
-            }
-
-            using var opt = MfdTheme.CjkAt(24f * s);
-            using var pickFg = new SolidBrush(pickSelected ? MfdTheme.Dark : MfdTheme.Text);
-            var pick = zh2 ? "手动指定机型" : "PICK AIRFRAME";
-            g.DrawString(pick, opt, pickFg, optX3 + 20 * s, by3 + 2 * s, StringFormat.GenericTypographic);
-        }
-
-    }
-
-    /// <summary>Second-level page: pick one of the color presets.</summary>
-    private void DrawPresetPage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var title = MfdTheme.CjkAt(24f * s);
-        using var label = MfdTheme.CjkAt(22f * s);
-        using var hintF = MfdTheme.CjkAt(17f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var cx = glass.Left + glass.Width / 2;
-
-        // 与模块页相同的 2 列 × 5 行网格：cell = (列 * 5) + 行
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
-
-        for (var i = 0; i < MfdTheme.Presets.Length; i++)
-        {
-            var col = i % 2;
-            var row = i / 2;
-            var btn = _layout.SideButtons[col * 5 + row];
-            var x = col == 0
-                ? glass.Left + pad
-                : glass.Left + glass.Width / 2 + pad * 0.4f;
-            var y = btn.Y + btn.Height / 2 - rowH / 2;
-
-            var selected = i == _presetSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
-            }
-
-            var (key, ink, accent) = MfdTheme.Presets[i];
-
-            // 两个小色块：左=高亮色，右=正文色
-            using (var sw = new SolidBrush(accent))
-                g.FillRectangle(sw, x + 8 * s, y + 9 * s, 20 * s, rowH - 18 * s);
-            using (var sw2 = new SolidBrush(ink))
-                g.FillRectangle(sw2, x + 32 * s, y + 9 * s, 20 * s, rowH - 18 * s);
-
-            using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
-            g.DrawString(L10n.Get(LangScope.Screen, "color." + key), label, fg,
-                         x + 62 * s, y + 4 * s, StringFormat.GenericTypographic);
-        }
-
-    }
 
     /// <summary>Second-level page: live key capture.</summary>
     private void DrawCapturePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
@@ -511,10 +413,6 @@ public sealed class MfdFrameForm : Form
         var by = glass.Top + glass.Height * 0.36f;
         g.DrawString(shown, mono, green, cx - w / 2, by, StringFormat.GenericTypographic);
 
-        var tip = L10n.Get(LangScope.Screen, "capture.hint");
-        g.DrawString(tip, hint, muted, cx - g.MeasureString(tip, hint).Width / 2, glass.Bottom - 54 * s,
-                     StringFormat.GenericTypographic);
-
         DrawDecisionRows(g, s, glass, pad);
     }
 
@@ -534,7 +432,7 @@ public sealed class MfdFrameForm : Form
 
     private void LeaveHelp()
     {
-        _mode = _helpPrevMode == Mode.Help ? Mode.Menu : _helpPrevMode;
+        _mode = _helpPrevMode;      // EnterHelp 在已是 Help 时提前返回，所以这里不会是 Help
         _page = _helpPrevPage;
         _itemSel = _helpPrevItemSel;
         _toast = null;
@@ -542,14 +440,6 @@ public sealed class MfdFrameForm : Form
     }
 
     private const float HelpLineHeight = 30f;
-
-    private string ModuleHint(MfdPage p)
-    {
-        var hint = L10n.Get(LangScope.Screen, p.MenuHintKey);
-        if (hint == p.MenuHintKey || string.IsNullOrWhiteSpace(hint))
-            hint = L10n.Screen == Lang.Zh ? $"{p.Items.Count} 项设置" : $"{p.Items.Count} settings";
-        return hint;
-    }
 
     private int HelpLinesPerPage(RectangleF glass, float s) =>
         Math.Max(8, (int)((glass.Height - 78 * s) / (HelpLineHeight * s)));
@@ -829,13 +719,20 @@ public sealed class MfdFrameForm : Form
 
         Row(L10n.Get(LangScope.Screen, "airframe.ra"), prof.RadarAltitude ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
         Row("PULL UP", prof.PullUp ? (zh ? "支持" : "YES") : (zh ? "不支持" : "NO"));
-        Row(L10n.Get(LangScope.Screen, "airframe.aoa"), prof.AoaWarn > 0 ? $"{prof.AoaWarn:F0}°" : (zh ? "默认" : "DEFAULT"));
-        Row("IAS 极速", prof.OverspeedIas > 0 ? $"{prof.OverspeedIas:F0} km/h" : (zh ? "默认" : "DEFAULT"));
-        Row("MACH", prof.OverspeedMach > 0 ? $"{prof.OverspeedMach:F2}" : (zh ? "默认" : "DEFAULT"));
+        var aoaWarn = WtHud.Hud.Scoped.Get(_work, "row.aoaWarn", prof.AoaWarn);
+        Row(L10n.Get(LangScope.Screen, "airframe.aoa"), aoaWarn > 0 ? $"{aoaWarn:F0}°" : (zh ? "默认" : "DEFAULT"));
+        var overIas = WtHud.Hud.Scoped.Get(_work, "row.overspeedIas", prof.OverspeedIas);
+        Row("IAS 极速", overIas > 0 ? $"{overIas:F0} km/h" : (zh ? "默认" : "DEFAULT"));
+        var overMach = WtHud.Hud.Scoped.Get(_work, "row.overspeedMach", prof.OverspeedMach);
+        Row("MACH", overMach > 0 ? $"{overMach:F2}" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
         Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
         Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
-        Row(L10n.Get(LangScope.Screen, "airframe.stall"), prof.StallAoa > 0 ? $"{prof.StallAoa:F1}°" : (zh ? "未校准" : "DEFAULT"));
+        var shownSign = WtHud.Hud.SettingsRouter.GetFor(_work, id, "row.pitchSign", out var storedSign) ? storedSign : _work.PitchSign;
+        Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
+            shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
+        var stall = WtHud.Hud.Scoped.Get(_work, "row.stallAoa", prof.StallAoa);
+        Row(L10n.Get(LangScope.Screen, "airframe.stall"), stall > 0 ? $"{stall:F1}°" : (zh ? "未校准" : "DEFAULT"));
 
         y += 8 * s;
         foreach (var line in WrapHelpText(g, cjk, L10n.Get(LangScope.Screen, "airframe.note") + ": " + prof.Note,
@@ -847,61 +744,12 @@ public sealed class MfdFrameForm : Form
     }
 
 
-    /// <summary>Applies the manually picked airframe and returns to the previous page.</summary>
-    private void ApplyPickedVehicle()
-    {
-        var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
-        if (_pickSel >= 0 && _pickSel < list.Count)
-        {
-            WtHud.Hud.AirframeDb.ManualVehicle = list[_pickSel];
-            _dirty = true;
-        }
-        _mode = _pickReturn;
-        _toast = null;
-    }
 
-    /// <summary>Second-level page: pick an airframe by hand when detection failed.</summary>
-    private void DrawPickVehiclePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var head = MfdTheme.CjkAt(20f * s);
-        using var body = MfdTheme.MonoAt(19f * s);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var accent = new SolidBrush(MfdTheme.Green);
 
-        var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
-        var pages = Math.Max(1, (list.Count + 9) / 10);
-        _pickPage = Math.Clamp(_pickPage, 0, pages - 1);
-
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
-
-        for (var i = 0; i < 10; i++)
-        {
-            var item = _pickPage * 10 + i;
-            if (item >= list.Count) break;
-
-            var col = i % 2;
-            var row = i / 2;
-            var btn = _layout.SideButtons[col * 5 + row];
-            var x = col == 0 ? glass.Left + pad : glass.Left + glass.Width / 2 + pad * 0.4f;
-            var y = btn.Y + btn.Height / 2 - rowH / 2;
-
-            var selected = item == _pickSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
-            }
-            using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
-            g.DrawString(list[item], body, fg, x + 8 * s, y + 8 * s, StringFormat.GenericTypographic);
-        }
-
-        var pager = $"{_pickPage + 1}/{pages}";
-        g.DrawString(pager, head, accent, glass.Right - pad - g.MeasureString(pager, head).Width,
-                     glass.Top + 38 * s, StringFormat.GenericTypographic);
-    }
-
-    /// <summary>确认 / 取消 两行，对应左侧第 3、4 个键。</summary>
+    /// <summary>
+    /// 键位捕获页底部的 确认 / 取消 两行（对应左侧第 3、4 个键）。捕获页没有「选中项」，
+    /// 第一行恒为主动作，所以这里不再依赖任何遗留选中字段。
+    /// </summary>
     private void DrawDecisionRows(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
     {
         var rowH = 44 * s;
@@ -913,58 +761,15 @@ public sealed class MfdFrameForm : Form
         {
             var btn = _layout.SideButtons[2 + i];
             var yy = btn.Y + btn.Height / 2 - rowH / 2;
-            var selected = i == _confirmSel;
-            if (selected)
+            var primary = i == 0;         // 第一行 = 主动作（确认），第二行只是取消键提示
+            if (primary)
             {
-                using var hi = new SolidBrush(i == 0 ? MfdTheme.Green : MfdTheme.GreenDim);
+                using var hi = new SolidBrush(MfdTheme.Green);
                 g.FillRectangle(hi, left - 6 * s, yy, colW + 12 * s, rowH);
             }
-            var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
-            using var fgBrush = new SolidBrush(fg);
-            var text = L10n.Get(LangScope.Screen, i == 0 ? "confirm.ok" : "confirm.cancel");
+            using var fgBrush = new SolidBrush(primary ? MfdTheme.Dark : MfdTheme.Text);
+            var text = L10n.Get(LangScope.Screen, primary ? "confirm.ok" : "confirm.cancel");
             g.DrawString(text, big, fgBrush, left + 20 * s, yy + 2 * s, StringFormat.GenericTypographic);
-        }
-    }
-    /// <summary>Confirmation sheet: only CONFIRM and CANCEL.</summary>
-
-    private void DrawConfirm(System.Drawing.Graphics g, float s, RectangleF glass, float left, float pad)
-    {
-        var label = _resetConfirm
-            ? L10n.Get(LangScope.Screen, "confirm.resetAirframe")
-            : _closeConfirm
-            ? L10n.Get(LangScope.Screen, "confirm.discard")
-            : _pendingAction == null ? "" : L10n.Get(LangScope.Screen, _pendingAction.LabelKey);
-
-        using var big = MfdTheme.CjkAt(28f * s);
-        using var small = MfdTheme.MonoAt(15f * s);
-        using var white = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var cy = glass.Top + glass.Height * 0.30f;
-        var w = g.MeasureString(label, big).Width;
-        g.DrawString(label, big, white, glass.Left + glass.Width / 2 - w / 2, cy - 40 * s, StringFormat.GenericTypographic);
-
-        var sub = L10n.Get(LangScope.Screen, _resetConfirm ? "confirm.askReset" : _closeConfirm ? "confirm.askDiscard" : "confirm.ask");
-        var sw = g.MeasureString(sub, small).Width;
-        g.DrawString(sub, small, muted, glass.Left + glass.Width / 2 - sw / 2, cy + 4 * s, StringFormat.GenericTypographic);
-
-        var rowH = 44 * s;
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        for (var i = 0; i < 2; i++)
-        {
-            var btn = _layout.SideButtons[2 + i];
-            var yy = btn.Y + btn.Height / 2 - rowH / 2;
-            var x = left;
-            var selected = i == _confirmSel;
-            if (selected)
-            {
-                using var hi = new SolidBrush(i == 0 ? MfdTheme.Green : MfdTheme.GreenDim);
-                g.FillRectangle(hi, x - 6 * s, yy, colW + 12 * s, rowH);
-            }
-            var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
-            using var fgBrush = new SolidBrush(fg);
-            var text = L10n.Get(LangScope.Screen, i == 0 ? "confirm.ok" : "confirm.cancel");
-            g.DrawString(text, big, fgBrush, x + 20 * s, yy + 2 * s, StringFormat.GenericTypographic);
         }
     }
 
@@ -993,10 +798,8 @@ public sealed class MfdFrameForm : Form
             var rowH = 44 * sScale;
             var colW = (_layout.Glass.Width - 18 * sScale * 2) / 2 - 34 * sScale;
             var rows = new (int Btn, int Choice)[] { (2, 0), (3, 1), (7, 2) };
-            var canPick = true;
             foreach (var (btnIdx, choice) in rows)
             {
-                if (choice == 2 && !canPick) continue;
                 var btn = _layout.SideButtons[btnIdx];
                 var x = btnIdx < 5
                     ? _layout.Glass.Left + 18 * sScale
@@ -1009,7 +812,7 @@ public sealed class MfdFrameForm : Form
                 var againC = choice == _lastHitCell && (nowC - _lastHitUtc).TotalMilliseconds < 500;
                 _lastHitCell = choice;
                 _lastHitUtc = nowC;
-                _confirmSel = choice;
+                _editPage?.Select(choice);
                 if (againC || e.Clicks >= 2) Confirm();
                 Invalidate();
                 return;
@@ -1019,14 +822,14 @@ public sealed class MfdFrameForm : Form
         // 选机型页：非拟真模式下点击行即选中（同一行 400ms 内再点一次 = 指定）
         if (!_work.Mfd.RealisticKeys && _mode == Mode.PickVehicle)
         {
-            var list = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList();
+            var count = WtHud.Hud.AirframeDb.All.Count + 1;   // +1 = 「全局」项
             var sScale = _layout.Width / 1330f;
             var colW = (_layout.Glass.Width - 18 * sScale * 2) / 2 - 34 * sScale;
             var rowH = 40 * sScale;
             for (var i = 0; i < 10; i++)
             {
-                var item = _pickPage * 10 + i;
-                if (item >= list.Count) break;
+                var item = (_pickPageUI?.PageIndex ?? 0) * 10 + i;
+                if (item >= count) break;
                 var col = i % 2;
                 var row = i / 2;
                 var btn = _layout.SideButtons[col * 5 + row];
@@ -1041,18 +844,39 @@ public sealed class MfdFrameForm : Form
                 var again = item == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
                 _lastHitCell = item;
                 _lastHitUtc = now;
-                _pickSel = item;
-                if (again || e.Clicks >= 2) ApplyPickedVehicle();
+                _pickPageUI?.SelectCell(i);
+                if (again || e.Clicks >= 2) _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 Invalidate();
                 return;
             }
+        }
+
+        // 快照列表：单击选中，同一行 400ms 内再点 = 进入恢复确认（与选机型页一致）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Snapshots &&
+            RowHitTest(new PointF(e.X, e.Y), out var snapCell))
+        {
+            var nowS = DateTime.UtcNow;
+            var againS = snapCell == _lastHitCell && (nowS - _lastHitUtc).TotalMilliseconds < 400;
+            _lastHitCell = snapCell;
+            _lastHitUtc = nowS;
+            _snapPageUI?.SelectCell(snapCell);
+            if (againS || e.Clicks >= 2) _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+            Invalidate();
+            return;
+        }
+
+        // 二级确认页：单击「确认/取消」行选中，双击（或同一行 400ms 内再点）执行该选项
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Confirm &&
+            TryClickConfirmRow(new PointF(e.X, e.Y), e.Clicks))
+        {
+            Invalidate();
+            return;
         }
 
         // 首页菜单：只有真正点在模块行上才交给 router，其它位置继续走按键逻辑
         if (!_work.Mfd.RealisticKeys && _mode == Mode.Menu)
         {
             EnsureMenuPage();
-            var sc = _layout.Width / 1330f;
             var pt = new PointF(e.X, e.Y);
 
             var hitIndex = -1;
@@ -1103,8 +927,8 @@ public sealed class MfdFrameForm : Form
                                  (nowP - _lastHitUtc).TotalMilliseconds < 400;
                     _lastHitCell = rowCell;
                     _lastHitUtc = nowP;
-                    _presetSel = rowCell;
-                    if (againP || e.Clicks >= 2) ApplyPreset();
+                    _presetPage?.Select(rowCell);
+                    if (againP || e.Clicks >= 2) _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
                     Invalidate();
                 }
                 return;
@@ -1182,6 +1006,41 @@ public sealed class MfdFrameForm : Form
         return false;
     }
 
+    /// <summary>
+    /// 二级确认页的两行（0 = 确认、1 = 取消）命中测试。矩形与 <c>ConfirmPage.Draw</c> 用的是同一个
+    /// <see cref="MfdPageLayout.ListRowRect(int,int)"/>，所以画在哪里就能点在哪里。
+    /// </summary>
+    private bool ConfirmRowHitTest(PointF p, out int option)
+    {
+        option = -1;
+        var s = _layout.Width / 1330f;
+        var pageLayout = new MfdPageLayout(_layout, s);
+        for (var i = 0; i < 2; i++)
+        {
+            var row = pageLayout.ListRowRect(0, 2 + i);
+            row.Inflate(6 * s, 0);          // 高亮条比行矩形左右各宽 6*s
+            if (row.Contains(p)) { option = i; return true; }
+        }
+        return false;
+    }
+
+    /// <summary>确认页行的点击处理（OnMouseDown 与预览钩子共用）：单击选中，双击执行。</summary>
+    private bool TryClickConfirmRow(PointF point, int clicks)
+    {
+        if (!ConfirmRowHitTest(point, out var option)) return false;
+
+        var now = DateTime.UtcNow;
+        var repeated = option == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
+        _lastHitCell = option;
+        _lastHitUtc = now;
+
+        _confirmPage?.Select(option);
+
+        if (repeated || clicks >= 2)
+            _confirmPage?.Handle(MfdCommand.Of(option == 0 ? "confirm.ok" : "confirm.cancel"));
+        return true;
+    }
+
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
@@ -1196,42 +1055,40 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.Preset)
         {
-            if (cell < MfdTheme.Presets.Length) _presetSel = cell;
+            if (cell < MfdTheme.Presets.Length) { _presetPage?.Select(cell); }
             return;
         }
 
         if (_mode == Mode.EditNumber)
         {
-            if (index == 2) _confirmSel = 0;          // 确认
-            else if (index == 3) _confirmSel = 1;     // 取消
-            else if (index == 7)
-                _confirmSel = 2;                      // 手动指定机型
+            _editPage?.Select(index == 2 ? 0 : index == 3 ? 1 : index == 7 ? 2 : -1);
             return;
         }
 
         if (_mode == Mode.PickVehicle)
         {
-            var total = WtHud.Hud.AirframeDb.All.Count;
-            var idx = _pickPage * 10 + cell;
-            if (idx < total) _pickSel = idx;
+            _pickPageUI?.SelectCell(cell);
+            return;
+        }
+
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.SelectCell(cell);
             return;
         }
 
         if (_mode == Mode.Confirm)
         {
-            if (index == 2) RunPending();
-            else if (index == 3) CancelPending();
+            // 必须走页面回调：快照确认的「取消」要回快照列表、「确认」要执行恢复。
+            // 直接调 RunPending/CancelPending 会落到快照模块那个 0 行的 Items 页（空白页）。
+            if (index == 2) _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
+            else if (index == 3) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
             return;
         }
 
-        if (_mode is Mode.EditNumber or Mode.CaptureKey)
+        if (_mode == Mode.CaptureKey)      // 数值编辑页在上面已经 return
         {
-            if (index == 2)
-            {
-                if (_mode == Mode.Confirm) RunPending();
-                else if (_mode == Mode.EditNumber) Confirm();
-                else Confirm();
-            }
+            if (index == 2) Confirm();
             else if (index == 3) CancelSecondLevel();
             return;
         }
@@ -1262,18 +1119,18 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.EditNumber)
         {
             e.Handled = true;
-            if (e.KeyCode == Keys.Escape) { _mode = Mode.Items; _editBuffer = ""; Invalidate(); return; }
+            if (e.KeyCode == Keys.Escape) { _editPage?.Handle(MfdCommand.Of("nav.back")); Invalidate(); return; }
             if (e.KeyCode == Keys.Enter) { Confirm(); Invalidate(); return; }
             if (e.KeyCode == Keys.Back)
             {
-                if (_editBuffer.Length > 0) _editBuffer = _editBuffer[..^1];
+                _editPage?.Backspace();
                 Invalidate();
                 return;
             }
             var ch = KeyToDigit(e.KeyCode);
-            if (ch != '\0' && _editBuffer.Length < 10)
+            if (ch != '\0' && (_editPage?.Buffer.Length ?? 0) < 10)
             {
-                _editBuffer += ch;
+                _editPage?.AppendChar(ch);
                 Invalidate();
             }
             return;
@@ -1294,8 +1151,8 @@ public sealed class MfdFrameForm : Form
 
         switch (e.KeyCode)
         {
-            case Keys.Up: Move(-1); break;
-            case Keys.Down: Move(1); break;
+            case Keys.Up: MoveSelection(-1); break;
+            case Keys.Down: MoveSelection(1); break;
             case Keys.Left: Step(-1); break;
             case Keys.Right: Step(1); break;
             case Keys.Enter: Confirm(); break;
@@ -1361,38 +1218,29 @@ public sealed class MfdFrameForm : Form
         _ => '\0',
     };
 
-    /// <summary>Applies the highlighted color preset and returns to the panel page.</summary>
-    private void ApplyPreset()
-    {
-        if (_presetTarget?.SetPreset is { } set)
-        {
-            set(_work, MfdTheme.Presets[_presetSel].Key);
-            MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
-            _dirty = true;
-        }
-        _presetTarget = null;
-        _mode = Mode.Items;
-        _toast = null;
-    }
-
-    /// <summary>Leaves a second-level page without applying.</summary>
+    /// <summary>Leaves a second-level page without applying (数值编辑 / 键位捕获 / 预置色板)。</summary>
     private void CancelSecondLevel()
     {
-        if (_mode == Mode.Confirm) { CancelPending(); return; }
-        if (_mode == Mode.Preset) { _mode = Mode.Items; _presetTarget = null; return; }
+        _nav.Clear();
         _mode = Mode.Items;
-        _editBuffer = "";
         _captureText = "";
         _heldKeys.Clear();
         _toast = null;
     }
 
-    private void Move(int delta)
+    /// <summary>Moves the selection inside the current page (UP/DOWN).</summary>
+    private void MoveSelection(int delta)
     {
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.Move(delta);
+            _toast = null;
+            return;
+        }
+
         if (_mode == Mode.PickVehicle)
         {
-            var n = WtHud.Hud.AirframeDb.All.Count;
-            if (n > 0) _pickSel = Math.Clamp(_pickSel + delta, 0, n - 1);
+            _pickPageUI?.Move(delta);       // 由页面维护选中项
             return;
         }
 
@@ -1407,14 +1255,27 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        if (_mode == Mode.PickVehicle)
+        {
+            _pickPageUI?.Move(delta);
+            return;
+        }
+        if (_mode == Mode.Preset)
+        {
+            _presetPage?.Move(delta);
+            _toast = null;
+            return;
+        }
         if (_mode == Mode.Confirm)
         {
-            _confirmSel = (_confirmSel + delta + 2) % 2;
+            _confirmPage?.Move(delta);
             return;
         }
         if (_mode == Mode.Menu)
         {
             _menuSel = (_menuSel + delta + _pages.Count) % _pages.Count;
+            EnsureMenuPage();               // 路由器和菜单页是懒建的，必须先建好再同步
+            _menuRouter?.Move(delta);       // 否则 CONFIRM 时索引还是 0（永远打开第一项）
         }
         else
         {
@@ -1443,34 +1304,31 @@ public sealed class MfdFrameForm : Form
                 }
                 break;
             case Mode.Confirm:
-                if (_confirmSel == 0) RunPending();
-                else CancelPending();
+                // 跟随页面上高亮的选项：UP/DOWN 移到「取消」后按 CONFIRM 应是取消
+                _confirmPage?.Handle(MfdCommand.Of(
+                    _confirmPage?.Selected == 1 ? "confirm.cancel" : "confirm.ok"));
                 break;
             case Mode.EditNumber:
-                switch (_confirmSel)
-                {
-                    case 1:
-                        CancelSecondLevel();
-                        break;
-                    case 2:
-                        _pickReturn = Mode.EditNumber;
-                        _pickSel = 0;
-                        _pickPage = 0;
-                        _mode = Mode.PickVehicle;
-                        break;
-                    default:
-                        CommitNumber();
-                        break;
-                }
+                _editPage?.Handle(MfdCommand.Of(
+                    _editPage.Choice == 1 ? "edit.cancel" :
+                    _editPage.Choice == 2 ? "edit.pick" : "edit.commit"));
                 break;
             case Mode.CaptureKey:
                 CommitCapture();
                 break;
             case Mode.Preset:
-                ApplyPreset();
+                _presetPage?.Handle(MfdCommand.Of("confirm.ok"));   // 页面回调里已返回模块页
                 break;
             case Mode.PickVehicle:
-                ApplyPickedVehicle();
+                _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+                break;
+            case Mode.Snapshots:
+                _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+                break;
+            case Mode.PitchDetect:
+                _nav.Current?.Handle(MfdCommand.Of("confirm.ok"));
+                _toast = _pitchPage?.ResultToast;
+                _mode = Mode.Items;
                 break;
             default:
                 if (SelectedItem is { } item) Activate(item);
@@ -1478,8 +1336,8 @@ public sealed class MfdFrameForm : Form
         }
     }
 
-    /// <summary>Parses the manual input and writes it into the selected numeric row.</summary>
-    private void CommitNumber()
+    /// <summary>解析手输文本并写入当前数值行（NumberEditPage 的 onCommit 回调）。</summary>
+    private void CommitNumber(string buffer)
     {
         if (SelectedItem is not { } item || item.Kind != ItemKind.Number)
         {
@@ -1487,13 +1345,14 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        var text = _editBuffer.Replace(",", ".").Trim();
+        var text = (buffer ?? "").Replace(",", ".").Trim();
         if (double.TryParse(text, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var v))
         {
             v = Math.Clamp(v, item.Min, item.Max);
             item.SetNumber?.Invoke(_work, v);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
         _toast = null;
@@ -1506,6 +1365,7 @@ public sealed class MfdFrameForm : Form
         {
             item.SetText2?.Invoke(_work, _captureText);
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
         _captureText = "";
@@ -1518,27 +1378,19 @@ public sealed class MfdFrameForm : Form
         {
             case ItemKind.Action:
                 _pendingAction = item;
-                _confirmSel = 0;
-                _mode = Mode.Confirm;
+                EnterConfirm();
                 return;
             case ItemKind.Number:
-                // 数值：进入手输编辑，CONFIRM 提交
-                _editBuffer = item.ValueText(_work).TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
-                _mode = Mode.EditNumber;
+                EnterEditNumber(item);
                 return;
             case ItemKind.KeyBinding:
-                _captureText = "";
-                _mode = Mode.CaptureKey;
+                EnterCaptureKey();
                 return;
             case ItemKind.Detail:
-                _detailTarget = item;
-                _mode = Mode.Detail;
+                EnterDetail(item);
                 return;
             case ItemKind.Preset:
-                _presetTarget = item;
-                var cur = item.GetPreset?.Invoke(_work) ?? "green";
-                _presetSel = Math.Max(0, Array.FindIndex(MfdTheme.Presets, p => p.Key == cur));
-                _mode = Mode.Preset;
+                EnterPreset(item);
                 return;
             case ItemKind.ReadOnly:
                 _toast = L10n.Get(LangScope.Screen, "hint.readonly");
@@ -1546,6 +1398,122 @@ public sealed class MfdFrameForm : Form
         }
         item.Activate(_work);
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+    }
+
+    // ---------------------------------------------------------------- page constructors
+    // 每个二级页都从 Enter* 进入：直接 `_mode = Mode.X` 会绕过页面初始化（空白页陷阱）。
+
+    /// <summary>数值行 → 手输编辑页。</summary>
+    private void EnterEditNumber(MfdItem target)
+    {
+        var initial = target.ValueText(_work)
+            .TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
+        _editPage = new Pages.NumberEditPage(
+            texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.Unit),
+            initial: initial,
+            onCommit: CommitNumber,
+            onCancel: () => { _nav.Clear(); _mode = Mode.Items; },
+            onPick: () => EnterPickVehicle(target),
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_editPage);
+        _mode = Mode.EditNumber;
+    }
+
+    /// <summary>数值编辑页 → 选机型页（空名字 = 全局）。</summary>
+    private void EnterPickVehicle(MfdItem target)
+    {
+        _pickPageUI = new Pages.PickVehiclePage(
+            onPicked: name =>
+            {
+                if (string.IsNullOrEmpty(name)) WtHud.Hud.EditScope.UseGlobal();
+                else { WtHud.Hud.AirframeDb.ManualVehicle = name; WtHud.Hud.EditScope.UseVehicle(name); }
+                _dirty = true;
+                WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+                _nav.Clear();
+
+                // 重建编辑页：缓冲必须按新作用域重新取值，否则仍显示旧层的数据
+                EnterEditNumber(target);
+                Invalidate();
+            },
+            onCancel: () => { _nav.Clear(); _mode = Mode.EditNumber; },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_pickPageUI);
+        _mode = Mode.PickVehicle;
+    }
+
+    /// <summary>颜色预设行 → 色板页。</summary>
+    private void EnterPreset(MfdItem target)
+    {
+        _presetPage = new Pages.PresetPage(
+            currentKey: () => target.GetPreset?.Invoke(_work) ?? "green",
+            onApply: key => { _nav.Clear(); CommitPreset(target, key); },
+            onCancel: () => { _nav.Clear(); _mode = Mode.Items; },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_presetPage);
+        _mode = Mode.Preset;
+    }
+
+    /// <summary>应用色板选择：同步主题与草稿，然后回到模块页。</summary>
+    private void CommitPreset(MfdItem target, string key)
+    {
+        if (target.SetPreset is { } set)
+        {
+            set(_work, key);
+            MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
+            _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+        }
+        _mode = Mode.Items;
+        _toast = null;
+    }
+
+    /// <summary>键位行 → 实时按键捕获页。</summary>
+    private void EnterCaptureKey()
+    {
+        _captureText = "";
+        _heldKeys.Clear();
+        _mode = Mode.CaptureKey;
+    }
+
+    /// <summary>机型行 → 机型详情页。</summary>
+    private void EnterDetail(MfdItem item)
+    {
+        _detailTarget = item;
+        _mode = Mode.Detail;
+    }
+
+    /// <summary>俯仰方向检测：需要现场采样，确认后进入采样页。</summary>
+    private void EnterPitchDetect()
+    {
+        _pitchPage = new Pages.PitchDetectPage(
+            onFinished: () => { _nav.Clear(); _mode = Mode.Items; _dirty = true; },
+            onCancelled: () => { _nav.Clear(); _mode = Mode.Items; });
+        _nav.Push(_pitchPage);
+        _pitchPage.StartRepaint(Invalidate);
+        _mode = Mode.PitchDetect;
+    }
+
+    /// <summary>Builds the confirm sheet as a page instead of a mode-specific switch branch.</summary>
+    private void EnterConfirm()
+    {
+        _confirmPage = new Pages.ConfirmPage(
+            texts: () =>
+            {
+                var label = _resetConfirm
+                    ? L10n.Get(LangScope.Screen, "confirm.resetAirframe")
+                    : _closeConfirm
+                        ? L10n.Get(LangScope.Screen, "confirm.discard")
+                        : _pendingAction == null ? "" : L10n.Get(LangScope.Screen, _pendingAction.LabelKey);
+                var sub = L10n.Get(LangScope.Screen,
+                    _resetConfirm ? "confirm.askReset" : _closeConfirm ? "confirm.askDiscard" : "confirm.ask");
+                return (label, sub);
+            },
+            onOk: RunPending,
+            onCancel: CancelPending,
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_confirmPage);
+        _mode = Mode.Confirm;
     }
 
     private void RunPending()
@@ -1554,8 +1522,16 @@ public sealed class MfdFrameForm : Form
         {
             var id = _detailTarget?.LabelKey ?? "";
             WtHud.Hud.AirframeDb.ResetOverrides(id);
+
+            // 同时清掉该机型在统一覆盖表里的数据，否则详情页仍显示旧的覆盖值
+            if (!string.IsNullOrEmpty(id))
+            {
+                _work.PerVehicleOverrides.Remove(id);
+                _cfg.PerVehicleOverrides.Remove(id);
+            }
             _resetConfirm = false;
             _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
             _mode = Mode.Detail;
             _toast = L10n.Get(LangScope.Screen, "toast.resetAirframe");
             return;
@@ -1571,9 +1547,17 @@ public sealed class MfdFrameForm : Form
         }
         _pendingAction?.Run?.Invoke(_work);
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         _pendingAction = null;
-        _mode = Mode.Items;
         _toast = null;
+
+        // 需要现场采样的动作（俯仰方向检测）确认后进入采样页
+        if (WtHud.Hud.PitchDetect.Active)
+        {
+            EnterPitchDetect();
+            return;
+        }
+        _mode = Mode.Items;
     }
 
     private void CancelPending()
@@ -1586,10 +1570,10 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        var wasClose = _closeConfirm;
+        // 放弃修改的确认被取消：回到当前模块页（_page 始终有效，CurrentPage 不会为 null）
         _closeConfirm = false;
         _pendingAction = null;
-        _mode = wasClose ? (CurrentPage != null ? Mode.Items : Mode.Menu) : Mode.Items;
+        _mode = Mode.Items;
         _toast = null;
     }
 
@@ -1607,7 +1591,7 @@ public sealed class MfdFrameForm : Form
 
         _realButtons ??= MfdControlFactory.CreateBezelButtons();
         _menuRouter = new MfdInputRouter(new MfdPageLayout(_layout, _layout.Width / 1330f), _realButtons);
-        _menuPage = new MfdScreenPage("menu", "menu.title");
+        _menuPage = new MfdScreenPage();
 
         for (var i = 0; i < _pages.Count; i++)
         {
@@ -1622,24 +1606,96 @@ public sealed class MfdFrameForm : Form
                 PageIndex = cell / 10,
                 Target = MfdCommand.Of("menu.open", index.ToString(),
                                        InputSource.Keyboard),
-                ActivateBy = new[] { $"SIDE{SideSlotOfCell(cell)}" },
+                ActivateBy = new[] { $"SIDE{cell}" },
             });
         }
         _menuRouter.SetButtons(_menuPage.Buttons);
     }
 
-    /// <summary>Menu cells are filled row-major: cell -> physical side slot (0-9).</summary>
-    private static int SideSlotOfCell(int cell) => cell;
-
     private void EnterPage()
     {
         if (_menuSel < 0 || _menuSel >= _pages.Count) return;
         _page = _menuSel;
-        _mode = Mode.Items;
         _itemPage = 0;
         _itemSel = 0;
         _toast = null;
+
+        // 快照模块没有行列表：直接进入快照页（页面自己负责列表与选中）
+        if (_pages[_page].TitleKey == "page.snapshots")
+        {
+            EnterSnapshots();
+            return;
+        }
+
+        _mode = Mode.Items;
         SyncDiagProbe();
+    }
+
+    /// <summary>
+    /// 首页「回归快照」模块：进入可恢复快照列表。所有 `_mode = Mode.Snapshots` 都在 Enter* 方法里，
+    /// 保证页面一定经过构造（直接赋 mode 会得到空白页）。
+    /// </summary>
+    private void EnterSnapshots()
+    {
+        _snapPageUI = new Pages.SnapshotsPage(
+            entries: WtHud.Hud.ConfigSnapshots.ListRestorable,
+            onPicked: EnterSnapshotConfirm,
+            onCancel: () =>
+            {
+                _nav.Clear();
+                _menuSel = _page;
+                _mode = Mode.Menu;
+                _toast = null;
+                SyncDiagProbe();
+            },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_snapPageUI);
+        _mode = Mode.Snapshots;
+    }
+
+    /// <summary>选中最新的快照后的二次确认；确认前不碰运行配置。</summary>
+    private void EnterSnapshotConfirm(WtHud.Hud.ConfigSnapshots.SnapshotEntry entry)
+    {
+        _confirmPage = new Pages.ConfirmPage(
+            texts: () => (
+                string.Format(L10n.Get(LangScope.Screen, "snap.confirmAsk"), entry.TimeText),
+                L10n.Get(LangScope.Screen, "snap.confirmSub")),
+            onOk: () => RestoreSnapshot(entry),
+            onCancel: () =>
+            {
+                _nav.Clear();
+                _toast = null;
+                _mode = Mode.Snapshots;
+            },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_confirmPage);
+        _mode = Mode.Confirm;
+    }
+
+    /// <summary>
+    /// 恢复动作（规格 docs/snapshot-restore-spec.md）：反射回填 _cfg + 同步 _work + 清 session 快照
+    /// + 写审计文件；不自动 SAVE，返回首页让用户先核对数值。
+    /// </summary>
+    private void RestoreSnapshot(WtHud.Hud.ConfigSnapshots.SnapshotEntry entry)
+    {
+        if (!WtHud.Hud.ConfigSnapshots.RestoreFrom(entry.Path, _cfg))
+        {
+            _toast = L10n.Get(LangScope.Screen, "snap.toast.failed");
+            _nav.Clear();
+            EnterSnapshots();
+            return;
+        }
+
+        // 快照是“全局整体替换”：perVehicleOverrides 也一起回退，草稿必须同步到同一份数据
+        _work.CopyFrom(_cfg);
+        L10n.LoadFromConfig(_cfg.Language);
+        MfdTheme.ApplyColors(_work.Mfd.InkColor, _work.Mfd.AccentColor);
+        _dirty = true;
+        _nav.Clear();
+        _menuSel = _page;
+        _mode = Mode.Menu;
+        EnsureMenuPage();
+        _toast = string.Format(L10n.Get(LangScope.Screen, "snap.toast.restored"), entry.TimeText);
     }
 
     private void Back()
@@ -1647,7 +1703,7 @@ public sealed class MfdFrameForm : Form
         switch (_mode)
         {
             case Mode.Confirm:
-                CancelPending();
+                _confirmPage?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Items:
                 _menuSel = _page;
@@ -1656,9 +1712,10 @@ public sealed class MfdFrameForm : Form
                 _toast = null;
                 break;
             case Mode.Preset:
-                _mode = Mode.Items;
-                _presetTarget = null;
-                _toast = null;
+                _presetPage?.Handle(MfdCommand.Of("nav.back"));
+                break;
+            case Mode.PitchDetect:
+                _nav.Current?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Help:
                 LeaveHelp();
@@ -1669,7 +1726,11 @@ public sealed class MfdFrameForm : Form
                 _toast = null;
                 break;
             case Mode.PickVehicle:
-                _mode = _pickReturn;
+                _pickPageUI?.Handle(MfdCommand.Of("nav.back"));
+                _toast = null;
+                break;
+            case Mode.Snapshots:
+                _snapPageUI?.Handle(MfdCommand.Of("nav.back"));
                 _toast = null;
                 break;
             case Mode.EditNumber:
@@ -1699,8 +1760,14 @@ public sealed class MfdFrameForm : Form
 
         if (_mode == Mode.PickVehicle)
         {
-            var pickPages = Math.Max(1, (WtHud.Hud.AirframeDb.All.Count + 9) / 10);
-            _pickPage = Math.Clamp(_pickPage + delta, 0, pickPages - 1);
+            _pickPageUI?.CyclePage(delta);
+            return;
+        }
+
+        if (_mode == Mode.Snapshots)
+        {
+            _snapPageUI?.CyclePage(delta);
+            _toast = null;
             return;
         }
 
@@ -1731,8 +1798,8 @@ public sealed class MfdFrameForm : Form
         {
             case 0: Confirm(); break;
             case 1: Back(); break;
-            case 2: Move(-1); break;
-            case 3: Move(1); break;
+            case 2: MoveSelection(-1); break;
+            case 3: MoveSelection(1); break;
             case 4:
                 EnterHelp();
                 break;
@@ -1750,8 +1817,7 @@ public sealed class MfdFrameForm : Form
                     _resetConfirm = true;
                     _closeConfirm = false;
                     _pendingAction = null;
-                    _confirmSel = 0;
-                    _mode = Mode.Confirm;
+                    EnterConfirm();
                 }
                 else ResetPage();
                 break;
@@ -1765,8 +1831,26 @@ public sealed class MfdFrameForm : Form
 
     private void ResetPage()
     {
-        if (_mode == Mode.Confirm) { CancelPending(); return; }
+        if (_mode == Mode.Confirm) { _confirmPage?.Handle(MfdCommand.Of("confirm.cancel")); return; }
         if (_mode == Mode.Menu) return;
+        if (_mode == Mode.Snapshots)                 // 快照列表是只读的，RESET 不碰配置
+        {
+            _toast = L10n.Get(LangScope.Screen, "hint.readonly");
+            return;
+        }
+
+        // 机型作用域：RESET 只清空该机型的覆盖，作用域保持不动（编辑页继续停在该机型）
+        if (!WtHud.Hud.EditScope.IsGlobal)
+        {
+            WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_work);
+            WtHud.Hud.SettingsRouter.ClearVehicleOverrides(_cfg);
+            _dirty = true;
+            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+            _toast = L10n.Get(LangScope.Screen, "scope.resetVehicle");
+            _mode = Mode.Items;
+            SyncDiagProbe();
+            return;
+        }
 
         if (CurrentPage?.TitleKey == "page.language")
         {
@@ -1843,6 +1927,7 @@ public sealed class MfdFrameForm : Form
     public void PreviewDiscard()
     {
         _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         CancelAndClose();
     }
 
@@ -1853,8 +1938,121 @@ public sealed class MfdFrameForm : Form
         if (SelectedItem is { } item) Activate(item);
     }
 
+    /// <summary>Preview helper: opens the snapshot list page (regression-restore entry).</summary>
+    public void PreviewSnapshots()
+    {
+        var idx = _pages.FindIndex(p => p.TitleKey == "page.snapshots");
+        if (idx < 0) return;
+        _page = idx;
+        _menuSel = idx;
+        EnterSnapshots();
+    }
+
+    /// <summary>Preview helper: opens the restore confirmation for the newest snapshot.</summary>
+    public void PreviewSnapshotConfirm()
+    {
+        PreviewSnapshots();
+        _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>Preview helper: runs the real restore path on the newest snapshot (writes audit, clears session).</summary>
+    public void PreviewRestoreNewest()
+    {
+        PreviewSnapshotConfirm();
+        _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>Preview helper: opens an airframe detail page (first row of the 机型 module).</summary>
+    public void PreviewDetail()
+    {
+        var idx = _pages.FindIndex(p => p.TitleKey == "page.airframe");
+        if (idx < 0) return;
+        _page = idx;
+        _menuSel = idx;
+        _itemSel = 0;
+        _mode = Mode.Items;
+        if (SelectedItem is { } item) Activate(item);
+    }
+
+    /// <summary>Preview helper: opens the airframe picker through 数值编辑页 → 手动选择机型.</summary>
+    public void PreviewPickVehicle(int pageIndex = 0, int itemIndex = 7)
+    {
+        PreviewEdit(pageIndex, itemIndex);
+        _editPage?.Handle(MfdCommand.Of("edit.pick"));
+    }
+
+    /// <summary>Preview helper: 输入 50 后提交 FOV 行（验证 onCommit → CommitNumber 链路）。</summary>
+    public void PreviewEditCommit()
+    {
+        PreviewEdit(0, 7);
+        _editPage?.Backspace();
+        _editPage?.Backspace();
+        _editPage?.AppendChar('5');
+        _editPage?.AppendChar('0');
+        _editPage?.Handle(MfdCommand.Of("edit.commit"));
+    }
+
+    /// <summary>Preview helper: 在选机型页选中第一架飞机并确认（验证 onPicked → 重建编辑页）。</summary>
+    public void PreviewPickPicked()
+    {
+        PreviewPickVehicle();
+        _pickPageUI?.SelectCell(1);
+        _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>Preview helper: 选机型页按返回（验证 onCancel → 回编辑页）。</summary>
+    public void PreviewPickBack()
+    {
+        PreviewPickVehicle();
+        _pickPageUI?.Handle(MfdCommand.Of("nav.back"));
+    }
+
+    /// <summary>Preview helper: 在色板页选中「红色」并应用（验证 onApply → CommitPreset）。</summary>
+    public void PreviewPresetApply()
+    {
+        PreviewOpen(4, 0);            // 面板页第 0 行 = 文本颜色（预设）
+        PreviewPreset();
+        _presetPage?.Select(MfdTheme.Presets.Length - 1);
+        _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>Preview helper: 直接进入俯仰方向采样页（验证 EnterPitchDetect 构造）。</summary>
+    public void PreviewPitch()
+    {
+        EnterPitchDetect();
+    }
+
+    /// <summary>Preview helper: 机型详情页按 RESET（验证 _resetConfirm → ConfirmPage 文案）。</summary>
+    public void PreviewDetailReset()
+    {
+        PreviewDetail();
+        PressBottom(0);
+    }
+
+    /// <summary>Preview helper: presses a physical side key by index (0-9), exactly like clicking it.</summary>
+    public void PreviewSideKey(int index) => SidePressed(Math.Clamp(index, 0, 9));
+
+    /// <summary>Preview helper: clicks a row of the current confirm sheet (0 = 确认, 1 = 取消).</summary>
+    public void PreviewConfirmRowClick(int option, int clicks = 1)
+    {
+        if (_mode != Mode.Confirm) return;
+        var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
+        var row = pageLayout.ListRowRect(0, 2 + Math.Clamp(option, 0, 1));
+        TryClickConfirmRow(new PointF(row.X + row.Width / 2, row.Y + row.Height / 2), clicks);
+    }
+
     private void CancelAndClose()
     {
+        // 丢弃本次会话的全部修改：回到打开 F1 时的快照
+        WtHud.Hud.ConfigSnapshots.EndSession();   // 取消后丢弃本次会话快照
+
+        if (WtHud.Hud.ConfigSnapshots.RestoreCancelPoint(_cfg))
+        {
+            var fresh = _cfg.Clone();
+            foreach (var prop in typeof(HudConfig).GetProperties().Where(pr => pr.CanRead && pr.CanWrite))
+                prop.SetValue(_work, prop.GetValue(fresh));
+        }
+
         if (!_dirty || _forceClose)
         {
             L10n.LoadFromConfig(_cfg.Language);
@@ -1863,8 +2061,7 @@ public sealed class MfdFrameForm : Form
         }
         _pendingAction = null;
         _closeConfirm = true;
-        _confirmSel = 0;                 // 默认停在“取消”，避免误按
-        _mode = Mode.Confirm;
+        EnterConfirm();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1874,8 +2071,7 @@ public sealed class MfdFrameForm : Form
             e.Cancel = true;
             _pendingAction = null;
             _closeConfirm = true;
-            _confirmSel = 0;
-            _mode = Mode.Confirm;
+            EnterConfirm();          // 必须走构造入口，直接赋 mode 会画到未创建的确认页
             Invalidate();
             return;
         }
@@ -1884,7 +2080,7 @@ public sealed class MfdFrameForm : Form
 
     private void SaveAndClose()
     {
-        if (_mode == Mode.Confirm) CancelPending();
+        if (_mode == Mode.Confirm) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
         L10n.StoreToConfig(_work.Language);
         _cfg.CopyFrom(_work);
         if (_savePath != null) _cfg.SaveTo(_savePath); else _cfg.Save();
@@ -1898,27 +2094,19 @@ public sealed class MfdFrameForm : Form
                 _cfg.AoaWarnDeg, _cfg.OverspeedKmh, _cfg.OverspeedMach);
         }
 
+        if (WtHud.Hud.PitchDetect.PendingSave is var (veh, sign))
+        {
+            WtHud.Hud.SettingsRouter.SetFor(_cfg, veh, "row.pitchSign", sign);
+            WtHud.Hud.PitchDetect.ClearPendingSave();
+        }
+
+        WtHud.Hud.ConfigSnapshots.SaveHistory(_work, "save");
+        WtHud.Hud.ConfigSnapshots.EndSession();   // SAVE 成功后清掉本次会话快照
         Saved = true;
         _dirty = false;
         _forceClose = true;   // 已保存：关闭时不要再弹放弃确认
         Close();
     }
-
-    /// <summary>Rounds the window region so the texture's black corners never show.</summary>
-    private void ApplyRoundedRegion(int width, int height, float fit)
-    {
-        try
-        {
-            // 机框圆角半径约 26px（贴图 1330 宽），按缩放换算
-            var r = (int)(26 * fit);
-            var rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, r * 2, r * 2);
-            SetWindowRgn(Handle, rgn, true);
-        }
-        catch { }
-    }
-
-    [System.Runtime.InteropServices.DllImport("gdi32.dll")]
-    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int w, int h);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);

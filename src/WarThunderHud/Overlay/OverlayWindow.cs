@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -275,11 +275,12 @@ public sealed class OverlayWindow : IDisposable
         _device = device;
         _context = context;
 
-        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory factory).CheckError();
-        _d2dFactory = factory.QueryInterface<ID2D1Factory1>();
+        D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.SingleThreaded, out ID2D1Factory? factory).CheckError();
+        _d2dFactory = (factory ?? throw new InvalidOperationException("D2D1 factory unavailable"))
+            .QueryInterface<ID2D1Factory1>();
 
-        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory write).CheckError();
-        _dwrite = write;
+        DWrite.DWriteCreateFactory(Vortice.DirectWrite.FactoryType.Shared, out IDWriteFactory? write).CheckError();
+        _dwrite = write ?? throw new InvalidOperationException("DWrite factory unavailable");
 
         using var dxgiDevice = _device.QueryInterface<IDXGIDevice>();
         using var adapter = dxgiDevice.GetAdapter();
@@ -350,11 +351,30 @@ public sealed class OverlayWindow : IDisposable
     }
 
     /// <summary>Draws one transparent frame and presents it.</summary>
+    /// <summary>Milliseconds spent inside the D2D frame (BeginDraw → EndDraw).</summary>
+    public double LastDrawMs { get; private set; }
+
+    /// <summary>Milliseconds spent in Present.</summary>
+    public double LastPresentMs { get; private set; }
+
     public void Present(IReadOnlyList<HudPrim> prims)
     {
         if (_drawer == null || _swapchain == null) return;
+
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         _drawer.RenderFrame(prims, 0, 0, 0, 0);
-        _swapchain.Present(0, PresentFlags.None);
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        // Composition swap-chains block in Present() while DWM is busy (measured 20-80 ms),
+        // which throttled the whole loop. DoNotWait drops the frame instead of stalling.
+        try { _swapchain.Present(0, PresentFlags.DoNotWait); }
+        catch (Exception) { /* DXGI_ERROR_WAS_STILL_DRAWING: skip this frame */ }
+
+        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        double msPerTick = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        LastDrawMs = (t1 - t0) * msPerTick;
+        LastPresentMs = (t2 - t1) * msPerTick;
     }
 
     /// <summary>Processes pending window messages; returns false once the window is gone.</summary>
