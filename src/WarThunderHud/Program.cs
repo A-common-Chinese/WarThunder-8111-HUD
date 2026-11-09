@@ -893,18 +893,39 @@ public static class Program
                     opt.StallWarnLevel = hardStall ? 2 : 1;
                 }
 
-                if (snap.AoaIndexer is double idx && idx > 0.9 && opt.StallWarnLevel == 0)
-                    opt.StallWarnLevel = idx > 0.97 ? 2 : 1;
+                if (snap.AoaIndexer is double idx)
+                {
+                    // 座舱 AOA 指示器：不同机型语义不同，而且拉杆瞬间会抖。
+                    // 之前是「单帧 >0.9 立刻点亮」→ F/A-18A 这种指示器在 0.9 附近抖的机型会一拉就闪。
+                    // 现在要求持续 200 ms 才点亮，回落 0.85 以下才复位。
+                    if (idx > 0.9)
+                    {
+                        if (aoaIdxSince == 0) aoaIdxSince = Environment.TickCount64;
+                        if (opt.StallWarnLevel == 0 && Environment.TickCount64 - aoaIdxSince > 200)
+                            opt.StallWarnLevel = idx > 0.97 ? 2 : 1;
+                    }
+                    else if (idx < 0.85)
+                    {
+                        aoaIdxSince = 0;
+                    }
+                }
+                else
+                {
+                    aoaIdxSince = 0;
+                }
 
                 if (opt.StallWarnLevel != stallLogged)
                 {
                     stallLogged = opt.StallWarnLevel;
-                    Console.WriteLine($"stall level {opt.StallWarnLevel}: AoA={aoa:F1} thr={threshold:F1} Ny={snap.NyG:F1} accel={accelMs2:F1} vy={snap.VyMs:F0}");
+                    Console.WriteLine($"stall level {opt.StallWarnLevel}: AoA={aoa:F1} thr={threshold:F1}" +
+                                      $" cal={(hasCal ? "yes" : "no")} Ny={snap.NyG:F1} accel={accelMs2:F1} vy={snap.VyMs:F0}" +
+                                      $" idx={(snap.AoaIndexer?.ToString("F2") ?? "-")}");
                 }
             }
             else
             {
                 stallSince = 0;
+                aoaIdxSince = 0;
             }
 
             var overIas = opt.OverspeedKmh > 0 && snap.IasKmh > opt.OverspeedKmh;
@@ -1735,6 +1756,7 @@ public static class Program
     private static bool pitchSignDecided;
     private static string pitchSignVehicle = "";
     private static long stallSince;
+    private static long aoaIdxSince;      // 座舱 AOA 指示器持续超限计时（防抖）
     private static int stallLogged = -1;
     private static string stallCalWarned = "";
     private static double fuelLastSample = -1;
