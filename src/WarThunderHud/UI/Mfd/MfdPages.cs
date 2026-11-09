@@ -258,6 +258,10 @@ internal static class MfdPages
                 c => WtHud.Hud.Scoped.Get(c, "row.overspeedIas", c.OverspeedKmh),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.overspeedIas", v, () => c.OverspeedKmh = v),
                 50, 200, 3000, "km/h"),
+            Number("row.sinkRate",
+                c => WtHud.Hud.Scoped.Get(c, "row.sinkRate", c.SinkRateMs),
+                (c, v) => WtHud.Hud.Scoped.Set(c, "row.sinkRate", v, () => c.SinkRateMs = v),
+                1, 5, 200, " m/s"),
             Number("row.bingo", c => c.BingoFuelSeconds, (c, v) => c.BingoFuelSeconds = v, 15, 0, 3600, "s"),
             Number("row.afAlert", c => c.EnemyAirfieldAlertKm, (c, v) => c.EnemyAirfieldAlertKm = v, 1, 0, 100, "km"),
             Number("row.edgeMargin", c => c.EdgeMarginFraction, (c, v) => c.EdgeMarginFraction = v, 0.01, 0.01, 0.4),
@@ -281,6 +285,16 @@ internal static class MfdPages
             Key("row.keyHole", c => c.CursorHoleKey, (c, v) => c.CursorHoleKey = v),
             Key("row.keySettings", c => c.SettingsKey, (c, v) => c.SettingsKey = v),
             Key("row.keyExit", c => c.ExitKey, (c, v) => c.ExitKey = v),
+            Key("row.keyPitchZero", c => c.PitchZeroKey, (c, v) => c.PitchZeroKey = v),
+            Key("row.keyBankFlip", c => c.BankFlipKey, (c, v) => c.BankFlipKey = v),
+            Key("row.keyBodyFixed", c => c.BodyFixedKey, (c, v) => c.BodyFixedKey = v),
+            Key("row.keyReset", c => c.ResetKey, (c, v) => c.ResetKey = v),
+            Key("row.keyHoldHide", c => c.HoldHideKey, (c, v) => c.HoldHideKey = v),
+            Key("row.keyStall", c => c.StallKey, (c, v) => c.StallKey = v),
+            // 固定组合键（不可改，只读展示）
+            Info("row.keyFix1", _ => "CTRL+ALT+\u2191/\u2193"),
+            Info("row.keyFix2", _ => "CTRL+ALT+PgUp/PgDn"),
+            Info("row.keyFix3", _ => "CTRL+ALT+R"),
         },
     };
 

@@ -29,6 +29,7 @@ public static class SettingScopes
         ["row.aoaWarn"] = (SettingScope.Airframe, "气动特性"),
         ["row.overspeedIas"] = (SettingScope.Airframe, "结构限制"),
         ["row.overspeedMach"] = (SettingScope.Airframe, "结构限制"),
+        ["row.sinkRate"] = (SettingScope.Airframe, "进近/结构限制"),
         ["row.pitchSign"] = (SettingScope.Airframe, "个别机型反向"),
     };
 

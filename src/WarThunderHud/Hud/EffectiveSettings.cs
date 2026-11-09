@@ -50,6 +50,11 @@ public static class EffectiveSettings
         SettingsRouter.GetForVehicle(cfg, vehicle, "row.stallAoa",
             profile.StallAoa > 0 ? profile.StallAoa : cfg.StallAoaDeg);
 
+    /// <summary>下降率告警阈值（m/s，正值）：机型覆盖 > 机型档案 > 全局（0 时由调用方回退 40）。</summary>
+    public static double SinkRateMs(HudConfig cfg, string? vehicle, AirframeProfile profile) =>
+        SettingsRouter.GetForVehicle(cfg, vehicle, "row.sinkRate",
+            profile.SinkRate > 0 ? profile.SinkRate : cfg.SinkRateMs);
+
     /// <summary>
     /// 解析「某一台机型」的生效值和来源：覆盖 &gt; 档案 &gt; 全局。
     /// 详情页必须按这个顺序显示，否则全局值被显示成「默认」，看起来像没生效。

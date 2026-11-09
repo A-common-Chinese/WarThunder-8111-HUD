@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -156,6 +156,9 @@ public sealed class HudConfig
 
     /// <summary>IAS above which the speed readout turns red (km/h). No Vne in the API.</summary>
     [JsonPropertyName("overspeedKmh")] public double OverspeedKmh { get; set; } = 1400;
+
+    /// <summary>下降率告警阈值（m/s，正值；0 = 用内置默认 40）。机型可单独覆盖。</summary>
+    [JsonPropertyName("sinkRateMs")] public double SinkRateMs { get; set; } = 40;
 
     /// <summary>Hide the HUD while the cockpit view is active.</summary>
     [JsonPropertyName("hideInCockpit")] public bool HideInCockpit { get; set; } = true;

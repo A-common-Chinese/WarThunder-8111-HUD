@@ -139,7 +139,7 @@ public static class Program
         var cfg = new HudConfig
         {
             AoaWarnDeg = 18, OverspeedKmh = 1400, OverspeedMach = 1.80,
-            StallAoaDeg = 25, PitchZeroDeg = 0.5, BankTrimDeg = 0.2, FpmTrimDeg = -0.1,
+            StallAoaDeg = 25, SinkRateMs = 40, PitchZeroDeg = 0.5, BankTrimDeg = 0.2, FpmTrimDeg = -0.1,
         };
         cfg.PerVehicleOverrides.Clear();
         WtHud.Hud.SettingsRouter.SetFor(cfg, "f-4j", "row.overspeedIas", 1458);
@@ -169,6 +169,15 @@ public static class Program
         Check("detail page f-4j IAS = own override", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.overspeedIas", f4.OverspeedIas), 1458);
         Check("detail page j_16 IAS = own override", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "j_16", "row.overspeedIas", j16.OverspeedIas), 1500);
         Check("detail page f-4j does not leak j_16 stall", WtHud.Hud.SettingsRouter.GetForVehicle(cfg, "f-4j", "row.stallAoa", f4.StallAoa), 0);
+
+        // 下降率告警：机型覆盖 > 机型档案 > 全局
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "f-4j", "row.sinkRate", 25);
+        Check("f-4j sink override > profile",
+            WtHud.Hud.EffectiveSettings.SinkRateMs(cfg, "f-4j", new AirframeProfile { SinkRate = 30 }), 25);
+        Check("j_16 sink falls back to global",
+            WtHud.Hud.EffectiveSettings.SinkRateMs(cfg, "j_16", new AirframeProfile()), 40);
+        Check("profile sink used without override",
+            WtHud.Hud.EffectiveSettings.SinkRateMs(cfg, "zzz_none", new AirframeProfile { SinkRate = 30 }), 30);
 
         // 详情页「来源」标注：全局回退必须标成 Global，否则会被显示成「默认」，看着像没生效。
         void CheckSource(string name, WtHud.Hud.ValueSource got, WtHud.Hud.ValueSource want)
@@ -1017,8 +1026,9 @@ public static class Program
             bool pullUpCond = snap.InFlight && hasRalt && ralt < 1500 && snap.VyMs < -10 && tti < 3.5;
 
             // SINK RATE: estimate-based fallback for every aircraft (sea-level altitude, no terrain).
-            // 下降率阈值可按机型覆盖（0 = 用默认 40 m/s）
-            var sinkThr = AirframeDb.Get(snap.VehicleType).SinkRate;
+            // 阈值：机型覆盖 > 机型档案 > 全局（0 = 用内置默认 40 m/s）
+            var sinkThr = WtHud.Hud.EffectiveSettings.SinkRateMs(
+                cfg, snap.VehicleType, AirframeDb.Get(snap.VehicleType));
             if (sinkThr <= 0) sinkThr = 40;
             bool sinkCond = snap.InFlight && snap.AltM < 500 && snap.VyMs < -sinkThr;
 
@@ -1945,6 +1955,9 @@ public static class Program
             else if (view == "help") { form.PreviewHelp(0); }
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
+            else if (view == "alerts") { form.PreviewOpen(2, 0); }
+            else if (view == "keys") { form.PreviewOpen(3, 0); }
+            else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }
             else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）
             else if (view == "capture") { form.PreviewCapture(3, 0); }
             else if (view == "discard")

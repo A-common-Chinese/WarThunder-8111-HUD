@@ -109,7 +109,8 @@ internal sealed class DetailPage : MfdPageBase
             prof.OverspeedIas, cfg.OverspeedKmh, "F0", " km/h", zh ? "默认" : "DEFAULT");
         ScopedRow("MACH", "row.overspeedMach",
             prof.OverspeedMach, cfg.OverspeedMach, "F2", "", zh ? "默认" : "DEFAULT");
-        Row(L10n.Get(LangScope.Screen, "airframe.sink"), prof.SinkRate > 0 ? $"{prof.SinkRate:F0} m/s" : (zh ? "默认" : "DEFAULT"));
+        ScopedRow(L10n.Get(LangScope.Screen, "airframe.sink"), "row.sinkRate",
+            prof.SinkRate, cfg.SinkRateMs, "F0", " m/s", zh ? "默认" : "DEFAULT");
         Row(L10n.Get(LangScope.Screen, "airframe.att"), prof.Attitude == "game" ? "AHRS GAME" : "AHRS EST");
         Row(L10n.Get(LangScope.Screen, "airframe.ab"), prof.Airbrake == "key" ? (zh ? "按键读取" : "KEY") : (zh ? "遥测读取" : "TELEMETRY"));
         var shownSign = WtHud.Hud.SettingsRouter.GetFor(cfg, id, "row.pitchSign", out var storedSign) ? storedSign : cfg.PitchSign;

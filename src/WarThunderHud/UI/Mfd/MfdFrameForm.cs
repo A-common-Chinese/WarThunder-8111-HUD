@@ -1598,6 +1598,13 @@ public sealed class MfdFrameForm : Form
         _menuSel = _page;
     }
 
+    /// <summary>Preview helper: switch the module's item page (0-based, 10 cells per page).</summary>
+    public void PreviewItemPage(int page)
+    {
+        _itemPage = Math.Max(0, page);
+        Invalidate();
+    }
+
     /// <summary>Preview helper: opens the help structure page.</summary>
     public void PreviewHelp(int page)
     {

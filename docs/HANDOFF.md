@@ -86,15 +86,15 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 三层：**机型覆盖 > 全局 > 内置默认**
 - 存储：`hud-config.json` 的 `perVehicleOverrides: { "f-4j": { "row.pitchSign": -1 } }`
 - 注册表：`Hud/SettingScopes.cs`（**唯一来源**，未登记 = 全局）
-  - 按机型 8 项：`pitchzero / pitchSign / bankTrim / fpmTrim / stallAoa / aoaWarn / overspeedIas / overspeedMach`
+  - 按机型 9 项：`pitchzero / pitchSign / bankTrim / fpmTrim / stallAoa / aoaWarn / overspeedIas / overspeedMach / sinkRate`
   - 开关与点击式枚举（`rollCoupleMode`、`bankSign`）**一律全局**
 - 路由：`Scoped.Get/Set`（面板行）与 `SettingsRouter.Get/Set/GetFor/SetFor`（显式机型）
 - 作用域三态：`EditScope.Auto / ExplicitGlobal / UseVehicle`；`ResolvedVehicle` 决定读写层
 - 面板顶栏只在**编辑页**显示当前层（`全局数据` / `机型数据：xxx`），列表页只显示生效值
 - RESET：机型作用域清该机型全部覆盖并保持作用域；全局作用域恢复默认
 - **运行时解析**走 `Hud/EffectiveSettings.cs`（覆盖 > 机型档案 > 全局）：`pitchzero/bankTrim/fpmTrim/
-  stallAoa/aoaWarn/overspeedIas/overspeedMach` 已全部接入 HUD 主循环；极速阈值优先级 = 机型覆盖 >
-  座舱 Vne > 档案 > 全局。（v0.3.1 前这 7 项只在面板显示，HUD 实际没读覆盖表）
+  stallAoa/aoaWarn/overspeedIas/overspeedMach/sinkRate` 已全部接入 HUD 主循环；极速阈值优先级 = 机型覆盖 >
+  座舱 Vne > 档案 > 全局；下降率阈值 0 时回退 40 m/s。（v0.3.1 前这些按机型值只在面板显示，HUD 实际没读覆盖表）
 - **显示某台具体机型**的页面必须用 `SettingsRouter.GetForVehicle(cfg, id, ...)`；用 `Scoped.Get` 会跟着
   面板当前编辑的机型走 → 所有详情页显示同一台的值（"j16 覆盖 f4j" 的 bug）
 - **详情页显示来源**（`EffectiveSettings.Resolve` → `机型/档案/全局`）：没有按机型覆盖时不能只显示「默认」，
@@ -135,6 +135,11 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - **Diag 页**：本来就是数据驱动的 `MfdPage`（`MfdPages.Diag()` 的 Info/Action 行），没有模式分支，不需要迁移；**主列表 Items** 仍是 Form 的默认渲染器，属于纯结构搬运（无遗留分支），评估后暂不做，避免为架构一致性引入核心交互回归
 
 ### 4.7 其它
+- 按键页共 **19 行**（2 页）：第 1 页 10 个原可编辑键；第 2 页 6 个补全的可编辑键
+  （`pitchZero/bankFlip/bodyFixed/reset/holdHide/stall`）+ 3 个**只读固定组合键**
+  （`CTRL+ALT+↑/↓` 上下偏移、`CTRL+ALT+PgUp/PgDn` FOV、`CTRL+ALT+R` 滚转耦合）。
+  只读行用 `ItemKind.ReadOnly`，点按会给「只读」toast；标签要短（值右对齐，太长会压到标签）
+- 告警页「下降率告警」：`row.sinkRate`，单位 ` m/s`，范围 5–200，默认全局 `sinkRateMs=40`
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
 - 中文告警框宽：ASCII 0.62em / 中文 1.0em
 - 机型数据库只收飞机（`tankModels/*` 排除）
@@ -204,8 +209,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 22. HELP 页：HELP 打开/再按关闭回到原页面；PAGE 翻到 6/6、UP/DOWN 选中跟随；点击行选中（`help/help3/helpback` 视图）；help 渲染必须与迁移前逐字节一致
 23. 机型详情：进入显示汇总、RESET 弹「重置该机型到默认？」、取消回详情、确认后回详情且数值更新；BACK 回机型列表（`detail/detailreset/detailback` 视图）
 24. 扫描器 8 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 8 × CLEAN
-25. 作用域自检：`WtHud.exe scopetest` → 25 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
+25. 作用域自检：`WtHud.exe scopetest` → 28 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
 26. 编辑页写入层：`mfdpreview out.png editscoped` → 未识别机型时必须是琥珀色「写入层：全局（未识别机型，会影响所有机型）」；`mfdpreview out.png detail a_10a` 的 IAS/Mach 应显示「（全局）」而不是「默认」
+27. 告警页下降率：`mfdpreview out.png alerts` → 有「下降率告警 40 m/s」行；改成机型覆盖后，详情页该行显示「（机型）」、按机型解析应生效（运行日志 `SINK RATE ... thr=` 与之一致）
+28. 按键页两页：`mfdpreview out.png keys`（1/2）与 `keys2`（2/2）→ 第 2 页 6 个新增可编辑键（F7/F8/F9/F5/U/CTRL+ALT+S）+ 3 个固定只读键（CTRL+ALT+↑↓ / PgUp/PgDn / R），固定行标签不能被右侧键位压住
 
 ## 8. 协作约定
 
