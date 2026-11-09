@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, Preset, Help, Detail, PickVehicle, PitchDetect, Snapshots }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, TextEdit, Preset, Help, Detail, PickVehicle, PitchDetect, Snapshots }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -36,6 +36,7 @@ public sealed class MfdFrameForm : Form
     private Pages.PitchDetectPage? _pitchPage;
     private Pages.ConfirmPage? _confirmPage;
     private Pages.NumberEditPage? _editPage;
+    private Pages.TextEditPage? _textPage;
     private Pages.PresetPage? _presetPage;
     private Pages.PickVehiclePage? _pickPageUI;
     private Pages.SnapshotsPage? _snapPageUI;
@@ -239,6 +240,7 @@ public sealed class MfdFrameForm : Form
             Mode.Menu => "menu",
             Mode.Confirm => "confirm.title",
             Mode.EditNumber => "edit.title",
+            Mode.TextEdit => "tedit.title",
             Mode.CaptureKey => "capture.title",
             Mode.PitchDetect => "row.pitchDetect",
             _ => CurrentPage?.TitleKey ?? "menu",
@@ -268,6 +270,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Menu: DrawMenu(g, s, glass, left, pad); break;
             case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.TextEdit: _textPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
             case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Help: _helpPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
@@ -289,6 +292,7 @@ public sealed class MfdFrameForm : Form
             Mode.PitchDetect => "pitchdetect.hint",
             Mode.Snapshots => "snap.hint",
             Mode.EditNumber => "edit.prompt",
+            Mode.TextEdit => "tedit.hint",
             Mode.CaptureKey => "capture.hint",
             _ => "hint.item",
         };
@@ -763,6 +767,13 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        if (_mode == Mode.TextEdit)
+        {
+            if (index == 2) _textPage?.Handle(MfdCommand.Of("tedit.commit"));
+            else if (index == 3) _textPage?.Handle(MfdCommand.Of("tedit.cancel"));
+            return;
+        }
+
         if (_mode == Mode.PickVehicle)
         {
             _pickPageUI?.SelectCell(cell);
@@ -810,9 +821,35 @@ public sealed class MfdFrameForm : Form
         if (itemIdx < page.Items.Count) _itemSel = itemIdx;
     }
 
+    protected override void OnKeyPress(KeyPressEventArgs e)
+    {
+        base.OnKeyPress(e);
+        if (_mode != Mode.TextEdit) return;
+        if (char.IsControl(e.KeyChar)) return;
+        _textPage?.Append(e.KeyChar);
+        e.Handled = true;
+        Invalidate();
+    }
+
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        // 文本输入（玩家昵称）：ASCII 直接打字，中文/符号用 Ctrl+V
+        if (_mode == Mode.TextEdit)
+        {
+            e.Handled = true;
+            if (e.KeyCode == Keys.Escape) { _textPage?.Handle(MfdCommand.Of("nav.back")); Invalidate(); return; }
+            if (e.KeyCode == Keys.Enter) { _textPage?.Handle(MfdCommand.Of("tedit.commit")); Invalidate(); return; }
+            if (e.KeyCode == Keys.Back) { _textPage?.Backspace(); Invalidate(); return; }
+            if (e.Control && e.KeyCode == Keys.V)
+            {
+                string clip = "";
+                try { clip = Clipboard.GetText() ?? ""; } catch { }
+                _textPage?.AppendText(clip);
+                Invalidate();
+            }
+            return;
+        }
         // 数值手输
         if (_mode == Mode.EditNumber)
         {
@@ -1007,6 +1044,9 @@ public sealed class MfdFrameForm : Form
                     _editPage.Choice == 1 ? "edit.cancel" :
                     _editPage.Choice == 2 ? "edit.pick" : "edit.commit"));
                 break;
+            case Mode.TextEdit:
+                _textPage?.Handle(MfdCommand.Of("tedit.commit"));
+                break;
             case Mode.CaptureKey:
                 CommitCapture();
                 break;
@@ -1068,6 +1108,14 @@ public sealed class MfdFrameForm : Form
 
     private void Activate(MfdItem item)
     {
+        // 打开击落播报但没填昵称 → 提示先填，避免「开了却没反应」
+        if (item.LabelKey == "row.splashEnabled"
+            && item.GetBool?.Invoke(_work) == false
+            && string.IsNullOrWhiteSpace(_work.PlayerName))
+        {
+            _toast = L10n.Get(LangScope.Screen, "splash.needName");
+        }
+
         switch (item.Kind)
         {
             case ItemKind.Action:
@@ -1091,6 +1139,9 @@ public sealed class MfdFrameForm : Form
             case ItemKind.KeyBinding:
                 EnterCaptureKey();
                 return;
+            case ItemKind.Text:
+                EnterTextEdit(item);
+                return;
             case ItemKind.Detail:
                 EnterDetail(item);
                 return;
@@ -1108,6 +1159,29 @@ public sealed class MfdFrameForm : Form
 
     // ---------------------------------------------------------------- page constructors
     // 每个二级页都从 Enter* 进入：直接 `_mode = Mode.X` 会绕过页面初始化（空白页陷阱）。
+
+    /// <summary>文本行（玩家昵称）→ 文本输入页。</summary>
+    private void EnterTextEdit(MfdItem target)
+    {
+        _textPage = new Pages.TextEditPage(
+            label: () => L10n.Get(LangScope.Screen, target.LabelKey),
+            initial: target.GetText?.Invoke(_work) ?? "",
+            onCommit: text => CommitTextValue(target, text),
+            onCancel: () => { _nav.Clear(); _mode = Mode.Items; },
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
+        _nav.Push(_textPage);
+        _mode = Mode.TextEdit;
+    }
+
+    private void CommitTextValue(MfdItem target, string text)
+    {
+        target.SetText2?.Invoke(_work, text);
+        _dirty = true;
+        WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+        _nav.Clear();
+        _mode = Mode.Items;
+        _toast = null;
+    }
 
     /// <summary>数值行 → 手输编辑页。</summary>
     private void EnterEditNumber(MfdItem target)
@@ -1459,6 +1533,7 @@ public sealed class MfdFrameForm : Form
                 break;
             case Mode.EditNumber:
             case Mode.CaptureKey:
+            case Mode.TextEdit:
                 CancelSecondLevel();
                 break;
             default:

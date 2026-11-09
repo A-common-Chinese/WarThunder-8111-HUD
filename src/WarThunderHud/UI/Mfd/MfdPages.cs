@@ -14,6 +14,7 @@ internal enum ItemKind
     Enum,
     Action,
     KeyBinding,
+    Text,
     Preset,
     Detail,
     ReadOnly,
@@ -72,6 +73,8 @@ internal sealed class MfdItem
             case ItemKind.Preset:
                 return L10n.Get(LangScope.Screen, "color." + (GetPreset?.Invoke(cfg) ?? "green"));
             case ItemKind.KeyBinding:
+                return string.IsNullOrWhiteSpace(GetText?.Invoke(cfg)) ? "—" : GetText!.Invoke(cfg)!;
+            case ItemKind.Text:
                 return string.IsNullOrWhiteSpace(GetText?.Invoke(cfg)) ? "—" : GetText!.Invoke(cfg)!;
             default:
                 return GetText?.Invoke(cfg) ?? "—";
@@ -174,6 +177,9 @@ internal static class MfdPages
     private static MfdItem Key(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
         new() { LabelKey = label, Kind = ItemKind.KeyBinding, GetText = get, SetText2 = set };
 
+    private static MfdItem Text(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
+        new() { LabelKey = label, Kind = ItemKind.Text, GetText = get, SetText2 = set };
+
     private static MfdItem Enum(string label, string[] choices, Func<HudConfig, int> get, Action<HudConfig, int> set) =>
         new() { LabelKey = label, Kind = ItemKind.Enum, Choices = choices, GetChoice = get, SetChoice = set };
 
@@ -201,6 +207,8 @@ internal static class MfdPages
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
+            Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),
+            Text("row.playerName", c => c.PlayerName, (c, v) => c.PlayerName = v),
             // 诊断读数统一放 DIAG 页（这里不再重复）
         },
     };

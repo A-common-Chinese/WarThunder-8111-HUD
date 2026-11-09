@@ -57,6 +57,15 @@ public sealed class HudOptions
     /// <summary>Preview helper: render only the GEAR/FLAPS/AIRBRAKE boxes.</summary>
     public bool OnlyConfigBoxes { get; set; }
 
+    /// <summary>SPLASH 播报主文字（"SPLASH"），空 = 不显示。</summary>
+    public string SplashMain { get; set; } = "";
+
+    /// <summary>SPLASH 副文字（被击落的目标名）。</summary>
+    public string SplashSub { get; set; } = "";
+
+    /// <summary>SPLASH 透明度（0..1，淡入淡出由渲染循环驱动）。</summary>
+    public double SplashAlpha { get; set; }
+
     /// <summary>A-10 family: split-aileron deceleron brake, so the box must not blink.</summary>
     public bool DeceleronAirbrake { get; set; }
 
@@ -281,8 +290,31 @@ public sealed class HudGeometry
         AddTerrainAlerts(prims, cx, cy, pxDeg, font);
         AddOverspeedAlert(prims, cx, cy, pxDeg, font);
         AddStallAlert(prims, cx, cy, pxDeg, font);
+        AddSplash(prims, cx, cy, pxDeg, font, line);
 
         return prims;
+    }
+
+    /// <summary>
+    /// SPLASH：自己击落敌机时的播报，大号带框文字 + 目标名。
+    /// 放在中心下方，避开俯仰梯/数据块；透明度由渲染循环的淡入淡出控制。
+    /// </summary>
+    private void AddSplash(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double line)
+    {
+        if (string.IsNullOrEmpty(_opt.SplashMain) || _opt.SplashAlpha <= 0.02) return;
+        double alpha = Math.Clamp(_opt.SplashAlpha, 0, 1);
+        var col = Fade(_opt.Color, alpha);
+        double y = cy + 11.8 * pxDeg;
+        AddBoxedText(prims, cx, y, _opt.SplashMain, font * 2.1, HudAlign.Center, col, line * 2.2, pxDeg);
+        if (!string.IsNullOrEmpty(_opt.SplashSub))
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.SplashSub, Align = HudAlign.Center,
+                FontSize = font * 1.05, Color = Fade(_opt.Color, alpha * 0.95),
+                Points = { (cx, y + 2.9 * pxDeg) },
+            });
+        }
     }
 
     // ---------------------------------------------------------------- attitude

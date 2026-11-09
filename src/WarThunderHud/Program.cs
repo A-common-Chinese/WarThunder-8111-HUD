@@ -135,6 +135,21 @@ public static class Program
         Check("blk scoreboard binding CTRL+N",
             WtHud.Input.WtControlsFile.BuildBinding(new[] { 29, 49 }) == "CTRL+N");
 
+        // SPLASH 解析：只认「击落了」，剥掉联队/颜色标记（^DFCN^ 等）和零宽字符
+        const string killLine = "^DFCN^ ACCvTARDISdevice (F/A-18A) 击\u200B落\u200B了 =FdX= The_Gho\u0161t (F-4S)";
+        Check("killfeed parse own kill",
+            HudKillFeed.TryParse(killLine, out var kActor, out var kType, out var kTarget)
+            && kActor == "ACCvTARDISdevice" && kType == "F/A-18A"
+            && kTarget == "=FdX= The_Gho\u0161t (F-4S)");
+        Check("killfeed own name case-insensitive",
+            HudKillFeed.IsOwnKill(killLine, "accvtardisdevice", out var kT2) && kT2.StartsWith("=FdX="));
+        Check("killfeed ignores other players", !HudKillFeed.IsOwnKill(killLine, "someone_else", out _));
+        Check("killfeed ignores AI destroy",
+            !HudKillFeed.TryParse("^DFCN^ ACCvTARDISdevice (F/A-18A) 击\u200B毁\u200B了 AI\u96C5\u514B-38M", out _, out _, out _));
+        Check("killfeed ignores awards",
+            !HudKillFeed.TryParse("\u22C6 DFCN^ ACCvTARDISdevice (F/A-18A) \u83B7\u200B\u5F97\u200B\u5609\u200B\u5956", out _, out _, out _));
+        Check("killfeed requires name", !HudKillFeed.IsOwnKill(killLine, "", out _));
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }
@@ -460,6 +475,7 @@ public static class Program
         telemetry.Start();
         using var mapData = new WtHud.Telemetry.MapData();
         mapData.Start();
+        hudMsgWatcher.OwnKill += t => splashQueue.Enqueue(t);
 
         var opt = new HudOptions();
         var cfg = HudConfig.Load();
@@ -978,6 +994,25 @@ public static class Program
             opt.AltTapeM = showRadarAlt ? snap.RadioAltM!.Value : snap.AltM;
             UpdateNavigation(opt, mapData, snap, cfg);
 
+            // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
+            if (snap.Valid != splashInMatch)
+            {
+                splashInMatch = snap.Valid;
+                if (!splashInMatch)
+                {
+                    splashQueue.Clear();
+                    splashTarget = "";
+                    hudMsgWatcher.Reset();
+                }
+            }
+            if (!cfg.SplashEnabled)
+            {
+                splashQueue.Clear();
+                splashTarget = "";
+            }
+            hudMsgWatcher.Poll(cfg.PlayerName, snap.Valid && cfg.SplashEnabled);
+            UpdateSplash(opt);
+
             // Terrain warnings.
             //   precise: only when the aircraft reports a radio altimeter
             //   estimate: sustained high sink rate below 500 m (altitude above sea level)
@@ -1333,6 +1368,39 @@ public static class Program
     /// Grid cell, airfield distances and the map-edge warning. Only the player icon and static
     /// airfields are used - enemy and ground entries are filtered out inside MapData.
     /// </summary>
+    /// <summary>推进 SPLASH 播放队列：每条 2.2 s，带 120 ms 淡入 / 300 ms 淡出。</summary>
+    private static void UpdateSplash(HudOptions opt)
+    {
+        var now = DateTime.UtcNow;
+        if (!string.IsNullOrEmpty(splashTarget) && now >= splashUntilUtc)
+            splashTarget = "";
+
+        if (string.IsNullOrEmpty(splashTarget) && splashQueue.Count > 0)
+        {
+            splashTarget = splashQueue.Dequeue();
+            splashStartUtc = now;
+            splashUntilUtc = now.AddSeconds(2.2);
+        }
+
+        if (string.IsNullOrEmpty(splashTarget))
+        {
+            opt.SplashMain = "";
+            opt.SplashSub = "";
+            opt.SplashAlpha = 0;
+            return;
+        }
+
+        double total = (splashUntilUtc - splashStartUtc).TotalSeconds;
+        double elapsed = (now - splashStartUtc).TotalSeconds;
+        double alpha = 1.0;
+        if (elapsed < 0.12) alpha = elapsed / 0.12;
+        else if (elapsed > total - 0.30) alpha = Math.Max(0, (total - elapsed) / 0.30);
+
+        opt.SplashMain = "SPLASH";
+        opt.SplashSub = splashTarget;
+        opt.SplashAlpha = alpha;
+    }
+
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
     {
         opt.GridText = "";
@@ -1695,6 +1763,14 @@ public static class Program
     private static bool prevValid;
     private static int viewState;   // 0 third person, 1 cockpit, 2 nose
     private static volatile bool mapHeld;
+
+    // SPLASH：自己击落敌机时的播报（4 Hz 轮询 /hudmsg，只认「击落了」）
+    private static readonly WtHud.Telemetry.HudMsgWatcher hudMsgWatcher = new();
+    private static readonly System.Collections.Generic.Queue<string> splashQueue = new();
+    private static DateTime splashStartUtc = DateTime.MinValue;
+    private static DateTime splashUntilUtc = DateTime.MinValue;
+    private static string splashTarget = "";
+    private static bool splashInMatch;
     private static double lastGear = -1;
     private static bool gearWasTransit;
     private static long gearConfirmUntil;
@@ -1817,6 +1893,12 @@ public static class Program
         if (variant == "pullup") { opt.PullUpAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "pullupall") { opt.PullUpAlert = true; opt.SinkRateAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
         if (variant == "sink") { opt.SinkRateAlert = true; opt.ForceTransitVisible = true; }
+        if (variant == "splash")
+        {
+            opt.SplashMain = "SPLASH";
+            opt.SplashSub = "=FdX= Ghost (F-4S)";
+            opt.SplashAlpha = 1.0;
+        }
         if (variant == "aoa") { opt.AoaWarnAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "speed") { opt.OverspeedAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
         if (variant == "stall") { opt.StallWarnLevel = 2; opt.ForceTransitVisible = true; }
@@ -1922,6 +2004,7 @@ public static class Program
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
             else if (view == "display") { form.PreviewOpen(0, 0); }
+            else if (view == "display2") { form.PreviewOpen(0, 0); form.PreviewItemPage(1); }
             else if (view == "diag") { form.PreviewOpen(7, 0); }
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }

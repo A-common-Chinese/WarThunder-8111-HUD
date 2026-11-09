@@ -160,6 +160,12 @@ public sealed class HudConfig
     /// <summary>下降率告警阈值（m/s，正值；0 = 用内置默认 40）。机型可单独覆盖。</summary>
     [JsonPropertyName("sinkRateMs")] public double SinkRateMs { get; set; } = 40;
 
+    /// <summary>击落播报（SPLASH）：自己击落敌机时在 HUD 上播报。</summary>
+    [JsonPropertyName("splashEnabled")] public bool SplashEnabled { get; set; } = true;
+
+    /// <summary>自己的游戏昵称（用于从 /hudmsg 判断「自己击落」；8111 没有可靠的自我标识）。</summary>
+    [JsonPropertyName("playerName")] public string PlayerName { get; set; } = "";
+
     /// <summary>Hide the HUD while the cockpit view is active.</summary>
     [JsonPropertyName("hideInCockpit")] public bool HideInCockpit { get; set; } = true;
 

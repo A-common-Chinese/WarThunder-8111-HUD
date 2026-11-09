@@ -157,6 +157,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   `.blk 导入` → 按键页；其余开关/数值/键位原本 MFD 面板就有。
   唯一未保留的是「纯机体固连」复选（运行态不写配置，F9 键切换即可）
 - 告警页「下降率告警」：`row.sinkRate`，单位 ` m/s`，范围 5–200，默认全局 `sinkRateMs=40`
+- **SPLASH 击落播报（v0.3.3）**：`HudMsgWatcher` 4 Hz 轮询 `/hudmsg`，`HudKillFeed` 清洗并只解析「击落了」；
+  自己昵称来自 `playerName`（显示页文本输入，ASCII 打字 / Ctrl+V 粘贴），命中后 `Program.UpdateSplash`
+  以 2.2 s 队列播放，`HudGeometry.AddSplash` 在中心下方画大号带框 `SPLASH` + 目标名。
+  注意：**只认「击落了」**（AI/地面是「击毁了」不播）；被击落不播；按 id 去重；失败静默
 - **8111 的 `radio_altitude` 是英尺**（不是米）：`TelemetryParser` 解析时 ×0.3048 存成 `RadioAltM`。
   证据：同一帧 baro=91 m 时 raw=205，按米算 AGL>绝对高度不可能；205 ft=62 m 才合理。
   别改回去，否则 RA 带和 PULL UP 会偏高 3.28 倍（2026-11-09 修复）
@@ -174,7 +178,10 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ### A. 其它待办
 - **v0.3.2 发布材料已备好**（`CHANGELOG.md` v0.3.2 段、`RELEASE_NOTES_v0.3.2.md`、`WtHud-v0.3.2-win-x64.zip` + SHA256 在 `C:\Users\noapi\Desktop\WtHud-发布\`），**由用户手动发布 release（不代推）**；本地 tag `v0.3.2` 已打、远端未推。zip SHA256 见 `SHA256.txt`
-- **击落播报（SPLASH）方案已定、未实现**：见 `docs/killfeed-splash-plan.md`。数据源 `/hudmsg` 已实测（`damage` 流、id 增量、本地化文本 + U+200B/颜色标记需清洗、AI 目标带 `AI` 前缀）；**等用户跑真实对局抓一条「击落玩家」的原始条目**后再动手。下次继续前需用户拍板：开关默认值、输入页是否 v1 就做
+- **击落播报（SPLASH）已实现（v0.3.3，未发布）**：见 `docs/killfeed-splash-plan.md`。真实对局数据已抓
+  （213 条 / 59 次击杀），确认：只认「击落了」；`^DFCN^` 是联队/颜色标记（因人而异，不能当身份）；
+  AI/地面用「击毁了」；API 会重复推送同 id；目标名可含空格/符号/`š`。实现：`Telemetry/HudKillFeed.cs` +
+  `Telemetry/HudMsgWatcher.cs` + 显示页「击落播报 / 玩家昵称」。用户已定：**不播报被击落、不播 AI**
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 - 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
 - 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
@@ -236,6 +243,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 29. .blk 导入：`WtHud.exe selftest` → 3 项 blk 检查 PASS；进面板按键页第 2 页点导入 → 选一个 war thunder controls .blk → toast 显示导入结果，SAVE 后 `hud-config.json` 的 `airbrakeKey`/`scoreboardKey` 更新
 30. 旧窗体迁移项：`mfdpreview out.png display`（2 页）→ 有 `地面延迟 ms` / `续航系数` / `构型调试块`；`alerts` → 有 `极速依据 IAS/MACH`；`diag` 第 2 页仍有「检查更新」。`grep SettingsForm` 无残留、`OpenSettings` 无残留
 31. 雷达高度单位：`WtHud.exe selftest` → 2 项 `radio altitude` PASS（1000 ft → 304.8 m）；进游戏低空看 RA 带 ≈ 座舱英尺读数 × 0.3048，PULL UP 不再偏晚
+32. SPLASH：`WtHud.exe selftest` → 6 项 killfeed 检查 PASS；`preview out.png 1920 1080 splash` 出图有 SPLASH 框+目标名；`mfdpreview out.png display2` 有「击落播报 / 玩家昵称」两行；进对局击落玩家 → 2.2 s 播报，AI/地面/被击落不播
 
 ## 8. 协作约定
 
