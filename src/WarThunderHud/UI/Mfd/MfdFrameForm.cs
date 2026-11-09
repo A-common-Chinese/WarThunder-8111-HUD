@@ -1071,6 +1071,17 @@ public sealed class MfdFrameForm : Form
         switch (item.Kind)
         {
             case ItemKind.Action:
+                // Direct = 动作自带页面/对话框，不需要再弹「确认执行」二次确认
+                if (item.Direct)
+                {
+                    item.Run?.Invoke(_work);
+                    var toast = item.ToastAfterRun?.Invoke(_work);
+                    _dirty = true;
+                    WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+                    _toast = string.IsNullOrEmpty(toast) ? null : toast;
+                    Invalidate();
+                    return;
+                }
                 _pendingAction = item;
                 EnterConfirm();
                 return;

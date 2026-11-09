@@ -227,6 +227,7 @@ public static class L10n
         ["row.keyFix1"] = ("固定：上下偏移", "FIXED: VERT OFFSET"),
         ["row.keyFix2"] = ("固定：FOV", "FIXED: FOV"),
         ["row.keyFix3"] = ("固定：滚转耦合", "FIXED: ROLL COUPLE"),
+        ["row.importWt"] = ("从战雷 (.blk) 导入按键", "IMPORT WT .BLK KEYS"),
         ["row.endurance"] = ("续航系数", "ENDURANCE SCALE"),
         ["row.groundDelay"] = ("地面延迟", "GROUND DELAY"),
         ["row.mapFlip"] = ("地图 Y 翻转", "MAP Y FLIP"),

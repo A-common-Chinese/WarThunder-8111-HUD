@@ -38,6 +38,9 @@ internal sealed class MfdItem
     public Action<HudConfig, string>? SetPreset { get; init; }
     public Action<HudConfig>? Run { get; init; }
 
+    /// <summary>动作执行后给面板的提示文本（null = 不弹 toast）。</summary>
+    public Func<HudConfig, string?>? ToastAfterRun { get; init; }
+
     /// <summary>True when the action opens its own sub-page instead of the generic confirm sheet.</summary>
     public bool Direct { get; init; }
     public string[]? Choices { get; init; }
@@ -140,6 +143,10 @@ internal static class MfdPages
     /// <summary>Action that goes straight to its own page (no "are you sure" sheet).</summary>
     private static MfdItem ActionDirect(string label, Action<HudConfig> run) =>
         new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true };
+
+    /// <summary>直接执行的动作，并在执行后显示一条提示（例如导入结果）。</summary>
+    private static MfdItem ActionDirectMsg(string label, Action<HudConfig> run, Func<HudConfig, string?> toast) =>
+        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true, ToastAfterRun = toast };
 
     private static MfdItem Info(string label, Func<HudConfig, string> text) =>
         new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text };
@@ -295,6 +302,10 @@ internal static class MfdPages
             Info("row.keyFix1", _ => "CTRL+ALT+\u2191/\u2193"),
             Info("row.keyFix2", _ => "CTRL+ALT+PgUp/PgDn"),
             Info("row.keyFix3", _ => "CTRL+ALT+R"),
+            // 从战雷导出的 controls .blk 导入（减速板 / 计分板）
+            ActionDirectMsg("row.importWt",
+                c => WtHud.Input.WtControlsImport.PickAndApply(c),
+                _ => WtHud.Input.WtControlsImport.LastSummary),
         },
     };
 

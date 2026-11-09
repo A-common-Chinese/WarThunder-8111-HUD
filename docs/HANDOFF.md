@@ -135,10 +135,15 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - **Diag 页**：本来就是数据驱动的 `MfdPage`（`MfdPages.Diag()` 的 Info/Action 行），没有模式分支，不需要迁移；**主列表 Items** 仍是 Form 的默认渲染器，属于纯结构搬运（无遗留分支），评估后暂不做，避免为架构一致性引入核心交互回归
 
 ### 4.7 其它
-- 按键页共 **19 行**（2 页）：第 1 页 10 个原可编辑键；第 2 页 6 个补全的可编辑键
+- 按键页共 **20 行**（2 页）：第 1 页 10 个原可编辑键；第 2 页 6 个补全的可编辑键
   （`pitchZero/bankFlip/bodyFixed/reset/holdHide/stall`）+ 3 个**只读固定组合键**
-  （`CTRL+ALT+↑/↓` 上下偏移、`CTRL+ALT+PgUp/PgDn` FOV、`CTRL+ALT+R` 滚转耦合）。
-  只读行用 `ItemKind.ReadOnly`，点按会给「只读」toast；标签要短（值右对齐，太长会压到标签）
+  （`CTRL+ALT+↑/↓` 上下偏移、`CTRL+ALT+PgUp/PgDn` FOV、`CTRL+ALT+R` 滚转耦合）+ 1 个
+  「从战雷 (.blk) 导入按键」动作行。只读行用 `ItemKind.ReadOnly`，点按会给「只读」toast；
+  标签要短（值右对齐，太长会压到标签）
+- `.blk` 导入：`Input/WtControlsFile.cs`（解析 + scan code→键名）+ `Input/WtControlsImport.cs`（文件对话框 + 应用）。
+  只映射 **减速板 / 计分板**（HUD 监听、且游戏内也用的两个键）；写入草稿，SAVE 才落盘。
+  旧 `SettingsForm` 及其导入按钮已**无调用点**（`OpenSettings()` 未调用，F1 走 `OpenMfdSettings`），
+  文件暂时保留作参考，后续可删或把其余设置迁入 MFD
 - 告警页「下降率告警」：`row.sinkRate`，单位 ` m/s`，范围 5–200，默认全局 `sinkRateMs=40`
 - 俯仰方向检测：比较「游戏俯仰」与「**实际显示的估计俯仰**」（不是航迹角），相关系数 <0 → 判反向
 - 中文告警框宽：ASCII 0.62em / 中文 1.0em
@@ -158,6 +163,8 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 回归快照后续扩展：把 `temp\session\*.json`（标注 `edit`）也列出来，支持回退到本次会话中间状态（规格已预留）
 - 编译告警已清零（图形判空注意事项见 §4.7）；后续改动不要再引入 CS0169/CS0414/CS0162/CS0108 或可空性告警
 - 页面层待定项：`MfdPageBase.Id/HintKey`、`MfdPageBase.Buttons` 目前零外部读取（迁移脚手架），确认后再决定删留
+- 死代码：旧 `UI/SettingsForm.cs` 与 `Program.OpenSettings()` 已无调用点（F1 全走 MFD 面板）。
+  两种处理：① 删掉（但 `.blk` 导入已迁到 MFD 按键页，功能不丢）；② 把旧表单里 MFD 面板还没有的选项迁进 MFD 后删
 - 主列表 Items 若将来要迁页面层（纯结构搬运），见 §4.6 的评估：先做交互回归清单（UP/DOWN/CONFIRM/侧键/翻页/鼠标双击/编辑页入口），再动手
 
 ## 6. 踩过的坑（务必避免重复）
@@ -212,7 +219,8 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 25. 作用域自检：`WtHud.exe scopetest` → 28 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
 26. 编辑页写入层：`mfdpreview out.png editscoped` → 未识别机型时必须是琥珀色「写入层：全局（未识别机型，会影响所有机型）」；`mfdpreview out.png detail a_10a` 的 IAS/Mach 应显示「（全局）」而不是「默认」
 27. 告警页下降率：`mfdpreview out.png alerts` → 有「下降率告警 40 m/s」行；改成机型覆盖后，详情页该行显示「（机型）」、按机型解析应生效（运行日志 `SINK RATE ... thr=` 与之一致）
-28. 按键页两页：`mfdpreview out.png keys`（1/2）与 `keys2`（2/2）→ 第 2 页 6 个新增可编辑键（F7/F8/F9/F5/U/CTRL+ALT+S）+ 3 个固定只读键（CTRL+ALT+↑↓ / PgUp/PgDn / R），固定行标签不能被右侧键位压住
+28. 按键页两页：`mfdpreview out.png keys`（1/2）与 `keys2`（2/2）→ 第 2 页 6 个新增可编辑键（F7/F8/F9/F5/U/CTRL+ALT+S）+ 3 个固定只读键（CTRL+ALT+↑↓ / PgUp/PgDn / R）+ 「从战雷 (.blk) 导入按键」动作行，固定行标签不能被右侧键位压住
+29. .blk 导入：`WtHud.exe selftest` → 3 项 blk 检查 PASS；进面板按键页第 2 页点导入 → 选一个 war thunder controls .blk → toast 显示导入结果，SAVE 后 `hud-config.json` 的 `airbrakeKey`/`scoreboardKey` 更新
 
 ## 8. 协作约定
 

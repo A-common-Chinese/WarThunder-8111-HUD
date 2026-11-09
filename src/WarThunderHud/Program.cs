@@ -116,6 +116,17 @@ public static class Program
         Check("ground not inflight", !g.InFlight);
         Check("ground aoa zeroed", Math.Abs(g.AoaDeg) < 0.001);
 
+        // 战雷 controls .blk 导入：解析 + 组合键还原（减速板 H / 计分板 CTRL+N）
+        const string blk = """
+        ID_AIR_BRAKE { keyboardKey:i=35; }
+        ID_MPSTATSCREEN { keyboardKey:i=29; keyboardKey:i=49; }
+        """;
+        var wt = WtHud.Input.WtControlsFile.Parse(blk);
+        Check("blk airbrake parsed", wt.TryGetValue("ID_AIR_BRAKE", out var ab) && ab.Length == 1);
+        Check("blk airbrake binding H", WtHud.Input.WtControlsFile.BuildBinding(new[] { 35 }) == "H");
+        Check("blk scoreboard binding CTRL+N",
+            WtHud.Input.WtControlsFile.BuildBinding(new[] { 29, 49 }) == "CTRL+N");
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }
