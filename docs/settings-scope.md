@@ -5,7 +5,7 @@
 
 优先级：**机型覆盖 > 全局 > 内置默认**
 
-## 按机型覆盖（9 项）
+## 按机型覆盖（10 项）
 
 | 行 key | 原因 |
 |---|---|
@@ -16,6 +16,7 @@
 | `row.overspeedMach` | 结构限制 |
 | `row.pitchSign` | 个别机型反向 |
 | `row.pitchzero` | 座舱/装配基准，随机型 |
+| `row.pullUp` | 地形告警提前量 |
 | `row.sinkRate` | 进近/结构限制 |
 | `row.stallAoa` | 气动特性 |
 

@@ -93,7 +93,7 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 - 三层：**机型覆盖 > 全局 > 内置默认**
 - 存储：`hud-config.json` 的 `perVehicleOverrides: { "f-4j": { "row.pitchSign": -1 } }`
 - 注册表：`Hud/SettingScopes.cs`（**唯一来源**，未登记 = 全局）
-  - 按机型 9 项：`pitchzero / pitchSign / bankTrim / fpmTrim / stallAoa / aoaWarn / overspeedIas / overspeedMach / sinkRate`
+  - 按机型 10 项：`pitchzero / pitchSign / bankTrim / fpmTrim / stallAoa / aoaWarn / overspeedIas / overspeedMach / sinkRate / pullUp`
   - 开关与点击式枚举（`rollCoupleMode`、`bankSign`）**一律全局**
 - 路由：`Scoped.Get/Set`（面板行）与 `SettingsRouter.Get/Set/GetFor/SetFor`（显式机型）
 - 作用域三态：`EditScope.Auto / ExplicitGlobal / UseVehicle`；`ResolvedVehicle` 决定读写层
@@ -157,6 +157,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
   `.blk 导入` → 按键页；其余开关/数值/键位原本 MFD 面板就有。
   唯一未保留的是「纯机体固连」复选（运行态不写配置，F9 键切换即可）
 - 告警页「下降率告警」：`row.sinkRate`，单位 ` m/s`，范围 5–200，默认全局 `sinkRateMs=40`
+- 告警页「PULL UP 提前量」：`row.pullUp`，单位 `s`，范围 1.5–10，默认全局 `pullUpTtiS=5.0`；
+  触发条件 `TTI < 提前量`（机型覆盖 > 机型档案 `pullUpTti` > 全局）。原来硬编码 3.5 s 偏晚
+- **极速告警是双路判断**（IAS 或 Mach 任一超限即触发），没有「极速依据」开关；`overspeedByMach` 字段已删除
 - **SPLASH 击落播报（v0.3.3）**：`HudMsgWatcher` 4 Hz 轮询 `/hudmsg`，`HudKillFeed` 清洗并只解析「击落了」；
   自己昵称来自 `playerName`（显示页文本输入，ASCII 打字 / Ctrl+V 粘贴），命中后 `Program.UpdateSplash`
   以 2.2 s 队列播放，`HudGeometry.AddSplash` 在中心下方画大号带框 `SPLASH` + 目标名。
@@ -236,14 +239,15 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 22. HELP 页：HELP 打开/再按关闭回到原页面；PAGE 翻到 6/6、UP/DOWN 选中跟随；点击行选中（`help/help3/helpback` 视图）；help 渲染必须与迁移前逐字节一致
 23. 机型详情：进入显示汇总、RESET 弹「重置该机型到默认？」、取消回详情、确认后回详情且数值更新；BACK 回机型列表（`detail/detailreset/detailback` 视图）
 24. 扫描器 8 页全清：`python tools\scan_page_migration.py Confirm PitchDetect EditNumber Preset PickVehicle Snapshots Help Detail` → 8 × CLEAN
-25. 作用域自检：`WtHud.exe scopetest` → 28 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
+25. 作用域自检：`WtHud.exe scopetest` → 38 项全 PASS、exit 0；`mfdpreview out.png detail f-4j` 与 `detail j\_16` 的 IAS/Mach 必须各显示各的（不能两台一样）
 26. 编辑页写入层：`mfdpreview out.png editscoped` → 未识别机型时必须是琥珀色「写入层：全局（未识别机型，会影响所有机型）」；`mfdpreview out.png detail a_10a` 的 IAS/Mach 应显示「（全局）」而不是「默认」
-27. 告警页下降率：`mfdpreview out.png alerts` → 有「下降率告警 40 m/s」行；改成机型覆盖后，详情页该行显示「（机型）」、按机型解析应生效（运行日志 `SINK RATE ... thr=` 与之一致）
+27. 告警页：`mfdpreview out.png alerts` → 有「下降率告警 40 m/s」「PULL UP 提前量 5.0 s」，**没有**「极速依据」；改成机型覆盖后按机型生效（日志 `SINK RATE ... thr=` / `PULL UP ... ralt=` 与之一致）
 28. 按键页两页：`mfdpreview out.png keys`（1/2）与 `keys2`（2/2）→ 第 2 页 6 个新增可编辑键（F7/F8/F9/F5/U/CTRL+ALT+S）+ 3 个固定只读键（CTRL+ALT+↑↓ / PgUp/PgDn / R）+ 「从战雷 (.blk) 导入按键」动作行，固定行标签不能被右侧键位压住
 29. .blk 导入：`WtHud.exe selftest` → 3 项 blk 检查 PASS；进面板按键页第 2 页点导入 → 选一个 war thunder controls .blk → toast 显示导入结果，SAVE 后 `hud-config.json` 的 `airbrakeKey`/`scoreboardKey` 更新
 30. 旧窗体迁移项：`mfdpreview out.png display`（2 页）→ 有 `地面延迟 ms` / `续航系数` / `构型调试块`；`alerts` → 有 `极速依据 IAS/MACH`；`diag` 第 2 页仍有「检查更新」。`grep SettingsForm` 无残留、`OpenSettings` 无残留
 31. 雷达高度单位：`WtHud.exe selftest` → 2 项 `radio altitude` PASS（1000 ft → 304.8 m）；进游戏低空看 RA 带 ≈ 座舱英尺读数 × 0.3048，PULL UP 不再偏晚
-32. SPLASH：`WtHud.exe selftest` → 6 项 killfeed 检查 PASS；`preview out.png 1920 1080 splash` 出图有 SPLASH 框+目标名；`mfdpreview out.png display2` 有「击落播报 / 玩家昵称」两行；进对局击落玩家 → 2.2 s 播报，AI/地面/被击落不播
+32. SPLASH：`WtHud.exe selftest` → 6 项 killfeed 检查 PASS；`preview out.png 1920 1080 splash` 出图有中心 SPLASH 框+目标名；`mfdpreview out.png display2` 有「击落播报 / 玩家昵称」两行；进对局击落玩家 → 1.2 s 播报，AI/地面/被击落不播
+33. PULL UP 提前量：告警页改成 6 s → 日志 `PULL UP ON: ralt=... tti=...` 出现更早（tti 门限 6）；机型覆盖后详情/生效值一致；`overspeedByMach` 不再存在于 `hud-config.json` 新存档
 
 ## 8. 协作约定
 

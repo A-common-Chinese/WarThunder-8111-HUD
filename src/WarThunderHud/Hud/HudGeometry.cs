@@ -116,9 +116,6 @@ public sealed class HudOptions
     /// <summary>True while the speed exceeds the active limit (drives the red readout and boxes).</summary>
     public bool OverspeedAlert { get; set; }
 
-    /// <summary>Overspeed warning by Mach number instead of IAS.</summary>
-    public bool OverspeedByMach { get; set; }
-
     /// <summary>Mach threshold for the manual overspeed warning.</summary>
     public double OverspeedMach { get; set; } = 1.8;
 
@@ -304,15 +301,34 @@ public sealed class HudGeometry
         if (string.IsNullOrEmpty(_opt.SplashMain) || _opt.SplashAlpha <= 0.02) return;
         double alpha = Math.Clamp(_opt.SplashAlpha, 0, 1);
         var col = Fade(_opt.Color, alpha);
-        double y = cy + 11.8 * pxDeg;
-        AddBoxedText(prims, cx, y, _opt.SplashMain, font * 2.1, HudAlign.Center, col, line * 2.2, pxDeg);
+        double big = font * 2.6;
+        double y = cy;                                   // 屏幕中心附近，最醒目
+        var bg = Fade(new HudColor(2, 22, 10, 210), alpha * 0.55);
+
+        // 半透明底 + 加粗外框，比单纯描边更抓眼
+        double w = Math.Max(big * 2.0, TextWidthEm(_opt.SplashMain) * big + big * 0.35);
+        double h = big * 1.45;
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Polyline, Filled = true, Color = bg,
+            Points =
+            {
+                (cx - w / 2 - 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
+                (cx + w / 2 + 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
+                (cx + w / 2 + 0.35 * pxDeg, y + h / 2 + 0.25 * pxDeg),
+                (cx - w / 2 - 0.35 * pxDeg, y + h / 2 + 0.25 * pxDeg),
+                (cx - w / 2 - 0.35 * pxDeg, y - h / 2 - 0.25 * pxDeg),
+            },
+        });
+        AddBoxedText(prims, cx, y, _opt.SplashMain, big, HudAlign.Center, col, line * 3.0, pxDeg);
+
         if (!string.IsNullOrEmpty(_opt.SplashSub))
         {
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = _opt.SplashSub, Align = HudAlign.Center,
-                FontSize = font * 1.05, Color = Fade(_opt.Color, alpha * 0.95),
-                Points = { (cx, y + 2.9 * pxDeg) },
+                FontSize = font * 1.15, Color = Fade(_opt.Color, alpha * 0.95),
+                Points = { (cx, y + big * 0.9) },
             });
         }
     }

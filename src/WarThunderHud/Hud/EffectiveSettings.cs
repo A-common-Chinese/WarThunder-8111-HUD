@@ -55,6 +55,11 @@ public static class EffectiveSettings
         SettingsRouter.GetForVehicle(cfg, vehicle, "row.sinkRate",
             profile.SinkRate > 0 ? profile.SinkRate : cfg.SinkRateMs);
 
+    /// <summary>PULL UP 提前量（秒，TTI 小于它触发）：机型覆盖 > 机型档案 > 全局（0 = 默认 5）。</summary>
+    public static double PullUpTtiS(HudConfig cfg, string? vehicle, AirframeProfile profile) =>
+        SettingsRouter.GetForVehicle(cfg, vehicle, "row.pullUp",
+            profile.PullUpTti > 0 ? profile.PullUpTti : cfg.PullUpTtiS);
+
     /// <summary>
     /// 解析「某一台机型」的生效值和来源：覆盖 &gt; 档案 &gt; 全局。
     /// 详情页必须按这个顺序显示，否则全局值被显示成「默认」，看起来像没生效。

@@ -148,9 +148,6 @@ public sealed class HudConfig
 
     [JsonPropertyName("cursorHoleHalfPx")] public int CursorHoleHalfPx { get; set; } = 16;   // 32 px hole: hides the game cursor, keeps the FPM ring visible
 
-    /// <summary>Use Mach instead of IAS for the manual overspeed warning.</summary>
-    [JsonPropertyName("overspeedByMach")] public bool OverspeedByMach { get; set; }
-
     /// <summary>Mach number above which the speed readout turns red (manual mode).</summary>
     [JsonPropertyName("overspeedMach")] public double OverspeedMach { get; set; } = 1.80;
 
@@ -159,6 +156,9 @@ public sealed class HudConfig
 
     /// <summary>下降率告警阈值（m/s，正值；0 = 用内置默认 40）。机型可单独覆盖。</summary>
     [JsonPropertyName("sinkRateMs")] public double SinkRateMs { get; set; } = 40;
+
+    /// <summary>PULL UP 提前量（秒；TTI 小于该值触发；默认 5，0 = 用内置默认）。机型可覆盖。</summary>
+    [JsonPropertyName("pullUpTtiS")] public double PullUpTtiS { get; set; } = 5.0;
 
     /// <summary>击落播报（SPLASH）：自己击落敌机时在 HUD 上播报。</summary>
     [JsonPropertyName("splashEnabled")] public bool SplashEnabled { get; set; } = true;

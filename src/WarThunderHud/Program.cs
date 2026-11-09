@@ -257,6 +257,15 @@ public static class Program
         WtHud.Hud.Scoped.Set(cfg, "row.overspeedIas", 1700, () => cfg.OverspeedKmh = 1700);
         Check("auto without airframe writes global", cfg.OverspeedKmh, 1700);
 
+        // PULL UP 提前量：机型覆盖 > 机型档案 > 全局
+        WtHud.Hud.SettingsRouter.SetFor(cfg, "f-4j", "row.pullUp", 6.5);
+        Check("f-4j pull-up override > profile",
+            WtHud.Hud.EffectiveSettings.PullUpTtiS(cfg, "f-4j", new AirframeProfile { PullUpTti = 4.5 }), 6.5);
+        Check("j_16 pull-up profile fallback",
+            WtHud.Hud.EffectiveSettings.PullUpTtiS(cfg, "j_16", new AirframeProfile { PullUpTti = 4.0 }), 4.0);
+        Check("unknown pull-up global default",
+            WtHud.Hud.EffectiveSettings.PullUpTtiS(cfg, "zzz_none", new AirframeProfile()), 5.0);
+
         WtHud.Hud.AirframeDb.CurrentVehicle = "f-4j";
         WtHud.Hud.Scoped.Set(cfg, "row.realisticKeys", 1, () => cfg.Mfd.RealisticKeys = true);
         Check("global row always global", cfg.Mfd.RealisticKeys ? 1 : 0, 1);
@@ -936,7 +945,7 @@ public static class Program
             {
                 overspeedLogged = opt.OverspeedAlert;
                 Console.WriteLine(opt.OverspeedAlert
-                    ? $"overspeed ON: M={snap.Mach:F2} IAS={snap.IasKmh:F0} km/h (byMach={opt.OverspeedByMach} thr={opt.OverspeedMach:F2}M/{opt.OverspeedKmh:F0}kmh)"
+                    ? $"overspeed ON: M={snap.Mach:F2} IAS={snap.IasKmh:F0} km/h (thr={opt.OverspeedMach:F2}M/{opt.OverspeedKmh:F0}kmh)"
                     : "overspeed off");
             }
 
@@ -978,7 +987,6 @@ public static class Program
             if (!iasOverride && !machOverride && snap.VneMs is double vneMs && vneMs > 10)
             {
                 opt.OverspeedKmh = vneMs * 3.6;
-                opt.OverspeedByMach = false;
                 if (vneLogged != snap.VehicleType)
                 {
                     vneLogged = snap.VehicleType;
@@ -987,11 +995,10 @@ public static class Program
             }
             else
             {
-                // Manual threshold: IAS (km/h) or Mach, whichever the user selected.
+                // 双路同时判断（IAS 或 Mach 任一超限即告警），不再有「极速依据」开关
                 opt.OverspeedKmh = iasOverride
                     ? iasOverrideKmh
                     : WtHud.Hud.EffectiveSettings.OverspeedKmh(cfg, snap.VehicleType, alertProfile);
-                opt.OverspeedByMach = cfg.OverspeedByMach;
                 opt.OverspeedMach = machOverride
                     ? machOverrideValue
                     : WtHud.Hud.EffectiveSettings.OverspeedMach(cfg, snap.VehicleType, alertProfile);
@@ -1044,7 +1051,8 @@ public static class Program
             double ralt = snap.RadioAltM ?? double.NaN;
             bool hasRalt = !double.IsNaN(ralt);
             double tti = hasRalt && snap.VyMs < -5 ? ralt / -snap.VyMs : double.MaxValue;
-            bool pullUpCond = snap.InFlight && hasRalt && ralt < 1500 && snap.VyMs < -10 && tti < 3.5;
+            double pullUpTti = WtHud.Hud.EffectiveSettings.PullUpTtiS(cfg, snap.VehicleType, alertProfile);
+            bool pullUpCond = snap.InFlight && hasRalt && ralt < 1500 && snap.VyMs < -10 && tti < pullUpTti;
 
             // SINK RATE: estimate-based fallback for every aircraft (sea-level altitude, no terrain).
             // 阈值：机型覆盖 > 机型档案 > 全局（0 = 用内置默认 40 m/s）
@@ -1400,7 +1408,7 @@ public static class Program
         {
             splashTarget = splashQueue.Dequeue();
             splashStartUtc = now;
-            splashUntilUtc = now.AddSeconds(2.2);
+            splashUntilUtc = now.AddSeconds(1.2);
         }
 
         if (string.IsNullOrEmpty(splashTarget))
@@ -1414,8 +1422,8 @@ public static class Program
         double total = (splashUntilUtc - splashStartUtc).TotalSeconds;
         double elapsed = (now - splashStartUtc).TotalSeconds;
         double alpha = 1.0;
-        if (elapsed < 0.12) alpha = elapsed / 0.12;
-        else if (elapsed > total - 0.30) alpha = Math.Max(0, (total - elapsed) / 0.30);
+        if (elapsed < 0.08) alpha = elapsed / 0.08;
+        else if (elapsed > total - 0.25) alpha = Math.Max(0, (total - elapsed) / 0.25);
 
         opt.SplashMain = "SPLASH";
         opt.SplashSub = splashTarget;
@@ -1619,7 +1627,7 @@ public static class Program
             Mix(o.EnemyAirfieldAlert ? 1 : 0, 1);
             Mix(o.OverspeedAlert ? 1 : 0, 1);
             Mix(o.StallWarnLevel, 1);
-            Mix(o.OverspeedByMach ? 1 : 0, 1);
+    
             Mix(o.OverspeedMach, 0.01);
             Mix(o.PullUpAlert ? 1 : 0, 1);
             Mix(o.AoaWarnAlert ? 1 : 0, 1);

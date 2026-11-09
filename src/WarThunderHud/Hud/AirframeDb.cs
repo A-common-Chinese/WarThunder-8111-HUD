@@ -37,6 +37,9 @@ public sealed class AirframeProfile
     /// <summary>Per-aircraft sink-rate alert threshold in m/s (0 = global).</summary>
     [JsonPropertyName("sinkRate")] public double SinkRate { get; set; }
 
+    /// <summary>Per-aircraft PULL UP lead time in seconds, TTI below it triggers (0 = global).</summary>
+    [JsonPropertyName("pullUpTti")] public double PullUpTti { get; set; }
+
     /// <summary>Free-form note shown in the panel.</summary>
     [JsonPropertyName("note")] public string Note { get; set; } = "";
 }
@@ -200,6 +203,7 @@ public static class AirframeDb
         p.OverspeedIas = 0;
         p.OverspeedMach = 0;
         p.SinkRate = 0;
+        p.PullUpTti = 0;
         Save();
     }
 
