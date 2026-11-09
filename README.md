@@ -1,4 +1,4 @@
-﻿# War Thunder HUD (8111)
+# War Thunder HUD (8111)
 
 **简体中文** | [English](#english)
 
@@ -31,7 +31,8 @@ no packet interception, no automation.
 ### MFD 设置面板（F1）
 
 - 机框与 25 个实体按键为 Blender 建模渲染，按键与屏幕 10 行一一对应：**侧键 = 选择，CONFIRM = 执行**
-- 主菜单 → 模块页（显示/视角/告警/按键/语言/诊断）→ 二级页（数值输入 / 键位捕获 / 二次确认）
+- 主菜单 → 模块页（显示 / 视角与姿态 / 告警 / 按键 / 面板 / 语言 / 机型 / 诊断 / 回归快照）→
+  二级页（数值输入 / 键位捕获 / 文本输入 / 二次确认）
 - 数值可直接键入；键位**按住组合键实时显示**（Ctrl → `CTRL`，再按 Q → `CTRL+Q`）
 - 外板 / 屏幕 / 告警可分别设中英文；告警框宽度按当前语言的文本实测宽度自动重算
 - 诊断页显示 `/state`、`/indicators`、`/map_obj`、`/map_info` 的实时延迟与状态，并可检查 GitHub 最新版本
@@ -77,9 +78,24 @@ no packet interception, no automation.
 
 三者共用同一列、随 `Z` 瞄准布局一起下沉。
 
+### 击杀播报（SPLASH）
+
+- 自己击落**玩家**时，屏幕中心上方弹出**实心绿框**：告警语言中文显示「击落」，英文显示 `SPLASH`；
+  框下面用无框绿字显示被击落目标名；**无动画**，1.2 秒后直接消失（连续击杀排队）
+- 数据来自 8111 `/hudmsg`（4 Hz 增量轮询、按 id 去重、解析失败完全静默）
+- **只认「击落了」**：AI / 地面目标的「击毁了」、自己被击落、其它玩家的击杀都不播报
+- 用法：`F1` → 显示页第 2 页 → `玩家昵称`（与游戏内一致；ASCII 直接打字、中文用 `Ctrl+V` 粘贴）→ 打开 `击落播报`
+
+### 按机型参数（作用域）
+
+- 10 项参数支持**按机型单独覆盖**：俯仰零点 / 俯仰符号 / 坡度修正 / 矢量修正 / 失速迎角 / 迎角告警 /
+  极速 IAS / 极速 Mach / 下降率 / PULL UP 提前量
+- 生效顺序：**机型覆盖 > 机型档案（`airframes.json`）> 全局配置**
+- 编辑页顶部显示**写入层**（机型 / 全局，未识别机型时琥珀色提示）；机型详情页显示数值**来源**（机型 / 档案 / 全局）
+
 ### 告警（原有）
 
-- **超速**：IAS 超过阈值（默认 1400 km/h，可调）时速度数字变红
+- **超速**：IAS 或 Mach **双路同时判断**（任一超限即告警），阈值可调；速度数字变红 + 闪烁 `REDUCE SPEED`
 - **过载**：见上表 G 值配色
 - **油量**：续航低于 2 分钟变红
 
@@ -87,10 +103,12 @@ no packet interception, no automation.
 
 - **导航**：`GRID` 网格坐标；最近友方 / 敌方机场的相对方位与距离（`AF ↗ 4.2km`）；距地图边缘过近时闪烁红色 `RETURN ↑`；
   距**敌方机场**小于设定距离（默认 12 km，可调）时 `AF!` 变为闪烁框
-- **地形告警**：`SINK RATE`（低空 + 大下降率，全机型）；有机型雷达高度表时升级为 `PULL UP`（触发高度随下降率提高）
-- **超速**：速度数字变红 + 左右各一个闪烁红框 `REDUCE SPEED`；阈值可用 IAS(km/h) 或 Mach，机型有 `vne` 时自动用 vne
+- **地形告警**：`SINK RATE`（低空 + 大下降率，阈值按机型/全局可调）；有机型雷达高度表时升级为 `PULL UP`
+  （`PULL UP 提前量` 可配置，默认 5 s：距撞地时间小于该值即告警，按机型覆盖）
+- **超速**：速度数字变红 + 左右各一个闪烁红框 `REDUCE SPEED`；**IAS / Mach 双路同时判断**（任一超限即告警），
+  机型有 `vne` 时自动用 vne
 - **失速**：闪烁 `STALL`（琥珀=预失速，红=失速）。判定优先用**按机型校准值**（飞行中按 `Ctrl+Alt+S` 记录临界迎角），
-  其次用座舱迎角指示灯，最后用通用阈值（默认 22°）；且要求机翼卸载（Ny < 2.5）才告警，避免高速大过载误报
+  其次用座舱迎角指示灯（200 ms 防抖 + 0.85 回差，避免拉杆瞬间误闪），最后用通用阈值；且要求机翼卸载（Ny < 2.5）才告警
 - **A-10 家族减速板**：A-10 使用副翼分裂式（deceleron）减速板，遥测值随滚转抖动，
   因此改为**按减速板键切换**常亮 `AIR BRAKE`（键位可在 F1 设置，或从战雷 `.blk` 导入）
 - **其它告警**：`AOA` 过大、`BINGO` 油量见底、`RETURN` 边界警示
@@ -161,6 +179,10 @@ no packet interception, no automation.
 | 状态复位（视角/地图/计分板） | `F5` |
 
 所有按键要么是被动轮询、要么是系统热键注册；轮询的键**不会吞掉游戏输入**，热键被其他程序占用时会在日志里提示。
+
+> 按键页第 2 页底部可「从战雷 (.blk) 导入按键」：选战雷导出的 controls `.blk`，自动导入减速板 / 计分板两个键；
+> `俯仰零位(F7)`、`坡度翻转(F8)`、`纯机体固连(F9)`、`状态复位(F5)`、`长按隐藏(U)`、`失速校准(CTRL+ALT+S)` 也都能在面板里重新绑定。
+
 ## 配置项（`hud-config.json`）
 
 | 字段 | 含义 | 默认 |
@@ -178,14 +200,16 @@ no packet interception, no automation.
 | `hideOnGround` / `groundHideSpeedKmh` / `groundHideDelayMs` | 地面隐藏 / 判定速度 / 延迟 | true / 5 / 500 |
 | `tapeRadarAltitude` | 高度带优先显示雷达高度（机型支持时） | true |
 | `cursorHoleHalfPx` | 光标洞半径（px，0 = 关闭） | 16 |
-| `overspeedKmh` | 超速阈值（IAS，机型无 `vne` 时使用） | 1400 |
-| `overspeedByMach` / `overspeedMach` | 改用马赫判定 / 马赫阈值 | false / 1.80 |
+| `overspeedKmh` / `overspeedMach` | 超速阈值（IAS，机型无 `vne` 时使用 / 马赫阈值）；**两者同时判断** | 1400 / 1.80 |
+| `sinkRateMs` | 下降率告警阈值（m/s） | 40 |
+| `pullUpTtiS` | PULL UP 提前量（秒，距撞地时间小于它即告警） | 5.0 |
+| `splashEnabled` / `playerName` | 击杀播报开关 / 自己游戏昵称（用于判断「自己击落」） | true / `""` |
+| `perVehicleOverrides` | 按机型覆盖表（机型 → 参数），10 项可覆盖 | `{}` |
 | `stallKey` / `stallAoaDeg` / `stallAoaByVehicle` | 失速校准键 / 通用阈值 / 每机型校准表 | CTRL+ALT+S / 22 / {} |
 | `enemyAirfieldAlertKm` | 敌机场告警距离（km，0=关闭） | 12 |
 | `friendlySpaaKm` | 友军防空（SPAA）显示距离（km，0=关闭） | 60 |
 | `rollCouplingMode` | 坡度耦合方式：`auto` 自动 / `on` 开 / `off` 关 | auto |
 | `pitchSign` | 原生俯仰符号（0=自动判定，±1=强制） | 0 |
-| `pitchSignByVehicle` | 自动学习到的每机型俯仰符号表 | `{}` |
 | `aoaWarnDeg` | AOA 告警阈值（度） | 18 |
 | `bingoFuelSeconds` | BINGO 油量阈值（秒） | 180 |
 | `enduranceScale` | 续航标定系数（对齐游戏读数） | 1.30 |
@@ -294,8 +318,9 @@ Current version **v0.1.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 - Bezel and 25 physical buttons rendered from a **Blender model**, mapped 1:1 to the ten screen
   rows: **side key = select, CONFIRM = apply**
-- Three levels: main menu → module page (Display / Camera / Alerts / Keys / Language / DIAG) →
-  second-level page (numeric entry / key capture / confirmation)
+- Three levels: main menu → module page (Display / Camera / Alerts / Keys / Panel / Language /
+  Airframes / DIAG / Snapshots) → second-level page (numeric entry / key capture / text entry /
+  confirmation)
 - Numbers can be typed directly; key bindings are captured **live while the combo is held**
   (hold `Ctrl` → `CTRL`, then press `Q` → `CTRL+Q`, release to freeze, press again to restart)
 - Bezel text, screen text and HUD alerts each have their own Chinese/English setting;
@@ -338,15 +363,36 @@ Motion states blink amber (`GEAR DOWN`, `FLAPS DOWN`, `AIRBRAKE OUT`) and settle
 confirmation (`STB`, `FLAPS 30`, `AIRBRAKE`). The A-10 family uses deceleron brakes, so their
 airbrake indication is driven by the key instead of the noisy telemetry value.
 
+### Kill banner (SPLASH)
+
+- When **you** shoot down a player, a solid green banner appears above screen centre:
+  「击落」 when the alert language is Chinese, `SPLASH` when it is English; the victim's name is
+  shown below in plain green text. **No animation** — appears instantly, disappears after 1.2 s
+  (multiple kills queue up)
+- Data comes from 8111 `/hudmsg` (4 Hz incremental polling, de-duplicated by id, silent on errors)
+- **Only "shot down" (击落了) counts**: AI / ground "destroyed" messages, your own death and other
+  players' kills are ignored
+- Setup: `F1` → Display page 2 → `Player name` (must match the in-game name; type ASCII or paste
+  with `Ctrl+V`) → enable `Splash alerts`
+
+### Per-airframe settings
+
+- Ten parameters can be overridden per aircraft: pitch zero / pitch sign / bank trim / marker trim /
+  stall AoA / AoA warning / overspeed IAS / overspeed Mach / sink rate / PULL UP lead time
+- Resolution order: **airframe override > airframe profile (`airframes.json`) > global config**
+- The editor header shows the active **write layer**; the airframe detail page shows each value's
+  **source** (airframe / profile / global)
+
 ### Navigation and alerts
 
 - `GRID` cell, nearest friendly/enemy airfield bearing and distance (`AF ↗ 4.2km`)
 - Blinking red `RETURN ↑` near the map edge; blinking `AF!` box inside the enemy-airfield radius
-- Terrain alerts: `SINK RATE`, upgraded to `PULL UP` when the aircraft exposes radar altitude
-- Overspeed: red speed readout plus blinking `REDUCE SPEED` boxes; threshold in IAS or Mach,
-  using the aircraft `vne` when available
+- Terrain alerts: `SINK RATE` (adjustable threshold per airframe / global), upgraded to `PULL UP`
+  when the aircraft exposes radar altitude (`PULL UP lead` time is configurable, default 5 s)
+- Overspeed: red speed readout plus blinking `REDUCE SPEED` boxes; **IAS and Mach are checked
+  simultaneously** (either limit triggers it), using the aircraft `vne` when available
 - Stall: blinking `STALL` (amber = pre-stall, red = stall), using a per-aircraft calibrated
-  angle first, then the cockpit indexer, then a generic threshold
+  angle first, then the cockpit indexer (200 ms debounce + 0.85 hysteresis), then a generic threshold
 - `AOA`, `BINGO`, `RETURN` alerts
 - Only own aircraft and airfields are read; enemy units are never drawn
 
@@ -411,10 +457,21 @@ Everything except the three fixed combinations can be rebound in the F1 panel (c
 Keys are either polled passively or registered as system hotkeys; polled keys never swallow game
 input, and busy hotkeys are reported in the log.
 
+> The bottom of Keys page 2 has **"Import WT .blk keys"**: pick a War Thunder `controls` export and
+> the airbrake / scoreboard bindings are imported automatically. Pitch zero (F7), flip bank (F8),
+> body-fixed (F9), reset (F5), hold-to-hide (U) and stall calibration (CTRL+ALT+S) are rebindable
+> in the panel as well.
+
 ## Configuration (`hud-config.json`)
 
 See the table in the Chinese section above for every field; the file is written next to the
-executable and can also be edited from the MFD panel.
+executable and can also be edited from the MFD panel. Notables added in v0.3.x:
+
+- `sinkRateMs` — sink-rate alert threshold (m/s, default 40)
+- `pullUpTtiS` — PULL UP lead time in seconds (default 5.0)
+- `splashEnabled` / `playerName` — kill banner toggle / your in-game name
+- `perVehicleOverrides` — per-airframe overrides (ten parameters; airframe > profile > global)
+- `overspeedKmh` / `overspeedMach` — both limits are checked simultaneously
 
 ## Build from source
 
