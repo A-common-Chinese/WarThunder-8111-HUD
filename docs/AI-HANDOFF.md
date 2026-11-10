@@ -58,13 +58,15 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 ## 4. 当前状态快照（2026-11-10 晚）
 
 - 版本：`0.3.7`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.7 构建）
-- 分支 `v0.3.0`，**本地领先 origin 31 个提交（会随后续提交增长，以 `git rev-list --count` 为准），未 push**（约定：只本地提交，用户手动发布）
-- 最近提交：`fix(overlay): never keep the overlay visible while the game is inactive`
-- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4~0.3.7 都还没打 tag，都出过测试包）
-- 桌面发布目录：`WtHud-v0.3.4-win-x64-test.zip`（用户给反馈者的测试包，可能被用户改名）、
-  `WtHud-v0.3.3-win-x64.zip`、`RELEASE_NOTES_v0.3.3/0.3.4`（中英）、`SHA256.txt`
-- HUD 当前**没有在跑**（写完交接时 pid 已退出）；`dist-wthud\WtHud.exe` 就是 0.3.4
-- 0.3.3 已出包（是否已发布/推远端以用户说的为准）；0.3.4 是修 bug 的版本，用户正在让反馈者测试
+- 分支 `v0.3.0`，本地领先 origin（以 `git rev-list --count` 为准），**未 push**（约定：只本地提交，用户手动发布）
+- 最近提交：`docs: refresh the todo list for 0.3.7`
+- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3 / v0.3.7`（0.3.4~0.3.6 是测试包，未打 tag）
+- **0.3.7 已进入发布流程**：反馈者已实测通过（多屏点击 / 热键正常）。发布材料已备在
+  `C:\Users\noapi\Desktop\WtHud-发布\`：`WtHud-v0.3.7-win-x64.zip`(64.1 MB,
+  SHA256 `E9B5C8A9…EF65074`)、`RELEASE_NOTES_v0.3.7.md/.en.md`、`SHA256.txt`（已加 0.3.7 一条）。
+  **仍未 push 远端、未在平台上创建 release**（由用户手动做）。
+  注意同目录还留着 `WtHud-v0.3.7-win-x64-test.zip`（说明文案是"测试包"版，指纹不同），**别误传**。
+- HUD 当前没有在跑；`dist-wthud\WtHud.exe` = 0.3.7 正式构建
 
 ## 5. 立即要处理（P0）：反馈者的 F10 问题
 

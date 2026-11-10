@@ -8,7 +8,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.1.7** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.3.7** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -122,6 +122,11 @@ no packet interception, no automation.
 - **地面也显示数据类符号**（姿态类自动淡出，避免地面 AoA/AoS 噪声）
 - **光标洞可调**：`Ctrl+Alt+H` 循环 0/32/48/64/80/112/140 px（默认 32 px），
   越小越不会遮挡飞行矢量；配合光标看门狗自动清理残留箭头
+- **后台行为**：游戏不在前台时叠加层整窗隐藏（不遮挡其它窗口的点击），F1 面板打开期间保持显示。
+  v0.3.7 起「显示 > 后台隐藏」开关已删除——隐藏是无条件的
+- **单实例**：同一时间只允许一个 WtHud 运行。重复启动会弹提示并退出（两个实例会互相抢热键，
+  F10/F1 会失灵、HUD 会叠在一起）
+- **点击回跳**：切到别的窗口再点回游戏时，万一叠加层吃掉了那一下点击，会自动把游戏激活到前台
 
 ### 工程
 
@@ -302,7 +307,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 **Read-only by design**: no injection, no memory reads, no file modification, no packet
 interception, no automation. It never draws enemy positions (no ESP).
 
-Current version **v0.1.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+Current version **v0.3.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ## Screenshots
 
@@ -403,6 +408,13 @@ airbrake indication is driven by the key instead of the noisy telemetry value.
 - Cockpit view hides the HUD (nose view optional); view changes are counted with `V`
 - HUD hides while the map or scoreboard is held
 - Adjustable cursor hole (`Ctrl+Alt+H` cycles sizes) with a cursor watchdog
+- **Background behaviour**: the overlay hides itself entirely while the game is not in the foreground,
+  so it cannot block clicks on other windows; it stays visible while the F1 panel is open.
+  The "hide in background" toggle was removed in v0.3.7 — hiding is unconditional
+- **Single instance**: only one WtHud may run at a time; a second launch shows a message and exits
+  (two instances fight over the hotkeys, make F10/F1 dead and stack two HUDs)
+- **Click back**: if the overlay ever swallows the click that was meant to bring the game back to the
+  foreground, that click is turned into "activate the game"
 
 ## Requirements
 
