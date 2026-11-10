@@ -57,16 +57,25 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 
 ## 4. 当前状态快照（2026-11-10 晚）
 
-- 版本：`0.3.5`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.5 构建）
-- 分支 `v0.3.0`，**本地领先 origin 27 个提交，未 push**（约定：只本地提交，用户手动发布）
-- 最近提交：`164c883 fix(overlay): activate game when the overlay absorbs a click; log pid/version/elevation`
-- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4/0.3.5 都还没打 tag）
+- 版本：`0.3.6`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.6 构建）
+- 分支 `v0.3.0`，**本地领先 origin 30 个提交，未 push**（约定：只本地提交，用户手动发布）
+- 最近提交：`fix(overlay): single instance lock — 双开是 F10 失灵 + 整屏点不动的共同根因`
+- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4 / 0.3.5 / 0.3.6 都还没打 tag，都出过测试包）
 - 桌面发布目录：`WtHud-v0.3.4-win-x64-test.zip`（用户给反馈者的测试包，可能被用户改名）、
   `WtHud-v0.3.3-win-x64.zip`、`RELEASE_NOTES_v0.3.3/0.3.4`（中英）、`SHA256.txt`
 - HUD 当前**没有在跑**（写完交接时 pid 已退出）；`dist-wthud\WtHud.exe` 就是 0.3.4
 - 0.3.3 已出包（是否已发布/推远端以用户说的为准）；0.3.4 是修 bug 的版本，用户正在让反馈者测试
 
 ## 5. 立即要处理（P0）：反馈者的 F10 问题
+
+> **2026-11-10 深夜更新：已定性为「双实例」，0.3.6 用单实例锁堵掉。**
+> 反馈者第二个症状是「HUD 还在时，主屏整块什么都点不了，像被蒙住」。这两个症状是同一个根因：
+> 同时跑了两个 WtHud。后起的实例 `RegisterHotKey` 报 `err=1409`（F10/F1 归先起的那个），
+> 而先起的**旧实例**压在游戏窗口上吃点击（旧版本没有点击回跳），于是「HUD 还在、点不动、只能 Alt+Tab」。
+> 证据链：真机双开实测抓到 `hotkey 1 (F10) ... err=1409`；`WindowFromPoint` 在双实例时返回
+> `class=WtHudOverlayClass`、单实例时返回 `Chrome_RenderWidgetHostHWND`。
+> **待验证**：让反馈者先「任务管理器结束所有 WtHud.exe → 只开一个 0.3.6」，再看两个症状是否都消失。
+> 若 0.3.6 仍能复现（单实例、日志里只有一个 `overlay start`），再回到下面的判断表逐条查。
 
 背景：反馈者游戏以**管理员**运行、WtHud 不是 → Windows UIPI 让游戏内全局热键全部失效（F1/F10/F9…）。
 0.3.4 已修：启动时比较两者权限，游戏提权而 WtHud 没有 → **自动以管理员身份重启自己**（一次 UAC）。

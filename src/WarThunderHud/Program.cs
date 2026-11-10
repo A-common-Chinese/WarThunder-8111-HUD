@@ -401,6 +401,38 @@ public static class Program
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
         bool perf = args.Any(a => a.Equals("--perf", StringComparison.OrdinalIgnoreCase));
 
+        // 单实例：两个 WtHud 同时跑会互相偷热键（后起的那个 RegisterHotKey 报 err=1409，F10/F1 就
+        // 归了先起的那个），而且先起的那个压在游戏上会把点击吃掉（旧版本连点击回跳都没有），
+        // 表现就是"HUD 还在、但整块屏幕点不动"。自动提权重启时旧进程要等用户点 UAC 才退，
+        // 所以 --elevated-retry 多等一会儿再判定。
+        bool elevatedRetry = args.Any(a => a.Equals("--elevated-retry", StringComparison.OrdinalIgnoreCase));
+        var singleInstance = new Mutex(false, @"Local\WtHudOverlaySingleInstance");
+        bool owned;
+        try { owned = singleInstance.WaitOne(elevatedRetry ? TimeSpan.FromSeconds(10) : TimeSpan.Zero); }
+        catch (AbandonedMutexException) { owned = true; }   // 上一个实例是被强杀的，锁归我们
+        if (!owned)
+        {
+            Console.WriteLine("another WtHud overlay is already running -- exiting (single instance).\n" +
+                              "  已经有一个 WtHud 在跑了。两个实例会互相抢热键（F10 失灵）、叠加 HUD，\n" +
+                              "  旧实例还会把游戏窗口上的点击吃掉。请在任务管理器里结束所有 WtHud.exe 后只开一个。");
+            // 双击启动时没有可见控制台，必须弹窗，否则用户只看到"双击了没反应"。
+            if (!elevatedRetry)
+            {
+                try
+                {
+                    System.Windows.Forms.MessageBox.Show(
+                        "已经有一个 WtHud 在运行了。\n\n" +
+                        "同时开两个会互相抢热键（F10/F1 可能失灵）、HUD 叠在一起，\n" +
+                        "而且旧的那个会把游戏画面上的点击吃掉。\n\n" +
+                        "请在任务管理器里结束所有 WtHud.exe，然后只启动一个。",
+                        "WtHud", System.Windows.Forms.MessageBoxButtons.OK,
+                        System.Windows.Forms.MessageBoxIcon.Warning);
+                }
+                catch { }
+            }
+            return 3;
+        }
+
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         // 跟随游戏客户区：窗口化 / 副屏 / 非 100% 缩放都能对上；找不到窗口时回退主屏
