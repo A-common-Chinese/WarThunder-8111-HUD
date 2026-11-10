@@ -526,8 +526,26 @@ public static class Program
         // Windows paint the arrow cursor over the game. Redirect output to a log file and
         // hide the console, then give focus back to the game.
         var logPath = Path.Combine(AppContext.BaseDirectory, "wthud-overlay.log");
-        try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true })); } catch { }
-        Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {scrW}x{scrH} dpiScale={overlay.DpiScale:F3}");
+        try
+        {
+            Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true }));
+        }
+        catch
+        {
+            // 另一个实例还占着日志（双开，或自动提权重启时旧进程没退干净）。
+            // 以前这里静默吞掉异常 → 这个实例的日志直接丢失，排查时会被"日志里只有一次
+            // overlay start"误导。改成落到带 pid 的文件，两份日志都留得下。
+            try
+            {
+                var alt = Path.Combine(AppContext.BaseDirectory, $"wthud-overlay-{Environment.ProcessId}.log");
+                Console.SetOut(TextWriter.Synchronized(new StreamWriter(alt, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true }));
+                Console.WriteLine($"(main log busy -> writing to {Path.GetFileName(alt)})");
+            }
+            catch { }
+        }
+        Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {scrW}x{scrH} dpiScale={overlay.DpiScale:F3} " +
+                          $"pid={Environment.ProcessId} ver={typeof(Program).Assembly.GetName().Version} " +
+                          $"elevated={IsProcessElevated(Environment.ProcessId)}");
         overlayRef = overlay;
         int hotkeyFails = overlay.ApplyHotkeys(cfg);
         if (hotkeyFails > 0)
@@ -628,6 +646,22 @@ public static class Program
                 cfg.Save();
                 Console.WriteLine($"F12 -> saved hud-config.json (fov={cfg.VerticalFovDeg:F0} yoff={cfg.LayoutOffsetYDeg:F1} pzero={cfg.PitchZeroDeg:F1} bankSign={cfg.BankSign})");
             }
+        };
+
+        // 游戏以无边框窗口跑、用户切到另一块屏之后，点游戏画面回不来（只能 Alt+Tab 或点任务栏
+        // 图标）。那种合成状态下顶层覆盖层可能把这一下点击吃掉。正常情况覆盖层是穿透的、根本
+        // 收不到 WM_LBUTTONDOWN，所以这个回调不会触发；一旦触发，就说明点击被吃了，把它转成
+        // 「激活游戏」，用户就有"点一下就回来"的效果。
+        overlay.LeftClickWhileInactive = () =>
+        {
+            if (GameWindowTracker.IsActive) return;          // 已经在前台，不需要
+            if (GameWindowTracker.GameHwnd == IntPtr.Zero)
+                GameWindowTracker.TryGetClientRect(out _, out _, out _, out _, out _);   // 游戏后启动时补找一次
+            var gh = GameWindowTracker.GameHwnd;
+            if (gh == IntPtr.Zero) return;
+            Console.WriteLine($"overlay absorbed a click while the game was inactive -> activating game {gh}");
+            if (NativeMethods.IsIconic(gh)) NativeMethods.ShowWindow(gh, NativeMethods.SW_RESTORE);
+            ForceForegroundWindow(gh);
         };
 
         // Dedicated input/cursor watcher.
@@ -1607,6 +1641,26 @@ public static class Program
                 : $"{afEnemyLabel} {bestEnemy / 1000.0:F1}km";
             double alertKm = cfg.EnemyAirfieldAlertKm;
             opt.EnemyAirfieldAlert = alertKm > 0 && bestEnemy / 1000.0 < alertKm;
+        }
+    }
+
+    /// <summary>
+    /// 把游戏窗口拉回前台。SetForegroundWindow 受前台权限限制，而 WtHud 自己是
+    /// WS_EX_NOACTIVATE（拿不到前台授权），所以借用当前前台线程的输入队列再调用。
+    /// </summary>
+    private static void ForceForegroundWindow(IntPtr hwnd)
+    {
+        var fg = NativeMethods.GetForegroundWindow();
+        uint myTid = NativeMethods.GetCurrentThreadId();
+        uint fgTid = fg == IntPtr.Zero ? 0 : (uint)NativeMethods.GetWindowThreadProcessId(fg, out _);
+        bool attached = fgTid != 0 && fgTid != myTid && NativeMethods.AttachThreadInput(myTid, fgTid, true);
+        try
+        {
+            NativeMethods.SetForegroundWindow(hwnd);
+        }
+        finally
+        {
+            if (attached) NativeMethods.AttachThreadInput(myTid, fgTid, false);
         }
     }
 

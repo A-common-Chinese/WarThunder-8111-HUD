@@ -50,6 +50,15 @@ public sealed class OverlayWindow : IDisposable
     /// <summary>Raised with the hotkey id: 1 = F10 toggle HUD, 2 = F9 toggle body-fixed mode.</summary>
     public Action<int>? HotkeyPressed;
 
+    /// <summary>
+    /// Raised when a left click lands on this window. In the healthy case the overlay is
+    /// WS_EX_TRANSPARENT + HTTRANSPARENT and never sees a click; if this fires while the game is
+    /// in the background, the compositor made us own the mouse anyway (game running in a
+    /// borderless window, user on another monitor, clicking the game did nothing) and the host
+    /// turns the click into "activate the game".
+    /// </summary>
+    public Action? LeftClickWhileInactive;
+
     public OverlayWindow(int width, int height, int originX = 0, int originY = 0)
     {
         _originX = originX;
@@ -471,6 +480,13 @@ public sealed class OverlayWindow : IDisposable
                 return (IntPtr)1;
             case NativeMethods.WM_HOTKEY:
                 HotkeyPressed?.Invoke(wParam.ToInt32());
+                return IntPtr.Zero;
+            case NativeMethods.WM_LBUTTONDOWN:
+                // 正常情况收不到（窗口是穿透的）。收到了就说明这一下点击被我们吃掉了，
+                // 交给宿主去激活游戏，别让它变成"点了没反应"。
+                LeftClickWhileInactive?.Invoke();
+                return IntPtr.Zero;
+            case NativeMethods.WM_LBUTTONUP:
                 return IntPtr.Zero;
             case NativeMethods.WM_DESTROY:
                 NativeMethods.PostQuitMessage(0);

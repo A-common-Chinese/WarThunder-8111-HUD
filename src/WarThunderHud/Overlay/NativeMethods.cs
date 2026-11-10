@@ -19,6 +19,7 @@ internal static class NativeMethods
     public const int WS_VISIBLE = 0x10000000;
 
     public const int SW_SHOWNOACTIVATE = 4;
+    public const int SW_RESTORE = 9;
     public const int HWND_TOPMOST = -1;
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
@@ -27,6 +28,8 @@ internal static class NativeMethods
 
     public const int WM_DESTROY = 0x0002;
     public const int WM_NCHITTEST = 0x0084;
+    public const int WM_LBUTTONDOWN = 0x0201;
+    public const int WM_LBUTTONUP = 0x0202;
     public const int HTTRANSPARENT = -1;
     public const int WM_QUIT = 0x0012;
 
@@ -321,6 +324,12 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);

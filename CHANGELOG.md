@@ -1,6 +1,25 @@
 # Changelog
 
-## 未发布（v0.3.4）
+## 未发布（v0.3.5）
+
+### 修复
+- **多显示器：切到另一块屏后点游戏画面回不到游戏**（只能 Alt+Tab，或点任务栏图标）。
+  游戏以「无边框窗口」运行时，游戏没最小化、窗口还在屏幕上，但那一块屏被 HUD 覆盖层压着；
+  在部分合成状态下覆盖层会把这一下点击吃掉（`WindowFromPoint` 实测能返回 `WtHudOverlayClass`），
+  点击既不进游戏也不会切前台。现在覆盖层一旦真收到左键（正常穿透时收不到），就把这次点击
+  转成「激活游戏」：`IsIconic` 时先 `SW_RESTORE`，再用 `AttachThreadInput` 借前台权限调
+  `SetForegroundWindow`。日志会写 `overlay absorbed a click while the game was inactive -> activating game <hwnd>`。
+  健康状态下这段代码永不触发，不影响穿透。
+
+### 改进 / 诊断
+- **日志被静默吞掉**：第二个实例（双开、或自动提权重启时旧进程还没退干净）打不开
+  `wthud-overlay.log`（`append=false` + `FileShare.Read`），异常被 `catch { }` 吞掉，输出直接丢失
+  —— 排查时会误以为"日志里只有一次 overlay start，所以没有双实例"。现在改落到
+  `wthud-overlay-<pid>.log`，并在首行标注 `(main log busy -> ...)`。
+- **`overlay start` 行补 `pid` / `ver` / `elevated`**：以前无法确认这份日志属于哪一次运行、
+  哪个版本、是否管理员，自动提权重启（一次启动 = 两个进程接力）时尤其分不清。
+
+## v0.3.4 — 2026-11-10（已出测试包，未 tag / 未 push）
 
 ### 修复
 - **游戏以管理员身份运行时，游戏内热键全部失效**（F1/F10/F9/F7/F8/F11 按了没反应，必须先按 Win 切到桌面才灵）：
