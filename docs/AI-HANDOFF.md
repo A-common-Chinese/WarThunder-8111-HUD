@@ -58,7 +58,7 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 ## 4. 当前状态快照（2026-11-10 晚）
 
 - 版本：`0.3.6`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.6 构建）
-- 分支 `v0.3.0`，**本地领先 origin 30 个提交，未 push**（约定：只本地提交，用户手动发布）
+- 分支 `v0.3.0`，**本地领先 origin 29 个提交，未 push**（约定：只本地提交，用户手动发布）
 - 最近提交：`fix(overlay): single instance lock — 双开是 F10 失灵 + 整屏点不动的共同根因`
 - 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4 / 0.3.5 / 0.3.6 都还没打 tag，都出过测试包）
 - 桌面发布目录：`WtHud-v0.3.4-win-x64-test.zip`（用户给反馈者的测试包，可能被用户改名）、
