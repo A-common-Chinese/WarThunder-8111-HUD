@@ -375,7 +375,7 @@ public static class Program
                     }
 
                     RebindeKeys(cfg);
-                    overlayRef?.ApplyHotkeys(cfg);
+                    pendingHotkeyRefresh = true;     // 由 overlay 线程重建热键（线程亲和性）
                     overlayRef?.SetCursorHole(cfg.CursorHoleHalfPx);
                     overlayRef?.SetCursorHoleCenter(cfg.CursorHoleOffsetX, cfg.CursorHoleOffsetY);
                     Console.WriteLine("MFD settings saved (keys rebound)");
@@ -529,7 +529,13 @@ public static class Program
         try { Console.SetOut(TextWriter.Synchronized(new StreamWriter(logPath, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true })); } catch { }
         Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {scrW}x{scrH} dpiScale={overlay.DpiScale:F3}");
         overlayRef = overlay;
-        overlay.ApplyHotkeys(cfg);
+        int hotkeyFails = overlay.ApplyHotkeys(cfg);
+        if (hotkeyFails > 0)
+        {
+            // 自动提权重启时，旧进程可能还占着热键几毫秒：稍后重试注册。
+            hotkeyRetryAtTicks = Environment.TickCount64 + 1500;
+            hotkeyRetryCount = 0;
+        }
         overlay.SetCursorHole(cfg.CursorHoleHalfPx);
         overlay.SetCursorHoleCenter(cfg.CursorHoleOffsetX, cfg.CursorHoleOffsetY);
         overlay.NudgeForegroundCursor();
@@ -537,6 +543,10 @@ public static class Program
         if (console != IntPtr.Zero) NativeMethods.ShowWindow(console, NativeMethods.SW_HIDE);
         var game = System.Diagnostics.Process.GetProcessesByName("aces").FirstOrDefault();
         int gamePid = game?.Id ?? 0;
+        // 游戏是管理员权限、而本程序不是：Windows UIPI 会让全局热键在游戏前台时收不到。
+        // 直接把 WtHud 以管理员身份重启（只弹一次 UAC），否则游戏里 F1/F10/F9 全部无效。
+        elevationCheckedForPid = gamePid;
+        EnsureElevationMatchesGame(gamePid);
         if (game?.MainWindowHandle is IntPtr gameHwnd && gameHwnd != IntPtr.Zero) NativeMethods.SetForegroundWindow(gameHwnd);
 
         overlay.HotkeyPressed += id =>
@@ -637,12 +647,28 @@ public static class Program
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
             {
+                // 游戏可能在 WtHud 启动之后才起来；稍后重新找一次，并补做权限检查。
+                long searchNow = Environment.TickCount64;
+                if (gamePid == 0 && searchNow - lastGameSearchTicks > 5000)
+                {
+                    lastGameSearchTicks = searchNow;
+                    var late = System.Diagnostics.Process.GetProcessesByName("aces").FirstOrDefault();
+                    if (late != null) gamePid = late.Id;
+                }
+                if (gamePid != 0 && elevationCheckedForPid != gamePid)
+                {
+                    elevationCheckedForPid = gamePid;
+                    EnsureElevationMatchesGame(gamePid);
+                }
+
                 bool foreground = gamePid != 0 && IsForegroundProcess(gamePid);
 
                 // While another application owns the foreground, the overlay window is hidden
                 // entirely: a topmost window can still swallow clicks over its whole area even
                 // when it reports HTTRANSPARENT, which made the desktop unusable.
-                bool wantVisible = foreground || !cfg.HideWhenInactive;
+                // 例外：F1 面板打开时（面板是模态窗口、会抢前台）必须继续显示 HUD，
+                // 否则一开面板 HUD 就消失、改设置看不到效果。
+                bool wantVisible = foreground || settingsOpen || !cfg.HideWhenInactive;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 if (foreground != wasForeground)
@@ -799,6 +825,24 @@ public static class Program
         while (overlay.Running && (seconds <= 0 || clock.Elapsed.TotalSeconds < seconds))
         {
             if (!overlay.PumpMessages()) break;
+        // 面板 SAVE 后要重建热键：必须回到创建窗口的线程（overlay 线程）里做，
+        // 否则 UnregisterHotKey 注销不到原注册、RegisterHotKey 会全部报 already in use。
+        if (pendingHotkeyRefresh)
+        {
+            pendingHotkeyRefresh = false;
+            int fails = overlay.ApplyHotkeys(cfg);
+            if (fails > 0) { hotkeyRetryAtTicks = Environment.TickCount64 + 1500; hotkeyRetryCount = 0; }
+        }
+        if (hotkeyRetryAtTicks != 0 && Environment.TickCount64 >= hotkeyRetryAtTicks)
+        {
+            hotkeyRetryAtTicks = 0;
+            if (hotkeyRetryCount < 3)
+            {
+                hotkeyRetryCount++;
+                if (overlay.ApplyHotkeys(cfg) > 0)
+                    hotkeyRetryAtTicks = Environment.TickCount64 + 1500;
+            }
+        }
 
             var rawSnap = latest ?? (demo ? DemoSnapshot() : new TelemetrySnapshot { Valid = false });
             var rawAtt = latest == null && demo
@@ -1574,6 +1618,62 @@ public static class Program
         return fg == pid;
     }
 
+    /// <summary>进程是否以管理员（高完整性级别）运行。</summary>
+    private static bool IsProcessElevated(int pid)
+    {
+        if (pid == 0) return false;
+        IntPtr h = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == IntPtr.Zero) return false;
+        try
+        {
+            if (!NativeMethods.OpenProcessToken(h, NativeMethods.TOKEN_QUERY, out IntPtr token)) return false;
+            try
+            {
+                var info = new NativeMethods.TOKEN_ELEVATION();
+                if (!NativeMethods.GetTokenInformation(token, NativeMethods.TokenElevation, ref info,
+                        (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.TOKEN_ELEVATION>(),
+                        out _))
+                    return false;
+                return info.TokenIsElevated != 0;
+            }
+            finally { NativeMethods.CloseHandle(token); }
+        }
+        finally { NativeMethods.CloseHandle(h); }
+    }
+
+    /// <summary>
+    /// 游戏以管理员运行、而 WtHud 不是：UIPI 会挡住游戏在前台时的全局热键（F1/F10/F9…）。
+    /// 自动以管理员身份重启自己（只弹一次 UAC）。用 --elevated-retry 防止无限重启。
+    /// </summary>
+    private static void EnsureElevationMatchesGame(int gamePid)
+    {
+        if (gamePid == 0) return;
+        if (Environment.GetCommandLineArgs().Any(a => a == "--elevated-retry")) return;
+        if (!IsProcessElevated(gamePid) || IsProcessElevated(Environment.ProcessId)) return;
+
+        Console.WriteLine("game is elevated but WtHud is not -> restarting WtHud as administrator " +
+                          "(UIPI blocks hotkeys while an elevated window has focus)");
+        try
+        {
+            string exe = Environment.ProcessPath ?? "WtHud.exe";
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = "overlay --elevated-retry",
+                UseShellExecute = true,
+                Verb = "runas",
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("elevation relaunch cancelled/failed: " + ex.Message +
+                              " -- in-game hotkeys will NOT work; run WtHud as administrator manually");
+            return;
+        }
+        Environment.Exit(0);
+    }
+
     /// <summary>How far (0..1 of one sample) to extrapolate past the newest snapshot.</summary>
     private static double ExtrapolationFraction(TelemetrySnapshot? prev, TelemetrySnapshot? curr, DateTime now)
     {
@@ -1722,6 +1822,17 @@ public static class Program
     private static volatile bool settingsOpen;
     private static WtHud.UI.Mfd.MfdFrameForm? _mfdPanel;
     private static long lastExitPress;
+    /// <summary>F1 保存后由 overlay 线程重建热键（Unregister/RegisterHotKey 必须在注册它的线程上调用）。</summary>
+    private static volatile bool pendingHotkeyRefresh;
+
+    /// <summary>已经检查过权限的游戏 pid（游戏重启后 pid 变化会重新检查）。</summary>
+    private static int elevationCheckedForPid;
+    private static long lastGameSearchTicks;
+
+    /// <summary>热键注册失败时的重试（自动提权重启的瞬间，旧进程可能仍占着热键）。</summary>
+    private static long hotkeyRetryAtTicks;
+    private static int hotkeyRetryCount;
+
     private static bool lastCursorShowing = true;
     private static WtHud.Input.KeyBinding _zoomKeyBinding = WtHud.Input.KeyBinding.Parse("Z", 0x5A, "Z");
     private static WtHud.Input.KeyBinding _viewKeyBinding = WtHud.Input.KeyBinding.Parse("V", 0x56, "V");

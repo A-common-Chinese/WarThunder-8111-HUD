@@ -50,10 +50,13 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 
 ## 3. 当前版本与提交
 
-- 版本号：`0.3.3`（`WarThunderHud.csproj`；发布材料已备好：zip/notes/SHA/封面在 `C:\Users\noapi\Desktop\WtHud-发布\`，由用户手动发布）
-- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（`02f3cd7`，已随发布推远端）、`v0.3.3`（当前 HEAD）
+- 版本号：`0.3.4`（`WarThunderHud.csproj`；0.3.3 已出包，0.3.4 修「游戏提权时热键失效 / 面板开 HUD 隐藏 / SAVE 后热键重注册失败」）
+- 分支：`v0.3.0`（本地领先远端，**未 push**）；tag 本地有 `v0.3.0`（030845e）、`v0.3.1`（`98ceb9f`）、`v0.3.2`（`02f3cd7`）、`v0.3.3`（`df97024`）
 - 最近提交（新→旧）：
-  - `066103c` feat(hud): SPLASH 中文化（击落/SLASH）+ 中文字距控制
+  - 待提交：fix(hotkey): 游戏提权时自动以管理员重启 + 面板打开不隐藏 HUD + overlay 线程重建热键
+  - `205dd05` docs: README v0.3.3 + English release notes
+  - `df97024` release: v0.3.3 - SPLASH kill banner, PULL UP lead time, auto write-layer fix
+  - `066103c` feat(hud): SPLASH 中文化（击落/SPLASH）+ 中文字距控制
   - `e85311a` fix(hud): SPLASH 框压扁
   - `45f6051` feat(hud): SPLASH 实心绿底、中心上方、无动画
   - `c1f5edc` fix(stall): F/A-18A STALL 闪烁（AOA 指示器防抖）
@@ -253,6 +256,9 @@ $env:WT_MFD_PANEL='en'; $env:WT_MFD_SCREEN='zh'
 31. 雷达高度单位：`WtHud.exe selftest` → 2 项 `radio altitude` PASS（1000 ft → 304.8 m）；进游戏低空看 RA 带 ≈ 座舱英尺读数 × 0.3048，PULL UP 不再偏晚
 32. SPLASH：`WtHud.exe selftest` → 6 项 killfeed 检查 PASS；`preview out.png 1920 1080 splash` 出图有中心 SPLASH 框+目标名；`mfdpreview out.png display2` 有「击落播报 / 玩家昵称」两行；进对局击落玩家 → 1.2 s 播报，AI/地面/被击落不播
 33. PULL UP 提前量：告警页改成 6 s → 日志 `PULL UP ON: ralt=... tti=...` 出现更早（tti 门限 6）；机型覆盖后详情/生效值一致；`overspeedByMach` 不再存在于 `hud-config.json` 新存档
+34. 提权兼容（v0.3.4）：游戏以管理员运行时启动 WtHud → 日志出现 `game is elevated but WtHud is not -> restarting WtHud as administrator`，UAC 确认后新进程起来；游戏内 F1/F10/F9 直接可用（反馈者已实测管理员运行后 F1/F10 正常）
+35. 面板不隐藏 HUD（v0.3.4）：F1 打开面板 → HUD 仍然显示；关闭面板后正常
+36. SAVE 后热键（v0.3.4）：F1 → 改一个键 → SAVE → 日志不再出现 `hotkey N ... could not be registered`；新键立即生效（无需重启）；`err=` 字段只在真冲突时出现
 
 ## 8. 协作约定
 

@@ -123,9 +123,13 @@ public sealed class OverlayWindow : IDisposable
     /// <summary>
     /// (Re)registers every configurable HUD hotkey from the config. Movement, FOV and roll
     /// coupling stay fixed on their own combinations.
+    /// Returns the number of configurable hotkeys that failed to register (0 = all OK).
+    /// Must be called on the thread that created the window: UnregisterHotKey/RegisterHotKey
+    /// are thread-affine, otherwise every re-registration fails with "already in use".
     /// </summary>
-    public void ApplyHotkeys(HudConfig cfg)
+    public int ApplyHotkeys(HudConfig cfg)
     {
+        int failed = 0;
         for (int id = 1; id <= 14; id++) NativeMethods.UnregisterHotKey(_hwnd, id);
 
         void Bind(int id, string text, uint fallbackVk, string fallbackName, uint forcedMods = 0)
@@ -136,7 +140,10 @@ public sealed class OverlayWindow : IDisposable
             if (b.Shift) mods |= NativeMethods.MOD_SHIFT_KEY;
             if (b.Alt) mods |= NativeMethods.MOD_ALT_KEY;
             if (!NativeMethods.RegisterHotKey(_hwnd, id, mods, b.VirtualKey))
-                Console.WriteLine($"hotkey {id} ({b.Text}) could not be registered (already in use?)");
+            {
+                failed++;
+                Console.WriteLine($"hotkey {id} ({b.Text}) could not be registered (already in use? err={Marshal.GetLastWin32Error()})");
+            }
         }
 
         Bind(1, cfg.ShowKey, 0x79, "F10");            // show / hide HUD
@@ -154,6 +161,7 @@ public sealed class OverlayWindow : IDisposable
         NativeMethods.RegisterHotKey(_hwnd, 8, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_PRIOR);
         NativeMethods.RegisterHotKey(_hwnd, 9, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_NEXT);
         NativeMethods.RegisterHotKey(_hwnd, 11, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_R);
+        return failed;
     }
 
     /// <summary>Re-assert the invisible cursor right after a region change (Windows re-evaluates

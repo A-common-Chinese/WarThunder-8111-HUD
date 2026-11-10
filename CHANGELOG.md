@@ -1,4 +1,18 @@
-﻿# Changelog
+# Changelog
+
+## 未发布（v0.3.4）
+
+### 修复
+- **游戏以管理员身份运行时，游戏内热键全部失效**（F1/F10/F9/F7/F8/F11 按了没反应，必须先按 Win 切到桌面才灵）：
+  游戏进程提权后，Windows UIPI 会把非管理员进程的全局热键挡在前台窗口之外。现在启动时（以及游戏重启后）比较游戏与
+  WtHud 的权限：游戏是管理员而 WtHud 不是 → **自动以管理员身份重启自己**（一次 UAC；`--elevated-retry` 防循环；
+  UAC 被取消时日志明确提示手动以管理员运行）。反馈者已验证管理员运行后 F1/F10 正常。
+- **F1 面板打开时 HUD 自动隐藏**：可见性判断 `wantVisible` 漏了 `settingsOpen`，面板抢到前台后 `foreground=false`
+  就把覆盖层藏了。现在面板打开期间强制显示 HUD（改设置能实时看到效果）。
+- **面板 SAVE 后热键重注册全部失败**（日志 `hotkey N ... could not be registered (already in use?)`）：
+  `ApplyHotkeys` 在 MFD 的 STA 线程执行，而 `UnregisterHotKey/RegisterHotKey` 是线程绑定的，注销不掉原注册。
+  现在改回由 overlay 线程重建；失败日志带 Win32 错误码；注册失败会自动重试最多 3 次（覆盖自动提权重启时旧进程
+  还没释放热键的瞬间）。
 
 ## v0.3.3 — 2026-11-09
 
