@@ -57,10 +57,10 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 
 ## 4. 当前状态快照（2026-11-10 晚）
 
-- 版本：`0.3.6`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.6 构建）
+- 版本：`0.3.7`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.7 构建）
 - 分支 `v0.3.0`，**本地领先 origin 29 个提交，未 push**（约定：只本地提交，用户手动发布）
-- 最近提交：`fix(overlay): single instance lock — 双开是 F10 失灵 + 整屏点不动的共同根因`
-- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4 / 0.3.5 / 0.3.6 都还没打 tag，都出过测试包）
+- 最近提交：`fix(overlay): never keep the overlay visible while the game is inactive`
+- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4~0.3.7 都还没打 tag，都出过测试包）
 - 桌面发布目录：`WtHud-v0.3.4-win-x64-test.zip`（用户给反馈者的测试包，可能被用户改名）、
   `WtHud-v0.3.3-win-x64.zip`、`RELEASE_NOTES_v0.3.3/0.3.4`（中英）、`SHA256.txt`
 - HUD 当前**没有在跑**（写完交接时 pid 已退出）；`dist-wthud\WtHud.exe` 就是 0.3.4
@@ -68,7 +68,16 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 
 ## 5. 立即要处理（P0）：反馈者的 F10 问题
 
-> **2026-11-10 深夜更新：已定性为「双实例」，0.3.6 用单实例锁堵掉。**
+> **2026-11-10 深夜更新 2：整屏点不动的根因是「后台不隐藏」那个分支，0.3.7 已删。**
+> 反馈者换 0.3.6（单实例已生效）后仍然"运行新程序后无法点击任何主屏幕的程序"。回头查代码发现
+> `wantVisible = foreground || settingsOpen || !cfg.HideWhenInactive` 里的最后一项，正好造出
+> `OverlayWindow.SetVisible` 注释里早就写明的不可用状态（"顶层窗口即使返回 HTTRANSPARENT 也可能
+> 吃掉整片区域的点击"）。0.3.7 改成无条件 `foreground || settingsOpen`。
+> 真机对照：同一份 `hideWhenInactive=false` 配置，修前 `WindowFromPoint` 返回
+> `class=WtHudOverlayClass`，修后返回 `Chrome_RenderWidgetHostHWND`。
+> **`显示 > 后台隐藏` 这个开关现在等于失效**（隐藏是强制的）——是删掉这一行还是改成别的语义，等用户定。
+>
+> **2026-11-10 深夜更新 1：双实例已定性（不是唯一原因，但确实是 F10 的独立成因），0.3.6 用单实例锁堵掉。**
 > 反馈者第二个症状是「HUD 还在时，主屏整块什么都点不了，像被蒙住」。这两个症状是同一个根因：
 > 同时跑了两个 WtHud。后起的实例 `RegisterHotKey` 报 `err=1409`（F10/F1 归先起的那个），
 > 而先起的**旧实例**压在游戏窗口上吃点击（旧版本没有点击回跳），于是「HUD 还在、点不动、只能 Alt+Tab」。

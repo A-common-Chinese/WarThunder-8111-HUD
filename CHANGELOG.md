@@ -1,6 +1,24 @@
 # Changelog
 
-## 未发布（v0.3.6）
+## 未发布（v0.3.7）
+
+### 修复
+- **游戏在后台时，游戏那块屏（主屏）整块点不动**（反馈者："像被 HUD 蒙住了"，单实例也一样）。
+  根因是 `wantVisible` 里的 `|| !cfg.HideWhenInactive`：把「后台不隐藏 HUD」打开后，覆盖层会一直
+  留在游戏那块显示器上；而它自己的代码注释早就写了"顶层窗口即使返回 HTTRANSPARENT 也可能吃掉整片
+  区域的点击，导致桌面不可用"。两者互相矛盾，这就是那个不可用状态。
+  现在**无条件在游戏不进前台时隐藏覆盖层**（F1 面板打开期间仍然显示）。真机验证：同一份
+  `hideWhenInactive=false` 配置，修前 `WindowFromPoint` 返回 `class=WtHudOverlayClass`，修后返回
+  桌面窗口。
+  > 取舍说明：`显示 > 后台隐藏` 这个开关现在不再生效（隐藏是强制的）。多点一块屏点不动，比少看
+  > 一会儿 HUD 严重得多。要不要把这个行从面板里删掉，待定。
+
+### 诊断
+- **日志第二行打印关键配置**：`cfg: hideWhenInactive=... cursorHole=... show=... settings=... reset=...
+  view=... pitchZero=... bankFlip=... bodyFixed=... exit=... save=... playerName=...`。
+  以前排查 F10 / 点击问题只能反复问用户要 `hud-config.json`，现在一份日志就够。
+
+## v0.3.6 — 2026-11-10（已出测试包，未 tag / 未 push）
 
 ### 修复
 - **同时跑两个 WtHud 导致的热键失灵 / 整块屏幕点不动**（这是 F10 反馈与「像被 HUD 蒙住」的共同根因）：
