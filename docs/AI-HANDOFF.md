@@ -75,7 +75,12 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 > 吃掉整片区域的点击"）。0.3.7 改成无条件 `foreground || settingsOpen`。
 > 真机对照：同一份 `hideWhenInactive=false` 配置，修前 `WindowFromPoint` 返回
 > `class=WtHudOverlayClass`，修后返回 `Chrome_RenderWidgetHostHWND`。
-> **`显示 > 后台隐藏` 这个开关现在等于失效**（隐藏是强制的）——是删掉这一行还是改成别的语义，等用户定。
+> **`显示 > 后台隐藏` 开关已连同 `hideWhenInactive` 字段一起删除**（用户拍板：它当初只是为解决"HUD 一直显示
+> 在最前面"，隐藏既然已经无条件生效，留这个开关等于给未来留一个能重新踩回"整屏点不动"的口子）。
+> 改动点 8 处：`HudConfig`（删字段）、`MfdPages`（删 Toggle 行）、`L10n`（删 `row.hideBg`）、
+> `MfdFrameForm`（恢复默认里的同步）、`Program.cs`（删覆写告警 + cfg 日志里的字段）、
+> `Resources/help-desc-default.json`（页描述改写 + 删该行说明）。
+> 兼容性已实测：老配置里残留 `"hideWhenInactive": false` 仍能正常启动（`System.Text.Json` 默认忽略未知字段）。
 >
 > **2026-11-10 深夜更新 1：双实例已定性（不是唯一原因，但确实是 F10 的独立成因），0.3.6 用单实例锁堵掉。**
 > 反馈者第二个症状是「HUD 还在时，主屏整块什么都点不了，像被蒙住」。这两个症状是同一个根因：

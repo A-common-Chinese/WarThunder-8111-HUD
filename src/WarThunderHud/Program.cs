@@ -580,7 +580,7 @@ public static class Program
                           $"elevated={IsProcessElevated(Environment.ProcessId)}");
         // 排查"点了没反应 / 整块屏点不动"必须知道用户的这几个设置，以前日志里没有，
         // 只能反复问人要 hud-config.json。
-        Console.WriteLine($"cfg: hideWhenInactive={cfg.HideWhenInactive} cursorHole={cfg.CursorHoleHalfPx} " +
+        Console.WriteLine($"cfg: cursorHole={cfg.CursorHoleHalfPx} " +
                           $"show={cfg.ShowKey} settings={cfg.SettingsKey} reset={cfg.ResetKey} view={cfg.ViewKey} " +
                           $"pitchZero={cfg.PitchZeroKey} bankFlip={cfg.BankFlipKey} bodyFixed={cfg.BodyFixedKey} " +
                           $"exit={cfg.ExitKey} save={cfg.SaveKey} " +
@@ -717,7 +717,6 @@ public static class Program
             long lastViewToggleTicks = 0;
             long lastToggleTicks = 0;
             bool wasForeground = false;
-            bool warnedBackgroundOverride = false;
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
             {
@@ -743,19 +742,12 @@ public static class Program
                 // 例外：F1 面板打开时（面板是模态窗口、会抢前台）必须继续显示 HUD，
                 // 否则一开面板 HUD 就消失、改设置看不到效果。
                 //
-                // ★ 2026-11-10：以前这里还有 `|| !cfg.HideWhenInactive`，让"后台不隐藏"的用户
-                // 保留 HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏
-                // 之后，游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。多点一块屏
-                // 点不动，比少看一会儿 HUD 严重得多，所以现在无条件在后台隐藏；配置值仍然写进
-                // 日志首行，方便确认用户是不是设过它。
+                // ★ 2026-11-10：以前这里还有 `|| !cfg.HideWhenInactive`，让"后台不隐藏"的用户保留
+                // HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏之后，
+                // 游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。现在隐藏是无条件的，
+                // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
                 bool wantVisible = foreground || settingsOpen;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
-                if (!cfg.HideWhenInactive && !warnedBackgroundOverride && gamePid != 0 && !foreground && !settingsOpen)
-                {
-                    warnedBackgroundOverride = true;
-                    Console.WriteLine("hideWhenInactive=false is being ignored: the overlay is hidden while the game " +
-                                      "is inactive (a topmost window over the game's monitor can swallow every click there)");
-                }
 
                 if (foreground != wasForeground)
                 {

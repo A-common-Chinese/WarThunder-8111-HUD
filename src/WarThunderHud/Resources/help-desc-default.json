@@ -8,8 +8,8 @@
     "en": "Main menu: pick a module with the side keys, CONFIRM enters it; PAGE flips within a module."
   },
   "page.display": {
-    "zh": "显示设置：HUD 总开关、后台隐藏、视场角、整体偏移、俯仰零点、光标洞、俯仰梯与飞行矢量等。",
-    "en": "Display: HUD master switch, hide when background, FoV, vertical offset, pitch zero, cursor hole, ladder and FPM."
+    "zh": "显示设置：HUD 总开关、视场角、整体偏移、俯仰零点、光标洞、俯仰梯与飞行矢量等。",
+    "en": "Display: HUD master switch, FoV, vertical offset, pitch zero, cursor hole, ladder and FPM."
   },
   "page.camera": {
     "zh": "视角与姿态：俯仰零点校准、俯仰梯显示、飞行矢量标记、坡度方向与微调、相机滚转耦合。",
@@ -70,10 +70,6 @@
   "row.showHud": {
     "zh": "显示 HUD：叠加层总开关，关闭后仍运行但不再绘制。",
     "en": "Show HUD: master switch for the overlay; it keeps running but draws nothing when off."
-  },
-  "row.hideBg": {
-    "zh": "后台隐藏：游戏不在前台时自动隐藏叠加层。",
-    "en": "Hide in background: hide the overlay while the game is not the foreground window."
   },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",

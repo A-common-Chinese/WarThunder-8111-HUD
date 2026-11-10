@@ -10,12 +10,16 @@
   现在**无条件在游戏不进前台时隐藏覆盖层**（F1 面板打开期间仍然显示）。真机验证：同一份
   `hideWhenInactive=false` 配置，修前 `WindowFromPoint` 返回 `class=WtHudOverlayClass`，修后返回
   桌面窗口。
-  > 取舍说明：`显示 > 后台隐藏` 这个开关现在不再生效（隐藏是强制的）。多点一块屏点不动，比少看
-  > 一会儿 HUD 严重得多。要不要把这个行从面板里删掉，待定。
+
+### 移除
+- **删除「显示 > 后台隐藏」开关（连同 `hideWhenInactive` 字段）**。它当初是为了解决"HUD 一直显示在
+  最前面"，而隐藏现在已经无条件生效，这个开关只剩一个坏处：关掉之后会造出上面那个"整块屏点不动"
+  的不可用状态，等于给未来留了一个能重新踩回去的口子。老配置里残留的 `hideWhenInactive` 会被
+  `System.Text.Json` 当未知字段忽略，不报错，下次 SAVE 自动消失（已实测 JSON 仍可正常加载）。
 
 ### 诊断
-- **日志第二行打印关键配置**：`cfg: hideWhenInactive=... cursorHole=... show=... settings=... reset=...
-  view=... pitchZero=... bankFlip=... bodyFixed=... exit=... save=... playerName=...`。
+- **日志第二行打印关键配置**：`cfg: cursorHole=... show=... settings=... reset=... view=...
+  pitchZero=... bankFlip=... bodyFixed=... exit=... save=... playerName=...`。
   以前排查 F10 / 点击问题只能反复问用户要 `hud-config.json`，现在一份日志就够。
 
 ## v0.3.6 — 2026-11-10（已出测试包，未 tag / 未 push）

@@ -175,8 +175,11 @@ public sealed class HudConfig
     /// <summary>Hide the HUD without quitting (same as F10).</summary>
     [JsonPropertyName("hudVisible")] public bool HudVisible { get; set; } = true;
 
-    /// <summary>Hide the overlay while another window is focused (default true).</summary>
-    [JsonPropertyName("hideWhenInactive")] public bool HideWhenInactive { get; set; } = true;
+    // 2026-11-10 移除 hideWhenInactive：以前"后台是否隐藏叠加层"是可选项，关掉后覆盖层会一直留在
+    // 游戏那块显示器上，而顶层窗口在部分合成状态下会把整片区域的点击吃掉（见 OverlayWindow.
+    // SetVisible 的注释），实测表现是"游戏那块屏什么都点不了"。现在隐藏是无条件行为
+    // （Program.cs 的 wantVisible），这个开关没有合法用法，字段一起删掉。
+    // 老配置里残留的 "hideWhenInactive" 会被 System.Text.Json 当未知字段忽略，不报错，下次 SAVE 自动消失。
 
     /// <summary>Show raw gear/flaps/airbrake values and flags for diagnosis.</summary>
     [JsonPropertyName("configDebug")] public bool ConfigDebug { get; set; }

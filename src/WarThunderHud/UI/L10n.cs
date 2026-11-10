@@ -162,7 +162,6 @@ public static class L10n
         ["hint.item"] = ("确认 切换 · 右键 反向 · 返回 上一级", "CONFIRM TOGGLE · RMB REVERSE · BACK"),
         // 行标签
         ["row.showHud"] = ("显示 HUD", "SHOW HUD"),
-        ["row.hideBg"] = ("后台隐藏", "HIDE IF BACKGROUND"),
         ["row.fov"] = ("FOV 视场角", "FIELD OF VIEW"),
         ["row.yoff"] = ("垂直偏移", "VERTICAL OFFSET"),
         ["row.pitchzero"] = ("俯仰零点", "PITCH ZERO"),

@@ -1655,7 +1655,6 @@ public sealed class MfdFrameForm : Form
         _work.LayoutOffsetYDeg = fresh.LayoutOffsetYDeg;
         _work.PitchZeroDeg = fresh.PitchZeroDeg;
         _work.CursorHoleHalfPx = fresh.CursorHoleHalfPx;
-        _work.HideWhenInactive = fresh.HideWhenInactive;
         _work.HideInCockpit = fresh.HideInCockpit;
         _work.HideInNose = fresh.HideInNose;
         _work.HideOnGround = fresh.HideOnGround;
