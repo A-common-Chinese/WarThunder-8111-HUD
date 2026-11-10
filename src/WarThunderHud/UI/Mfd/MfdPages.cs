@@ -204,6 +204,8 @@ internal static class MfdPages
             Number("row.hole", c => c.CursorHoleHalfPx, (c, v) => c.CursorHoleHalfPx = (int)v, 2, 0, 200, "px"),
             Toggle("row.ladder", c => c.ShowPitchLadder, (c, v) => c.ShowPitchLadder = v),
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
+            Toggle("row.formation", c => c.FormationAssist, (c, v) => c.FormationAssist = v),
+            Toggle("row.formationOnly", c => c.FormationOnly, (c, v) => c.FormationOnly = v),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),

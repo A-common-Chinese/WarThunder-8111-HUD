@@ -42,6 +42,21 @@ public sealed class MapData : IDisposable
     /// <summary>Spotted ground units: position, icon class (SPAA/IFV/tank) and friend flag.</summary>
     public List<(double X, double Y, string Icon, bool Friendly)> GroundUnits { get; private set; } = new();
 
+    /// <summary>
+    /// 友军飞机（已按 color 过滤，**不含敌人**）。归一化坐标 + 单位方向向量（航向）。
+    /// map_obj 里敌人也会出现，所以这里必须白名单：非蓝系一律不进这个表。
+    /// </summary>
+    public List<MapAircraft> Friendlies { get; private set; } = new();
+
+    /// <summary>
+    /// 编队功能开关：关掉时连友机表都不解析（"不进行编队数据的运算"）。
+    /// 由宿主按 hud-config 的编队开关每帧设置。
+    /// </summary>
+    public bool CollectFriendlies { get; set; }
+
+    /// <summary>地图上的一架友机：位置（0..1 归一化）、航向单位向量、图标类别。</summary>
+    public readonly record struct MapAircraft(double X, double Y, double Dx, double Dy, string Icon);
+
     /// <summary>Playable map size in metres (x, y).</summary>
     public (double X, double Y) MapSizeM { get; private set; }
 
@@ -122,6 +137,7 @@ public sealed class MapData : IDisposable
         (double, double)? self = null;
         int aircraftCount = 0;
         var units = new List<(double X, double Y, string Icon, bool Friendly)>();
+        var friendlies = new List<MapAircraft>();
         var fields = new List<MapPoint>();
 
         foreach (var e in doc.RootElement.EnumerateArray())
@@ -131,28 +147,28 @@ public sealed class MapData : IDisposable
 
             if (type == "aircraft")
             {
-                if (icon != "Player") aircraftCount++;
-            }
+                if (icon == "Player")
+                {
+                    self = (GetDouble(e, "x"), GetDouble(e, "y"));
+                    continue;
+                }
 
-            if (type == "aircraft" && icon == "Player")
-            {
-                self = (GetDouble(e, "x"), GetDouble(e, "y"));
+                aircraftCount++;
+
+                // ★ 只保留友军。map_obj 里敌人也会出现（color 红系 #fa0C00），
+                // 把敌人位置画到 HUD 上就等于 ESP —— 本项目明确不做的红线。
+                // 颜色判据与地面单位/机场一致：蓝通道 > 红通道 = 友军。
+                // CollectFriendlies 由编队开关控制：关掉时连这一步解析都不做。
+                if (CollectFriendlies && IsFriendlyColor(e))
+                    friendlies.Add(new MapAircraft(GetDouble(e, "x"), GetDouble(e, "y"),
+                                                   GetDouble(e, "dx"), GetDouble(e, "dy"), icon));
                 continue;
             }
 
             // 友方地面单位：只记录会出现在地图上的已侦察单位（用于全真导航）
             if (type == "ground_model")
             {
-                bool unitFriendly = false;
-                string ucolor = e.TryGetProperty("color", out var uc) ? uc.GetString() ?? "" : "";
-                if (ucolor.Length >= 7 && ucolor[0] == '#'
-                    && int.TryParse(ucolor.Substring(1, 2), NumberStyles.HexNumber,
-                                    CultureInfo.InvariantCulture, out int ur)
-                    && int.TryParse(ucolor.Substring(5, 2), NumberStyles.HexNumber,
-                                    CultureInfo.InvariantCulture, out int ub))
-                    unitFriendly = ub > ur;
-
-                if (unitFriendly)
+                if (IsFriendlyColor(e))
                 {
                     // 地面单位用 x/y（机场才是 sx/sy 线段）
                     units.Add((GetDouble(e, "x"), GetDouble(e, "y"), icon, true));
@@ -188,6 +204,7 @@ public sealed class MapData : IDisposable
         if (fields.Count > 0) _lastGoodMap = DateTime.UtcNow;
 
         Self = self;
+        Friendlies = friendlies;
         GroundUnits = units;
         AircraftMarkers = aircraftCount;
         Airfields = fields;
@@ -244,6 +261,19 @@ public sealed class MapData : IDisposable
             double sx = st[0].GetDouble(), sy = st[1].GetDouble();
             if (sx > 1 && sy > 1) GridStepM = (sx, sy);
         }
+    }
+
+    /// <summary>
+    /// /map_obj 的 color 是敌我标识：蓝系（如 #174DFF）= 友军，红系（如 #fa0C00）= 敌人。
+    /// 用通道比较而不是精确匹配十六进制，避免联队配色/高亮导致漏判。
+    /// </summary>
+    private static bool IsFriendlyColor(JsonElement e)
+    {
+        string color = e.TryGetProperty("color", out var c) ? c.GetString() ?? "" : "";
+        if (color.Length < 7 || color[0] != '#') return false;
+        if (!int.TryParse(color.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int r)) return false;
+        if (!int.TryParse(color.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int b)) return false;
+        return b > r;
     }
 
     private static double GetDouble(JsonElement e, string name)

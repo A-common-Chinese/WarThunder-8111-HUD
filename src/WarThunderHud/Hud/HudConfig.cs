@@ -128,6 +128,12 @@ public sealed class HudConfig
     /// <summary>Show the flight path marker (velocity vector).</summary>
     [JsonPropertyName("showFpm")] public bool ShowFpm { get; set; } = true;
 
+    /// <summary>编队辅助：在航向带上标出友机方位与距离（只友军，按 color 过滤）。</summary>
+    [JsonPropertyName("formationAssist")] public bool FormationAssist { get; set; }
+
+    /// <summary>编队模式：隐藏原 HUD 其余元素，只留友机信息 + 速度/高度/航向三个读数。</summary>
+    [JsonPropertyName("formationOnly")] public bool FormationOnly { get; set; }
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 

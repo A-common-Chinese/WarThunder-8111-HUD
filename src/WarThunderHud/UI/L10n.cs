@@ -170,6 +170,8 @@ public static class L10n
         ["row.hole"] = ("光标洞半径", "CURSOR HOLE"),
         ["row.ladder"] = ("俯仰梯", "PITCH LADDER"),
         ["row.fpm"] = ("速度矢量", "FLIGHT MARKER"),
+        ["row.formation"] = ("编队辅助", "FORMATION"),
+        ["row.formationOnly"] = ("编队模式", "FORMATION ONLY"),
         ["row.extrapolate"] = ("插值平滑", "EXTRAPOLATE"),
         ["row.version"] = ("版本", "VERSION"),
         ["row.hideCockpit"] = ("座舱隐藏", "HIDE IN COCKPIT"),

@@ -8,6 +8,9 @@ using WtHud.UI;
 
 namespace WtHud.Hud;
 
+/// <summary>一架友机的**相对**方位（已减去本机航向）与距离。几何层不需要知道航向，无罗盘机型也能用。</summary>
+public readonly record struct FriendlyContact(double RelBearingDeg, double RangeM, string Icon);
+
 public sealed class HudOptions
 {
     public HudColor Color { get; set; } = new(60, 255, 110);
@@ -19,6 +22,22 @@ public sealed class HudOptions
     public bool ShowSpeedTape { get; set; } = true;
     public bool ShowAltTape { get; set; } = true;
     public bool ShowHeadingTape { get; set; } = true;
+
+    /// <summary>编队辅助：在航向带上标出友机方位与距离（只画友军，敌人永远不进这个列表）。</summary>
+    public bool FormationAssist { get; set; }
+
+    /// <summary>
+    /// 编队模式：收掉俯仰梯 / 数据带 / 数值区 / 导航 / 构型，只留友机方位 + 最小自机读数
+    /// （速度、高度、航向）。安全告警（地形/失速/超速）和击落播报仍然保留 —— 它们平时不显示，
+    /// 触发时才出现，不占视野，但省掉会出人命。
+    /// </summary>
+    public bool FormationOnly { get; set; }
+
+    /// <summary>友机标记用的颜色（与主色区分开，便于一眼辨认）。</summary>
+    public HudColor FriendlyColor { get; set; } = new(120, 200, 255);
+
+    /// <summary>本帧的友机相对方位与距离，由宿主（Program）每帧填充。</summary>
+    public List<FriendlyContact> Friendlies { get; } = new();
     public bool ShowFpm { get; set; } = true;
     public bool ShowDataBlock { get; set; } = true;
     public bool ShowSourceLabel { get; set; } = true;
@@ -267,6 +286,20 @@ public sealed class HudGeometry
             return prims;
         }
 
+        if (_opt.FormationOnly)
+        {
+            // 编队模式：视野中心完全留给外部视觉，只保留编队信息 + 三个最小读数。
+            // 航向带保留 —— 友机标记的方位是相对航向的，没有带就没有参照。
+            if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
+            AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
+            AddFormationReadout(prims, s, cx, cy, pxDeg, font, fontSmall);
+            AddTerrainAlerts(prims, cx, cy, pxDeg, font);
+            AddOverspeedAlert(prims, cx, cy, pxDeg, font);
+            AddStallAlert(prims, cx, cy, pxDeg, font);
+            AddSplash(prims, cx, cy, pxDeg, font, line);
+            return prims;
+        }
+
         double attAlpha = att.Source == AttitudeSource.Unavailable ? 0.0 : Math.Clamp(att.Confidence, 0, 1);
         if (_opt.BodyFixedOnly) attAlpha = 0.0;
 
@@ -276,6 +309,7 @@ public sealed class HudGeometry
             AddHorizon(prims, att, cx, cyLadder, pxDeg, line, attAlpha);
         if (_opt.ShowBankScale && attAlpha > 0.05) AddBankScale(prims, att, cx, cy, pxDeg, line, fontSmall, attAlpha);
         if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
+        if (_opt.FormationAssist) AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
         if (_opt.ShowSpeedTape) AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
         if (_opt.ShowAltTape) AddAltTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
         if (_opt.ShowFpm) AddFpm(prims, s, cx, cy, pxDeg, line);
@@ -496,6 +530,110 @@ public sealed class HudGeometry
             Color = Fade(_opt.WarnColor, alpha),
             Points = { (cx + Math.Cos(pa) * signR, cy + Math.Sin(pa) * signR) },
         });
+    }
+
+    /// <summary>
+    /// 编队辅助：友机三角标在航向带**上方**（标在带上会和刻度数字打架）。
+    /// 超出航向带可见范围（±25°）就退化成端头指向箭头，提示往哪边转能看到他。
+    /// 这里没有高度差：map_obj 不含 z 坐标，单机拿不到，只能等数据链。
+    /// </summary>
+    private void AddFormationAssist(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
+                                    double pxDeg, double line, double fontSmall)
+    {
+        if (_opt.Friendlies.Count == 0) return;
+
+        double y = cy - _headingOffsetDeg * pxDeg;
+        double span = HeadingHalfSpanDeg * pxDeg;
+        double pxPerDeg = 0.24 * pxDeg;          // 与 AddHeadingTape 的刻度比例必须一致
+        var col = _opt.FriendlyColor;
+
+        int shown = 0;
+        foreach (var f in _opt.Friendlies)
+        {
+            if (shown >= 4) break;
+
+            double d = f.RelBearingDeg;
+            while (d > 180) d -= 360;
+            while (d < -180) d += 360;
+
+            double x = cx + d * pxPerDeg;
+            bool onTape = Math.Abs(x - cx) <= span;
+
+            if (onTape)
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Polyline, Width = line, Color = col,
+                    Points =
+                    {
+                        (x, y - 1.0 * pxDeg), (x - 0.55 * pxDeg, y - 1.65 * pxDeg),
+                        (x + 0.55 * pxDeg, y - 1.65 * pxDeg), (x, y - 1.0 * pxDeg),
+                    },
+                });
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text, Text = FormatRange(f.RangeM), Align = HudAlign.Center,
+                    FontSize = fontSmall, Color = col, Points = { (x, y - 2.4 * pxDeg) },
+                });
+            }
+            else
+            {
+                double dir = d > 0 ? 1 : -1;
+                double ex = cx + dir * span;
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Polyline, Width = line, Color = col,
+                    Points =
+                    {
+                        (ex - dir * 0.5 * pxDeg, y - 1.6 * pxDeg), (ex, y - 1.05 * pxDeg),
+                        (ex - dir * 0.5 * pxDeg, y - 0.5 * pxDeg),
+                    },
+                });
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text, Text = FormatRange(f.RangeM),
+                    Align = dir > 0 ? HudAlign.Right : HudAlign.Left,
+                    FontSize = fontSmall, Color = col,
+                    Points = { (ex - dir * 0.75 * pxDeg, y - 2.4 * pxDeg) },
+                });
+            }
+            shown++;
+        }
+    }
+
+    /// <summary>编队看的是百米级间距，所以 1 km 以内直接显示米（取整到 10 m）。</summary>
+    private static string FormatRange(double metres)
+        => metres < 1000 ? ((int)(Math.Round(metres / 10.0) * 10)).ToString()
+                         : (metres / 1000.0).ToString("F1") + "km";
+
+    /// <summary>
+    /// 编队模式的三个最小读数：速度 / 高度 / 航向，放在画面下方，避开视野中心。
+    /// 数值在上、单位在下，两行一组。
+    /// </summary>
+    private void AddFormationReadout(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
+                                     double pxDeg, double font, double fontSmall)
+    {
+        var col = _opt.Color;
+        double y = cy + 11.0 * pxDeg;
+        double dx = 6.0 * pxDeg;
+
+        void Cell(double x, string value, string unit)
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = value, Align = HudAlign.Center,
+                FontSize = font, Color = col, Points = { (x, y) },
+            });
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = unit, Align = HudAlign.Center,
+                FontSize = fontSmall, Color = Fade(col, 0.75), Points = { (x, y + 1.1 * pxDeg) },
+            });
+        }
+
+        Cell(cx - dx, ((int)Math.Round(s.IasKmh)).ToString(), "km/h");
+        Cell(cx, ((int)Math.Round(s.AltM)).ToString(), "m");
+        Cell(cx + dx, (((int)Math.Round(s.HeadingDeg)) % 360).ToString("000"), "deg");
     }
 
     // -------------------------------------------------------------------- tapes

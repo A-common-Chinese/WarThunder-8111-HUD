@@ -1550,6 +1550,13 @@ public static class Program
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
     {
+        // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
+        bool formationOn = cfg.FormationAssist || cfg.FormationOnly;
+        map.CollectFriendlies = formationOn;
+        opt.FormationAssist = formationOn;
+        opt.FormationOnly = cfg.FormationOnly;
+        opt.Friendlies.Clear();
+
         opt.GridText = "";
         opt.EdgeWarning = false;
         opt.NavFriendly = "";
@@ -1569,6 +1576,27 @@ public static class Program
 
         double sizeX = map.MapSizeM.X > 1 ? map.MapSizeM.X : 52719;
         double sizeY = map.MapSizeM.Y > 1 ? map.MapSizeM.Y : 55385;
+
+        // --- 编队辅助：友机相对方位 + 距离（开关关闭时整段跳过） ---
+        // 敌人已在 MapData 里按 color 丢掉，这里只剩友军；只取最近的 4 架，避免糊成一片。
+        if (formationOn)
+        {
+            foreach (var f in map.Friendlies)
+            {
+                double dEast = (f.X - self.X) * sizeX;
+                double dNorth = (f.Y - self.Y) * sizeY * (cfg.MapYFlip ? -1 : 1);
+                double range = Math.Sqrt(dEast * dEast + dNorth * dNorth);
+                double bearing = Math.Atan2(dEast, dNorth) * 180.0 / Math.PI;
+                if (bearing < 0) bearing += 360;
+                // 直接算成相对方位（navHeading 已含"无罗盘时用航迹角兜底"），几何层不再需要航向
+                double rel = bearing - navHeading;
+                while (rel > 180) rel -= 360;
+                while (rel < -180) rel += 360;
+                opt.Friendlies.Add(new FriendlyContact(rel, range, f.Icon));
+            }
+            opt.Friendlies.Sort((a, b) => a.RangeM.CompareTo(b.RangeM));
+            while (opt.Friendlies.Count > 4) opt.Friendlies.RemoveAt(opt.Friendlies.Count - 1);
+        }
 
         // --- grid cell (letters = east axis, numbers = north axis) ---
         double colF = (self.X * sizeX - map.GridZeroM.X) / map.GridStepM.X;
@@ -2119,6 +2147,33 @@ public static class Program
 
         var opt = new HudOptions();
         if (variant == "zoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }
+
+        // 预览用的假友机：WT_PREVIEW_FRIENDS="30,1200;160,3400"（方位°,距离m）
+        if (Environment.GetEnvironmentVariable("WT_PREVIEW_FRIENDS") is { Length: > 0 } friendSpec)
+        {
+            opt.FormationAssist = true;
+            foreach (var part in friendSpec.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var kv = part.Split(',');
+                if (kv.Length == 2
+                    && double.TryParse(kv[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double fb)
+                    && double.TryParse(kv[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double fr))
+                    opt.Friendlies.Add(new FriendlyContact(fb, fr, "Fighter"));
+            }
+        }
+        if (variant == "formation")
+        {
+            opt.FormationOnly = true;
+            opt.FormationAssist = true;
+            opt.ZoomLayout = false;
+            opt.ZoomBlend = 0;
+            if (opt.Friendlies.Count == 0)
+            {
+                opt.Friendlies.Add(new FriendlyContact(12, 420, "Fighter"));
+                opt.Friendlies.Add(new FriendlyContact(-38, 1800, "Fighter"));
+                opt.Friendlies.Add(new FriendlyContact(150, 5200, "Bomber"));
+            }
+        }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }
         opt.AltTapeM = snap.AltM;   // previews default to barometric altitude on the tape
         opt.GridText = "F6";

@@ -71,6 +71,14 @@
     "zh": "显示 HUD：叠加层总开关，关闭后仍运行但不再绘制。",
     "en": "Show HUD: master switch for the overlay; it keeps running but draws nothing when off."
   },
+  "row.formation": {
+    "zh": "编队辅助：在航向带上标出友机方位与距离（近距离用米，超过 1 km 用公里）。只显示友军 —— 游戏地图里的敌人会被颜色过滤掉，永远不会画出来。关掉时连数据都不解析。",
+    "en": "Formation: draws friendly bearings and ranges above the heading tape (metres under 1 km, otherwise km). Friendly aircraft only - contacts coloured as enemies are filtered out and never drawn. When off, not even the data is parsed."
+  },
+  "row.formationOnly": {
+    "zh": "编队模式：隐藏俯仰梯、数据带、数值区、导航与构型提示，只留友机方位和速度/高度/航向三个读数；此时编队辅助自动开启。地形、失速、超速告警仍然保留。",
+    "en": "Formation only: hides the ladder, tapes, data block, navigation and configuration hints, leaving friendly bearings plus three readouts (speed, altitude, heading). Formation assist is implied. Terrain, stall and overspeed alerts are kept."
+  },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",
     "en": "Field of view: vertical FoV used to convert degrees into screen pixels."

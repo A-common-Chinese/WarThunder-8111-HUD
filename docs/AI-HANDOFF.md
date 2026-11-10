@@ -68,6 +68,20 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
   注意同目录还留着 `WtHud-v0.3.7-win-x64-test.zip`（说明文案是"测试包"版，指纹不同），**别误传**。
 - HUD 当前没有在跑；`dist-wthud\WtHud.exe` = 0.3.7 正式构建
 
+### 4.8 编队辅助（v0.3.8）
+- `MapData.Friendlies`：从 `/map_obj` 保留**友军**飞机（归一化坐标 + 单位方向向量 + icon）。
+  **必须按 `color` 白名单过滤**（蓝系友军、红系敌人）—— map_obj 里敌人也在，画出来就是 ESP，项目红线。
+  `MapData.CollectFriendlies` 由编队开关控制，关掉时连这一步解析都不做。
+- 方位/距离在 `Program.UpdateNavigation` 里算：`dEast/dNorth` 与机场导航同一套约定（含 `MapYFlip`），
+  再用 `navHeading` 转成**相对方位**（无罗盘机型走航迹角兜底），这样几何层不需要知道航向。
+- 绘制在 `HudGeometry.AddFormationAssist`：航向带上方小三角 + 距离；超出 ±25° 退化成端头箭头。
+  航向带 1° = 0.24·pxDeg，与 `AddHeadingTape` 的比例必须一致，否则标记会飘。
+- `显示 > 编队模式`（`FormationOnly`）走 `Build` 的早退分支：只画航向带 + 友机 + 三个读数
+  （`AddFormationReadout`：速度/高度/航向），地形/失速/超速告警与击落播报保留。
+- 预览：`WT_PREVIEW_FRIENDS="12,420;-38,1800;150,5200"` 注入假友机，
+  `preview out.png 1920 1080 formation` 出编队模式图。
+- **高度差没做**：map_obj 无 z 坐标；要做只能上数据链（方案见 §11 第 7 条）。
+
 ## 5. 立即要处理（P0）：反馈者的 F10 问题
 
 > **2026-11-10 深夜更新 2：整屏点不动的根因是「后台不隐藏」那个分支，0.3.7 已删。**
