@@ -11,6 +11,22 @@ namespace WtHud.Hud;
 /// <summary>一架友机的**相对**方位（已减去本机航向）与距离。几何层不需要知道航向，无罗盘机型也能用。</summary>
 public readonly record struct FriendlyContact(double RelBearingDeg, double RangeM, string Icon);
 
+/// <summary>引导动作。只表达"该加速还是该减速"，具体文字由几何层按语言输出。</summary>
+public enum FormationAction
+{
+    None,
+    Accelerate,
+    Decelerate,
+}
+
+/// <summary>
+/// 针对最近一架友机的直接引导：往哪边转多少度、距离多少、距离在缩小还是拉开。
+/// <para>TurnDeg 就是相对方位（+ = 友机在右侧 = 右转），ClosingMs 正数表示正在接近。</para>
+/// <para>高度差不在这里 —— map_obj 没有 z，单机拿不到友机高度。</para>
+/// </summary>
+public readonly record struct FormationLead(
+    double TurnDeg, double RangeM, double ClosingMs, FormationAction Action);
+
 public sealed class HudOptions
 {
     public HudColor Color { get; set; } = new(60, 255, 110);
@@ -35,6 +51,12 @@ public sealed class HudOptions
 
     /// <summary>友机标记用的颜色（与主色区分开，便于一眼辨认）。</summary>
     public HudColor FriendlyColor { get; set; } = new(120, 200, 255);
+
+    /// <summary>
+    /// 编队引导（只对最近一架友机）。null = 不画。
+    /// 由宿主算好角度/距离/接近率，几何层只负责排版，不碰地图坐标。
+    /// </summary>
+    public FormationLead? Guide { get; set; }
 
     /// <summary>本帧的友机相对方位与距离，由宿主（Program）每帧填充。</summary>
     public List<FriendlyContact> Friendlies { get; } = new();
@@ -292,6 +314,7 @@ public sealed class HudGeometry
             // 航向带保留 —— 友机标记的方位是相对航向的，没有带就没有参照。
             if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
             AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
+            AddFormationGuidance(prims, cx, cy, pxDeg, font, fontSmall);
             AddFormationReadout(prims, s, cx, cy, pxDeg, font, fontSmall);
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
@@ -610,6 +633,76 @@ public sealed class HudGeometry
     /// 编队模式的三个最小读数：速度 / 高度 / 航向，放在画面下方，避开视野中心。
     /// 数值在上、单位在下，两行一组。
     /// </summary>
+    /// <summary>
+    /// 编队引导：准星正下方，三行，按"先方向、再距离、最后动作"排。
+    /// <para>编队时眼睛大部分时间在窗外，扫一眼就要能照做，所以方向用最大字号，
+    /// 距离/接近率用辅助字号，加减速只在需要时出现（平时不占视觉）。</para>
+    /// </summary>
+    private void AddFormationGuidance(List<HudPrim> prims, double cx, double cy,
+                                      double pxDeg, double font, double fontSmall)
+    {
+        if (_opt.Guide is not { } g) return;
+
+        var col = _opt.Color;
+
+        // ---- 1) 往哪转：TurnDeg 是相对方位，+ = 友机在右侧 = 右转 ----
+        double turn = g.TurnDeg;
+        while (turn > 180) turn -= 360;
+        while (turn < -180) turn += 360;
+        int deg = (int)Math.Round(Math.Abs(turn));
+
+        string dir;
+        if (deg <= 3)
+        {
+            dir = L10n.Get(LangScope.Alerts, "guide.aligned");
+        }
+        else
+        {
+            string tpl = L10n.Get(LangScope.Alerts, turn > 0 ? "guide.right" : "guide.left");
+            dir = string.Format(tpl, deg);
+        }
+
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = dir, Align = HudAlign.Center,
+            FontSize = font * 1.55, Color = col, Points = { (cx, cy + 4.9 * pxDeg) },
+        });
+
+        // ---- 2) 距离 + 接近率（▼ 靠近 / ▲ 拉开） ----
+        // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
+        string closing = Math.Abs(g.ClosingMs) < 3
+            ? "---"
+            : (g.ClosingMs > 0 ? "\u25BC " : "\u25B2 ") + ((int)Math.Round(Math.Abs(g.ClosingMs))).ToString() + " m/s";
+        // FormatRange 在 1 km 以内只给数字，引导这里必须带单位，否则"820"看不出是米还是公里
+        string range = g.RangeM < 1000
+            ? ((int)(Math.Round(g.RangeM / 10.0) * 10)).ToString() + "m"
+            : (g.RangeM / 1000.0).ToString("F1") + "km";
+
+        double gapPx = 0.55 * pxDeg;
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = range, Align = HudAlign.Right, FontSize = fontSmall * 1.25,
+            Color = Fade(col, 0.85), Points = { (cx - gapPx, cy + 6.6 * pxDeg) },
+        });
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = closing, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
+            Color = Fade(col, 0.85), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
+        });
+
+        // ---- 3) 加减速：只在真的要动油门时出现 ----
+        if (g.Action != FormationAction.None)
+        {
+            string act = L10n.Get(LangScope.Alerts,
+                g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
+                FontSize = font * 1.35, Color = _opt.WarnColor, Points = { (cx, cy + 8.4 * pxDeg) },
+            });
+        }
+    }
+
     private void AddFormationReadout(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
                                      double pxDeg, double font, double fontSmall)
     {

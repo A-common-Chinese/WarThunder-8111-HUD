@@ -1548,6 +1548,27 @@ public static class Program
         opt.SplashAlpha = 1.0;      // 无动画：直接出现，到点直接消失
     }
 
+    /// <summary>
+    /// 最近一架友机的距离变化率（正 = 正在接近，m/s）。
+    /// <para>目标切换时距离会突变上千米，这时候历史必须清空，否则会算出一个荒唐的接近率。</para>
+    /// </summary>
+    private static double UpdateClosingRate(double rangeM, double nowS)
+    {
+        if (closingHistory.Count > 0 && Math.Abs(rangeM - closingHistory[^1].R) > 1000)
+            closingHistory.Clear();
+
+        closingHistory.Add((nowS, rangeM));
+        while (closingHistory.Count > 2 && nowS - closingHistory[0].T > ClosingWindowS)
+            closingHistory.RemoveAt(0);
+
+        if (closingHistory.Count < 2) return 0;
+
+        double span = closingHistory[^1].T - closingHistory[0].T;
+        if (span < 0.5) return 0;
+
+        return (closingHistory[0].R - closingHistory[^1].R) / span;
+    }
+
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
     {
         // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
@@ -1556,6 +1577,8 @@ public static class Program
         opt.FormationAssist = formationOn;
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
+        opt.Guide = null;
+        if (!formationOn) closingHistory.Clear();
 
         opt.GridText = "";
         opt.EdgeWarning = false;
@@ -1596,6 +1619,27 @@ public static class Program
             }
             opt.Friendlies.Sort((a, b) => a.RangeM.CompareTo(b.RangeM));
             while (opt.Friendlies.Count > 4) opt.Friendlies.RemoveAt(opt.Friendlies.Count - 1);
+
+            // --- 直接引导：只针对最近那一架（"往哪转、加减速"） ---
+            // 门槛都写在这里而不是几何层，方便按真机手感调，不用碰绘制代码。
+            if (opt.Friendlies.Count > 0)
+            {
+                var lead = opt.Friendlies[0];
+                double closing = UpdateClosingRate(lead.RangeM, snap.ElapsedSeconds);
+
+                FormationAction action = FormationAction.None;
+                if (lead.RangeM < 200 && closing > 3) action = FormationAction.Decelerate;          // 贴翼了，慢慢靠也不安全
+                else if (lead.RangeM < 350 && closing > 10) action = FormationAction.Decelerate;   // 近了还在贴近
+                else if (lead.RangeM < 2000 && closing > 55) action = FormationAction.Decelerate;  // 追得太猛会冲过头
+                else if (lead.RangeM > 1200 && closing < 8) action = FormationAction.Accelerate;   // 掉队了
+
+                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM, closing, action);
+            }
+            else
+            {
+                opt.Guide = null;
+                closingHistory.Clear();
+            }
         }
 
         // --- grid cell (letters = east axis, numbers = north axis) ---
@@ -2048,6 +2092,11 @@ public static class Program
 
 
     private static double fuelFlow;
+
+    // 编队引导用的距离历史。map_obj 只有 ~4 Hz，逐帧差分会把 0 和几百 m/s 混在一起跳，
+    // 所以在 2 秒窗口上取首尾斜率：代价是动作提示有约 1 秒延迟，编队跟飞够用。
+    private const double ClosingWindowS = 2.0;
+    private static readonly System.Collections.Generic.List<(double T, double R)> closingHistory = new();
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
@@ -2172,6 +2221,25 @@ public static class Program
                 opt.Friendlies.Add(new FriendlyContact(12, 420, "Fighter"));
                 opt.Friendlies.Add(new FriendlyContact(-38, 1800, "Fighter"));
                 opt.Friendlies.Add(new FriendlyContact(150, 5200, "Bomber"));
+            }
+            // 引导样张：可写 WT_PREVIEW_GUIDE="转角,距离,接近率,动作(0/1/2)" 覆盖
+            var guideSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_GUIDE");
+            if (!string.IsNullOrWhiteSpace(guideSpec))
+            {
+                var g = guideSpec.Split(',');
+                if (g.Length >= 3
+                    && double.TryParse(g[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double gTurn)
+                    && double.TryParse(g[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double gRange)
+                    && double.TryParse(g[2], NumberStyles.Any, CultureInfo.InvariantCulture, out double gClose))
+                {
+                    var gAct = g.Length >= 4 && int.TryParse(g[3], out int ai)
+                        ? (FormationAction)ai : FormationAction.None;
+                    opt.Guide = new FormationLead(gTurn, gRange, gClose, gAct);
+                }
+            }
+            else
+            {
+                opt.Guide = new FormationLead(12, 820, 42, FormationAction.Decelerate);
             }
         }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }
