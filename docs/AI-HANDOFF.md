@@ -225,6 +225,19 @@ WtHud.exe mfdpreview out.png display2       # 面板预览（display/alerts/keys
 4. 若反馈者拒绝 UAC：可考虑给设置键/显示键加 `GetAsyncKeyState` 轮询兜底（游戏也会收到该键，需权衡）。
 5. 可选：给 F1 面板打开/关闭补日志。
 6. 可选优化（用户提过但未定）：SPLASH 时长/位置微调、PULL UP 默认提前量、极速双路阈值。
+7. **等实测：局域网编队数据链的可行性**（用户想法，未立项）。前提判断：`/map_obj` 给的友机位置是
+   客户端推演值，距离越远/本机延迟越大越不准，所以要先用数据回答"到底多不准"。工具已备好（不进产品）：
+   ```powershell
+   # 两台机器各跑一份（自定义战斗、场上只放两架飞机、同队）
+   python tools\maperr_capture.py --label A --out A.csv --seconds 300
+   python tools\maperr_capture.py --label B --out B.csv --seconds 300
+   # 事后分析：时间偏移靠轨迹互相关扫出来，不依赖系统对时
+   python tools\maperr_analyze.py --truth A.csv --obs B.csv --out summary.csv --plot err.png
+   python tools\maperr_analyze.py --selftest        # 不需要游戏，自检分析链路
+   ```
+   决策阈值：2 km 内 90 分位 < 50 m → 不必做数据链；> 100 m → 值得做。
+   ★ 已实测的坑：分析端归一化时间基准时不能边遍历边读 `rows[0]["t"]`（会把自己抹成 0），
+   已在代码里注释；`Series` 构造时会先排序兜底。
 
 ## 12. 合规红线
 
