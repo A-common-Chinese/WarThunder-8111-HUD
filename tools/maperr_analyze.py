@@ -164,14 +164,14 @@ def main():
 
     truth_rows = load(args.truth)
     obs_rows = load(args.obs)
-    # 时间基准各自归一化。★ 必须先取出基准值再遍历——边遍历边读 obs_rows[0]["t"] 会把它自己抹成 0，
-    # 后面的行就保持绝对时间戳，Series 的二分查找直接失效（这个坑踩过一次）。
-    base_a = truth_rows[0]["t"]
-    base_b = obs_rows[0]["t"]
+    # ★ 两份数据必须用**同一个**时间基准归一化，否则会把"两段录制开始的先后差"抹平，
+    # 任何偏移都对不上（真实数据上表现为 RMS 几千公里级、最优偏移卡在搜索边界）。
+    # 这里只减公共基准，绝对时间差保留下来，偏移搜索就只需要覆盖时钟偏差（几百 ms）。
+    base = min(truth_rows[0]["t"], obs_rows[0]["t"])
     for r in truth_rows:
-        r["t"] -= base_a
+        r["t"] -= base
     for r in obs_rows:
-        r["t"] -= base_b
+        r["t"] -= base
 
     gw_a, gh_a = truth_rows[0]["grid"]
     gw_b, gh_b = obs_rows[0]["grid"]
@@ -182,7 +182,8 @@ def main():
 
     truth_self, obs_self, obs_other = build(truth_rows, obs_rows)
     n_obs = sum(1 for r in obs_rows if r["other"])
-    print(f"truth {len(truth_rows)} 行（{truth_rows[-1]['t']:.1f} s），obs {len(obs_rows)} 行，"
+    print(f"truth {len(truth_rows)} 行（{truth_rows[-1]['t'] - truth_rows[0]['t']:.1f} s），"
+          f"obs {len(obs_rows)} 行（{obs_rows[-1]['t'] - obs_rows[0]['t']:.1f} s），"
           f"其中看到目标 {n_obs} 行（{100.0 * n_obs / len(obs_rows):.0f}%）")
 
     best = None
