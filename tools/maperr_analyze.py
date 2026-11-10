@@ -150,7 +150,8 @@ def main():
     ap = argparse.ArgumentParser(description="分析 WtHud 编队误差实测数据")
     ap.add_argument("--truth", help="被观察机 A 的 CSV")
     ap.add_argument("--obs", help="观察机 B 的 CSV")
-    ap.add_argument("--search-ms", type=int, default=600, help="时间偏移搜索范围 ±ms（默认 600）")
+    ap.add_argument("--search-ms", type=int, default=5000,
+                    help="时间偏移搜索范围 ±ms（默认 5000：两台机器的系统时钟常见差几百 ms~几秒）")
     ap.add_argument("--step-ms", type=int, default=10, help="搜索步长 ms（默认 10）")
     ap.add_argument("--out", help="把分档结果写成 CSV")
     ap.add_argument("--plot", help="出图（需要 matplotlib），给个 png 路径")
@@ -200,7 +201,10 @@ def main():
         return 3
 
     off, score, n = best
-    print(f"\n时间对齐：偏移 {off:+d} ms（即两台机器时钟差），重叠 {n} 个样本，RMS {score:.0f} m")
+    print(f"\n时间对齐：偏移 {off:+d} ms（两台机器时钟差 + 数据滞后的合成值），重叠 {n} 个样本，RMS {score:.0f} m")
+    if abs(off) >= args.search_ms - args.step_ms:
+        print(f"  ★ 最优偏移顶到了搜索边界（±{args.search_ms} ms），说明真实偏移更大；"
+              f"用 --search-ms {args.search_ms * 3} 再跑一次。")
     print("  注：这个偏移是扫出来的，不依赖系统对时；它同时也是数据链需要的时间同步精度参考。")
 
     s = sample(truth_rows, truth_self, obs_self, obs_other, off)
