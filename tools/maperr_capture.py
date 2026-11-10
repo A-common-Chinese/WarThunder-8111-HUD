@@ -22,6 +22,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import sys
 import time
 import urllib.error
@@ -100,9 +101,12 @@ def pick(objs, grid_w, grid_h):
 
 
 def state_values():
-    """8111 的键名自带单位、含空格逗号；一律取不到就给 0。"""
+    """8111 的键名自带单位、含空格逗号；一律取不到就给 0。
+
+    ★ 端点是 `/state`（没有 .json 后缀），写成 /state.json 会 404，静默变成全 0 —— 踩过。
+    """
     try:
-        st = get_json("/state.json") or {}
+        st = get_json("/state") or {}
     except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
         return (0.0,) * 7
     return (
@@ -114,20 +118,21 @@ def state_values():
 
 def main():
     ap = argparse.ArgumentParser(description="采集 WtHud 编队误差实测数据")
-    ap.add_argument("--out", default="maperr.csv", help="输出 CSV")
+    ap.add_argument("--out", default=None, help="输出 CSV（默认桌面 maperr-<label>.csv）")
     ap.add_argument("--label", default="A", help="机号，仅用于日志显示")
     ap.add_argument("--hz", type=float, default=4.0, help="采样频率（默认 4 Hz）")
     ap.add_argument("--seconds", type=float, default=0, help="采集时长，0 = 一直采到 Ctrl+C")
     ap.add_argument("--probe", type=float, default=15.0, help="开跑前等待 8111 的秒数")
     args = ap.parse_args()
 
+    out_path = args.out or os.path.join(os.path.expanduser("~"), "Desktop", f"maperr-{args.label}.csv")
     period = 1.0 / max(0.5, args.hz)
     print(f"[{args.label}] 等待 8111 接口（最多 {args.probe:.0f} s）…")
     grid_w, grid_h = read_grid(retries=max(2, int(args.probe * 2)))
     if grid_w <= 0:
         print("拿不到 /map_info.json 的 grid_size：游戏没开、或不在对局里。退出。")
         return 2
-    print(f"[{args.label}] 地图尺寸 {grid_w:.0f} x {grid_h:.0f} m，开始采集 → {args.out}")
+    print(f"[{args.label}] 地图尺寸 {grid_w:.0f} x {grid_h:.0f} m，开始采集 → {out_path}")
 
     t0 = time.time()
     rows = 0
@@ -135,7 +140,7 @@ def main():
     ambiguous = 0
     empty_other = 0
 
-    with open(args.out, "w", newline="", encoding="utf-8") as fh:
+    with open(out_path, "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
         wr.writerow(FIELDS)
         try:
@@ -197,7 +202,7 @@ def main():
         except KeyboardInterrupt:
             print("\n手动停止。")
 
-    print(f"[{args.label}] 完成：{rows} 行 → {args.out}")
+    print(f"[{args.label}] 完成：{rows} 行 → {out_path}")
     if ambiguous:
         print(f"[{args.label}] ★ 有 {ambiguous} 次采样里场上不止一架其它飞机，other_* 取的是最近的那架——"
               "建议下一轮改成只放两架飞机的房间。")
