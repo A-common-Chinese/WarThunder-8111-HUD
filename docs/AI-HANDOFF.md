@@ -57,10 +57,10 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 
 ## 4. 当前状态快照（2026-11-10 晚）
 
-- 版本：`0.3.4`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`）
-- 分支 `v0.3.0`，**本地领先 origin 25 个提交，未 push**（约定：只本地提交，用户手动发布）
-- 最近提交：`c24a5af fix(hotkey): auto-elevate when game is elevated; keep HUD visible with panel; rebind hotkeys on overlay thread`
-- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4 还没打 tag）
+- 版本：`0.3.5`（`src\WarThunderHud\WarThunderHud.csproj` 的 `<Version>`；`dist-wthud` 已是 0.3.5 构建）
+- 分支 `v0.3.0`，**本地领先 origin 27 个提交，未 push**（约定：只本地提交，用户手动发布）
+- 最近提交：`164c883 fix(overlay): activate game when the overlay absorbs a click; log pid/version/elevation`
+- 本地 tag：`v0.3.0 / v0.3.1 / v0.3.2 / v0.3.3`（0.3.4/0.3.5 都还没打 tag）
 - 桌面发布目录：`WtHud-v0.3.4-win-x64-test.zip`（用户给反馈者的测试包，可能被用户改名）、
   `WtHud-v0.3.3-win-x64.zip`、`RELEASE_NOTES_v0.3.3/0.3.4`（中英）、`SHA256.txt`
 - HUD 当前**没有在跑**（写完交接时 pid 已退出）；`dist-wthud\WtHud.exe` 就是 0.3.4
@@ -78,6 +78,12 @@ robocopy "src\WarThunderHud" "wt-hud\src\WarThunderHud" /MIR /XD bin obj .vs /XF
 3. F10 具体现象（没反应？隐藏后回不来？按了变别的？）
 
 日志判断方法：
+
+> **2026-11-10 晚更新：双实例判据已可实证。** 之前第二条实例打不开 `wthud-overlay.log`
+> （`append=false` + `FileShare.Read`），异常被 `catch { }` 吞掉、输出全丢，所以"日志里只有一次
+> `overlay start`"完全不能排除双实例。0.3.5 起第二个实例落到 `wthud-overlay-<pid>.log`，
+> 真机双开实测立刻抓到 `hotkey 1 (F10) could not be registered (already in use? err=1409)`
+> —— **err=1409 是真实存在的，且旧日志会把它藏起来**。`overlay start` 现在带 `pid/ver/elevated`。
 
 | 现象 | 判断 |
 |---|---|
@@ -178,6 +184,11 @@ WtHud.exe mfdpreview out.png display2       # 面板预览（display/alerts/keys
 
 ## 11. 下一步待办（按优先级）
 
+0. **等用户/反馈者验证 0.3.5 的「点击回游戏」**（多显示器 + 无边框窗口）：切到另一块屏 →
+   点游戏画面 → 应直接回游戏。判据：`wthud-overlay.log` 出现
+   `overlay absorbed a click while the game was inactive -> activating game <hwnd>`；
+   若没有这行但仍回不去，说明点击没被覆盖层吃掉，要换方向查（此时日志里的
+   `foreground ->` 与 `cursor[... class=]` 才是关键证据）。
 1. **P0 定位 F10 反馈**（见第 5 节）：要日志 + config + 现象；先别改代码。
 2. 0.3.4 定稿：README 补 0.3.4 的「自动提权 / 面板不隐藏 HUD / SAVE 后热键」说明；使用说明已含。
 3. 0.3.4 发布时：`git tag v0.3.4`，桌面 zip 改名 `WtHud-v0.3.4-win-x64.zip`，更新 SHA256，必要时加封面。
