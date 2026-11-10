@@ -323,6 +323,7 @@ public static class L10n
         ["guide.aligned"] = ("对准", "ON"),
         ["guide.accel"] = ("加速", "SPEED UP"),
         ["guide.decel"] = ("减速", "SLOW DOWN"),
+        ["guide.hold"] = ("保持", "HOLD"),
         ["splash"] = ("击落", "SPLASH"),
         ["sinkrate"] = ("下降率", "SINK RATE"),
         ["reducespeed"] = ("减速", "REDUCE SPEED"),

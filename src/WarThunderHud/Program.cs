@@ -1554,8 +1554,9 @@ public static class Program
     /// </summary>
     private static double UpdateClosingRate(double rangeM, double nowS)
     {
+        // 换了目标（距离突变上千米）就把引导状态整体清掉：平滑值和动作滞回都只对前一架有效
         if (closingHistory.Count > 0 && Math.Abs(rangeM - closingHistory[^1].R) > 1000)
-            closingHistory.Clear();
+            ResetGuideState();
 
         closingHistory.Add((nowS, rangeM));
         while (closingHistory.Count > 2 && nowS - closingHistory[0].T > ClosingWindowS)
@@ -1569,6 +1570,37 @@ public static class Program
         return (closingHistory[0].R - closingHistory[^1].R) / span;
     }
 
+    /// <summary>
+    /// 油门建议的一阶低通。时间常数 1.2 s：够快能跟上编队修正，够慢不会让数字来回跳。
+    /// <para>首帧、断档（切图/暂停）或目标切换时直接取当前值，避免从 0 慢慢爬上去。</para>
+    /// </summary>
+    private static double SmoothGuideDelta(double raw, double nowS)
+    {
+        double dt = nowS - guideDeltaLastT;
+        if (!guideDeltaValid || dt <= 0 || dt > 1.0)
+        {
+            guideDeltaSmooth = raw;
+            guideDeltaValid = true;
+            guideDeltaLastT = nowS;
+            return guideDeltaSmooth;
+        }
+
+        double k = Math.Min(1.0, dt / 1.2);
+        guideDeltaSmooth += (raw - guideDeltaSmooth) * k;
+        guideDeltaLastT = nowS;
+        return guideDeltaSmooth;
+    }
+
+    /// <summary>切目标或关闭编队时把引导状态清干净，免得拿上一架的平滑值接着算。</summary>
+    private static void ResetGuideState()
+    {
+        closingHistory.Clear();
+        guideDeltaSmooth = 0;
+        guideDeltaLastT = 0;
+        guideDeltaValid = false;
+        guideActionPrev = FormationAction.None;
+    }
+
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
     {
         // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
@@ -1578,7 +1610,7 @@ public static class Program
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
         opt.Guide = null;
-        if (!formationOn) closingHistory.Clear();
+        if (!formationOn) ResetGuideState();
 
         opt.GridText = "";
         opt.EdgeWarning = false;
@@ -1633,27 +1665,48 @@ public static class Program
                 // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
                 if (Math.Abs(lead.RelBearingDeg) < 50)
                 {
-                    if (lead.RangeM < 200 && closing > 3) action = FormationAction.Decelerate;          // 贴翼了，慢慢靠也不安全
-                    else if (lead.RangeM < 350 && closing > 10) action = FormationAction.Decelerate;   // 近了还在贴近
-                    else if (lead.RangeM < 2000 && closing > 55) action = FormationAction.Decelerate;  // 追得太猛会冲过头
-                    else if (lead.RangeM > 1200 && closing < 8) action = FormationAction.Accelerate;   // 掉队了
+                    // 闭环：距离误差当作输入，比例换算出"该以多快的速度接近"。
+                    // 斜率 0.035 → 1 km 处约 21 m/s，400 m 处正好 0；限幅是为了远处别给出过猛的追法。
+                    double err = lead.RangeM - FormationTargetRangeM;
+                    double wantClosing = Math.Clamp(err * 0.035, -20, 30);
 
-                    if (action != FormationAction.None)
+                    // 油门量 = 期望与实际接近率之差，再按偏角修正（斜着飞时沿视线的分量更小）
+                    double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
+                    double dvRaw = (wantClosing - closing) / cosOff * 3.6;
+
+                    // 平滑 + 收窄：不这么做的话数字会在几百 km/h 之间跳，看着没法用
+                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw, snap.ElapsedSeconds), -120, 120);
+
+                    // 滞回：进入要 18，已经在动作里只要还大于 8 就继续，避免在两个动作之间抖
+                    bool wasAccel = guideActionPrev == FormationAction.Accelerate;
+                    bool wasDecel = guideActionPrev == FormationAction.Decelerate;
+                    if (Math.Abs(deltaKmh) >= 18
+                        || (wasAccel && deltaKmh >= 8)
+                        || (wasDecel && deltaKmh <= -8))
                     {
-                        // 期望接近率：距离越远越想追（最多 40 m/s），越近越想收（最多 -10 m/s）。
-                        // 油门量 = 期望与实际之差，再按偏角修正（斜着飞时沿视线的分量更小）。
-                        double wantClosing = Math.Clamp((lead.RangeM - 500) * 0.05, -10, 40);
-                        double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
-                        deltaKmh = Math.Clamp(Math.Round((wantClosing - closing) / cosOff * 3.6 / 10) * 10, -300, 300);
+                        action = deltaKmh > 0 ? FormationAction.Accelerate : FormationAction.Decelerate;
+                    }
+                    else
+                    {
+                        // "保持"也要滞回：已经稳住时放宽门槛，否则会在 400 m 附近一闪一闪
+                        bool wasHold = guideActionPrev == FormationAction.Hold;
+                        double holdErr = wasHold ? 140 : 100;
+                        double holdClosing = wasHold ? 12 : 8;
+                        if (Math.Abs(err) <= holdErr && Math.Abs(closing) < holdClosing)
+                            action = FormationAction.Hold;
                     }
                 }
 
-                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM, closing, action, deltaKmh);
+                // 滞回状态每帧都更新（偏角大到没给建议时也要清掉，否则残留到下一段）
+                guideActionPrev = action;
+
+                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM,
+                                             FormationTargetRangeM, action, deltaKmh);
             }
             else
             {
                 opt.Guide = null;
-                closingHistory.Clear();
+                ResetGuideState();
             }
         }
 
@@ -2112,6 +2165,15 @@ public static class Program
     // 所以在 2 秒窗口上取首尾斜率：代价是动作提示有约 1 秒延迟，编队跟飞够用。
     private const double ClosingWindowS = 2.0;
     private static readonly System.Collections.Generic.List<(double T, double R)> closingHistory = new();
+
+    // 编队引导的目标间距：最终要稳定在友机后方 400 m。
+    private const double FormationTargetRangeM = 400;
+
+    // 油门建议的平滑状态。closing 本身有噪声，不滤波的话数字会在几百 km/h 之间跳。
+    private static double guideDeltaSmooth;
+    private static double guideDeltaLastT;
+    private static bool guideDeltaValid;
+    private static FormationAction guideActionPrev;
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
@@ -2237,7 +2299,7 @@ public static class Program
                 opt.Friendlies.Add(new FriendlyContact(-38, 1800, "Fighter"));
                 opt.Friendlies.Add(new FriendlyContact(150, 5200, "Bomber"));
             }
-            // 引导样张：可写 WT_PREVIEW_GUIDE="转角,距离,接近率,动作(0/1/2)" 覆盖
+            // 引导样张：WT_PREVIEW_GUIDE="转角,距离,目标距离,动作(0=无 1=加速 2=减速 3=保持),油门km/h"
             var guideSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_GUIDE");
             if (!string.IsNullOrWhiteSpace(guideSpec))
             {
@@ -2245,18 +2307,18 @@ public static class Program
                 if (g.Length >= 3
                     && double.TryParse(g[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double gTurn)
                     && double.TryParse(g[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double gRange)
-                    && double.TryParse(g[2], NumberStyles.Any, CultureInfo.InvariantCulture, out double gClose))
+                    && double.TryParse(g[2], NumberStyles.Any, CultureInfo.InvariantCulture, out double gTarget))
                 {
                     var gAct = g.Length >= 4 && int.TryParse(g[3], out int ai)
                         ? (FormationAction)ai : FormationAction.None;
                     double gDelta = g.Length >= 5
                         && double.TryParse(g[4], NumberStyles.Any, CultureInfo.InvariantCulture, out double gd) ? gd : 0;
-                    opt.Guide = new FormationLead(gTurn, gRange, gClose, gAct, gDelta);
+                    opt.Guide = new FormationLead(gTurn, gRange, gTarget, gAct, gDelta);
                 }
             }
             else
             {
-                opt.Guide = new FormationLead(12, 820, 42, FormationAction.Decelerate, -90);
+                opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90);
             }
         }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }

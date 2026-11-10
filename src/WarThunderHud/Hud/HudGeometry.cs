@@ -11,23 +11,24 @@ namespace WtHud.Hud;
 /// <summary>一架友机的**相对**方位（已减去本机航向）与距离。几何层不需要知道航向，无罗盘机型也能用。</summary>
 public readonly record struct FriendlyContact(double RelBearingDeg, double RangeM, string Icon);
 
-/// <summary>引导动作。只表达"该加速还是该减速"，具体文字由几何层按语言输出。</summary>
+/// <summary>引导动作。只表达"该加速、该减速、还是已经稳住"，具体文字由几何层按语言输出。</summary>
 public enum FormationAction
 {
     None,
     Accelerate,
     Decelerate,
+    Hold,
 }
 
 /// <summary>
-/// 针对最近一架友机的直接引导：往哪边转多少度、距离多少、距离在缩小还是拉开。
-/// <para>TurnDeg 就是相对方位（+ = 友机在右侧 = 右转），ClosingMs 正数表示正在接近。</para>
+/// 针对最近一架友机的直接引导：往哪边转多少度、现在多远、目标多远、油门怎么动。
+/// <para>TurnDeg 就是相对方位（+ = 友机在右侧 = 右转）。</para>
 /// <para>DeltaKmh 是"油门大概要动多少"：正 = 需要加速，负 = 需要减速，单位 km/h。
 /// 由接近率与期望接近率之差反推，是按 TAS 估的近似值（HUD 显示 IAS，高速时两者有差）。</para>
 /// <para>高度差不在这里 —— map_obj 没有 z，单机拿不到友机高度。</para>
 /// </summary>
 public readonly record struct FormationLead(
-    double TurnDeg, double RangeM, double ClosingMs, FormationAction Action, double DeltaKmh);
+    double TurnDeg, double RangeM, double TargetRangeM, FormationAction Action, double DeltaKmh);
 
 public sealed class HudOptions
 {
@@ -670,15 +671,13 @@ public sealed class HudGeometry
             FontSize = font * 1.55, Color = col, Points = { (cx, cy + 4.9 * pxDeg) },
         });
 
-        // ---- 2) 距离 + 接近率（▼ 靠近 / ▲ 拉开） ----
+        // ---- 2) 现在多远 → 目标多远 ----
         // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
-        string closing = Math.Abs(g.ClosingMs) < 3
-            ? "---"
-            : (g.ClosingMs > 0 ? "\u25BC " : "\u25B2 ") + ((int)Math.Round(Math.Abs(g.ClosingMs))).ToString() + " m/s";
-        // FormatRange 在 1 km 以内只给数字，引导这里必须带单位，否则"820"看不出是米还是公里
+        // 目标距离也画出来：只说"820m"飞行员不知道要追到多少，"820m → 400m"一眼就明白。
         string range = g.RangeM < 1000
             ? ((int)(Math.Round(g.RangeM / 10.0) * 10)).ToString() + "m"
             : (g.RangeM / 1000.0).ToString("F1") + "km";
+        string target = ((int)Math.Round(g.TargetRangeM)).ToString() + "m";
 
         double gapPx = 0.55 * pxDeg;
         prims.Add(new HudPrim
@@ -688,25 +687,27 @@ public sealed class HudGeometry
         });
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text, Text = closing, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
-            Color = Fade(col, 0.85), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
+            Kind = HudPrimKind.Text, Text = "\u2192 " + target, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
+            Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
         });
 
-        // ---- 3) 油门：只在真的要动油门时出现，带上大概要动多少 ----
+        // ---- 3) 油门：加/减速给数值，稳定时给"保持" ----
         if (g.Action != FormationAction.None)
         {
-            string act = L10n.Get(LangScope.Alerts,
-                g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
+            bool hold = g.Action == FormationAction.Hold;
+            string act = L10n.Get(LangScope.Alerts, hold ? "guide.hold"
+                : g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
 
             // 数值按 10 km/h 取整：编队时"加 80"比"加 83.6"好读，也没人会照着个位数修油门
             int dv = (int)(Math.Round(g.DeltaKmh / 10.0) * 10);
-            if (dv != 0)
+            if (!hold && dv != 0)
                 act += "  " + (dv > 0 ? "+" : "-") + Math.Abs(dv).ToString() + " km/h";
 
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
-                FontSize = font * 1.35, Color = _opt.WarnColor, Points = { (cx, cy + 8.4 * pxDeg) },
+                FontSize = font * 1.35, Color = hold ? col : _opt.WarnColor,
+                Points = { (cx, cy + 8.4 * pxDeg) },
             });
         }
     }
