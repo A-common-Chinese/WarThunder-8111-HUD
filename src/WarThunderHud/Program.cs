@@ -1628,12 +1628,27 @@ public static class Program
                 double closing = UpdateClosingRate(lead.RangeM, snap.ElapsedSeconds);
 
                 FormationAction action = FormationAction.None;
-                if (lead.RangeM < 200 && closing > 3) action = FormationAction.Decelerate;          // 贴翼了，慢慢靠也不安全
-                else if (lead.RangeM < 350 && closing > 10) action = FormationAction.Decelerate;   // 近了还在贴近
-                else if (lead.RangeM < 2000 && closing > 55) action = FormationAction.Decelerate;  // 追得太猛会冲过头
-                else if (lead.RangeM > 1200 && closing < 8) action = FormationAction.Accelerate;   // 掉队了
+                double deltaKmh = 0;
 
-                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM, closing, action);
+                // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
+                if (Math.Abs(lead.RelBearingDeg) < 50)
+                {
+                    if (lead.RangeM < 200 && closing > 3) action = FormationAction.Decelerate;          // 贴翼了，慢慢靠也不安全
+                    else if (lead.RangeM < 350 && closing > 10) action = FormationAction.Decelerate;   // 近了还在贴近
+                    else if (lead.RangeM < 2000 && closing > 55) action = FormationAction.Decelerate;  // 追得太猛会冲过头
+                    else if (lead.RangeM > 1200 && closing < 8) action = FormationAction.Accelerate;   // 掉队了
+
+                    if (action != FormationAction.None)
+                    {
+                        // 期望接近率：距离越远越想追（最多 40 m/s），越近越想收（最多 -10 m/s）。
+                        // 油门量 = 期望与实际之差，再按偏角修正（斜着飞时沿视线的分量更小）。
+                        double wantClosing = Math.Clamp((lead.RangeM - 500) * 0.05, -10, 40);
+                        double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
+                        deltaKmh = Math.Clamp(Math.Round((wantClosing - closing) / cosOff * 3.6 / 10) * 10, -300, 300);
+                    }
+                }
+
+                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM, closing, action, deltaKmh);
             }
             else
             {
@@ -2234,12 +2249,14 @@ public static class Program
                 {
                     var gAct = g.Length >= 4 && int.TryParse(g[3], out int ai)
                         ? (FormationAction)ai : FormationAction.None;
-                    opt.Guide = new FormationLead(gTurn, gRange, gClose, gAct);
+                    double gDelta = g.Length >= 5
+                        && double.TryParse(g[4], NumberStyles.Any, CultureInfo.InvariantCulture, out double gd) ? gd : 0;
+                    opt.Guide = new FormationLead(gTurn, gRange, gClose, gAct, gDelta);
                 }
             }
             else
             {
-                opt.Guide = new FormationLead(12, 820, 42, FormationAction.Decelerate);
+                opt.Guide = new FormationLead(12, 820, 42, FormationAction.Decelerate, -90);
             }
         }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }

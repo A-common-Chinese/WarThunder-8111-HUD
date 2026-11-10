@@ -22,10 +22,12 @@ public enum FormationAction
 /// <summary>
 /// 针对最近一架友机的直接引导：往哪边转多少度、距离多少、距离在缩小还是拉开。
 /// <para>TurnDeg 就是相对方位（+ = 友机在右侧 = 右转），ClosingMs 正数表示正在接近。</para>
+/// <para>DeltaKmh 是"油门大概要动多少"：正 = 需要加速，负 = 需要减速，单位 km/h。
+/// 由接近率与期望接近率之差反推，是按 TAS 估的近似值（HUD 显示 IAS，高速时两者有差）。</para>
 /// <para>高度差不在这里 —— map_obj 没有 z，单机拿不到友机高度。</para>
 /// </summary>
 public readonly record struct FormationLead(
-    double TurnDeg, double RangeM, double ClosingMs, FormationAction Action);
+    double TurnDeg, double RangeM, double ClosingMs, FormationAction Action, double DeltaKmh);
 
 public sealed class HudOptions
 {
@@ -690,11 +692,17 @@ public sealed class HudGeometry
             Color = Fade(col, 0.85), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
         });
 
-        // ---- 3) 加减速：只在真的要动油门时出现 ----
+        // ---- 3) 油门：只在真的要动油门时出现，带上大概要动多少 ----
         if (g.Action != FormationAction.None)
         {
             string act = L10n.Get(LangScope.Alerts,
                 g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
+
+            // 数值按 10 km/h 取整：编队时"加 80"比"加 83.6"好读，也没人会照着个位数修油门
+            int dv = (int)(Math.Round(g.DeltaKmh / 10.0) * 10);
+            if (dv != 0)
+                act += "  " + (dv > 0 ? "+" : "-") + Math.Abs(dv).ToString() + " km/h";
+
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
