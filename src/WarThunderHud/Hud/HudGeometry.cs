@@ -30,7 +30,41 @@ public enum FormationAction
 public readonly record struct FormationLead(
     double TurnDeg, double RangeM, double TargetRangeM, FormationAction Action, double DeltaKmh,
     // 长机转向率（°/s，正 = 右转）与来源。0 = 没有提前量，界面不显示这一行。
-    double LeadRateDeg = 0, bool LeadFromLink = false);
+    double LeadRateDeg = 0, bool LeadFromLink = false,
+    // 长机转弯的横向过载（G）与是否超过告警阈值；超了就把上面那行换成「转弯过急」
+    double TurnG = 0, bool OverG = false,
+    // 本机真空速（km/h）。速度条要画「我在哪、该到哪」两个标记，只有 DeltaKmh 是画不出来的。
+    // 0 = 未知，此时不画速度条（地面静止也走这条路，没有编队意义）。
+    double CurrentKmh = 0);
+
+/// <summary>
+/// 编队引导两条条的刻度换算。
+/// <para>抽成纯函数是为了能断言映射本身（满偏、归零、越界钳位），不必渲染出图。</para>
+/// </summary>
+public static class FormationBarScale
+{
+    /// <summary>
+    /// 速度条半量程（km/h）：轴心是目标速度，左右各 120。
+    /// <para>和建议量的上限（114 km/h）对齐 —— 原来给 200，点最多只能走到 57% 的位置，
+    /// 远看永远像"偏了一点点"，反而读不出力度。</para>
+    /// </summary>
+    public const double SpeedHalfKmh = 120;
+
+    /// <summary>加速度条半量程（km/h）：轴心是「不用改」，左右各 120。</summary>
+    public const double AccelHalfKmh = 120;
+
+    /// <summary>
+    /// 速度条位置（-1..1）：正 = 比目标快（块在轴心右侧），负 = 比目标慢。
+    /// <para>用「目标速度」当轴心而不是本机速度：目标是飞行员要落到的地方，把它钉在中心，
+    /// 块往哪边偏就是往哪边修，位置本身就成了「差多少」的读数。</para>
+    /// </summary>
+    public static double SpeedFrac(double currentKmh, double targetKmh)
+        => Math.Clamp((currentKmh - targetKmh) / SpeedHalfKmh, -1.0, 1.0);
+
+    /// <summary>加速度条位置（-1..1）：正 = 该加速，负 = 该减速。</summary>
+    public static double AccelFrac(double deltaKmh)
+        => Math.Clamp(deltaKmh / AccelHalfKmh, -1.0, 1.0);
+}
 
 public sealed class HudOptions
 {
@@ -54,6 +88,12 @@ public sealed class HudOptions
     /// </summary>
     public bool FormationOnly { get; set; }
 
+    /// <summary>
+    /// 编队状态提示（空 = 不显示）：到位时显示「编队完成」，解除时显示「编队已解除」。
+    /// <para>只在事件发生后几秒内出现，不常驻 —— 常驻会变成噪音。</para>
+    /// </summary>
+    public string FormationNotice { get; set; } = "";
+
     /// <summary>友机标记用的颜色（与主色区分开，便于一眼辨认）。</summary>
     public HudColor FriendlyColor { get; set; } = new(120, 200, 255);
 
@@ -75,6 +115,19 @@ public sealed class HudOptions
 
     /// <summary>主状态是否该用警告色（僚机掉队、距离过近、没设速度等）。</summary>
     public bool LeadStatusWarn { get; set; }
+
+    /// <summary>
+    /// 长机模式的速度条数据：当前真空速 / 目标真空速（按设定马赫换算）/ 差值。
+    /// <para>长机不走僚机那套引导，但「我该飞多快」同样需要一眼看得出 —— 只留一句
+    /// ADD POWER 的话，飞行员还得自己找空速表心算差多少。null = 不画。</para>
+    /// </summary>
+    public (double CurrentKmh, double TargetKmh, double DeltaKmh)? LeadSpeedBar { get; set; }
+
+    /// <summary>
+    /// 系统希望我飞的航向（度）。航向带上画一个琥珀色三角指过去。
+    /// <para>nil = 不画（没有目标航向时，比如长机开了全向跟随）。</para>
+    /// </summary>
+    public double? TargetHeadingDeg { get; set; }
 
     /// <summary>
     /// 与对方的气压高度差（m）。正 = **对方比我高**（我该爬升）。
@@ -337,9 +390,11 @@ public sealed class HudGeometry
         {
             // 编队模式：视野中心完全留给外部视觉，只保留编队信息 + 三个最小读数。
             // 航向带保留 —— 友机标记的方位是相对航向的，没有带就没有参照。
+            // FPM 必须保留：引导圈的用法就是「把 FPM 横移进圈里」，藏了 FPM 这个动作无从谈起。
             if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
+            if (_opt.ShowFpm) AddFpm(prims, s, cx, cy, pxDeg, line);
             AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
-            AddFormationGuidance(prims, cx, cy, pxDeg, font, fontSmall);
+            AddFormationGuidance(prims, s, cx, cy, pxDeg, font, fontSmall);
             AddFormationReadout(prims, s, cx, cy, pxDeg, font, fontSmall);
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
@@ -663,7 +718,7 @@ public sealed class HudGeometry
     /// <para>编队时眼睛大部分时间在窗外，扫一眼就要能照做，所以方向用最大字号，
     /// 距离/接近率用辅助字号，加减速只在需要时出现（平时不占视觉）。</para>
     /// </summary>
-    private void AddFormationGuidance(List<HudPrim> prims, double cx, double cy,
+    private void AddFormationGuidance(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
                                       double pxDeg, double font, double fontSmall)
     {
         // 长机模式：只报状态，不给任何数字。位置和僚机模式的主行对齐，切换角色时视线不用移。
@@ -673,7 +728,7 @@ public sealed class HudGeometry
             {
                 Kind = HudPrimKind.Text, Text = _opt.LeadStatusMain, Align = HudAlign.Center,
                 FontSize = font * 1.45, Color = _opt.LeadStatusWarn ? _opt.WarnColor : _opt.Color,
-                Points = { (cx, cy + 5.2 * pxDeg) },
+                Points = { (cx, cy + 7.4 * pxDeg) },
             });
 
             if (_opt.LeadStatusSub.Length > 0)
@@ -682,9 +737,16 @@ public sealed class HudGeometry
                 {
                     Kind = HudPrimKind.Text, Text = _opt.LeadStatusSub, Align = HudAlign.Center,
                     FontSize = fontSmall * 1.3, Color = _opt.WarnColor,
-                    Points = { (cx, cy + 7.6 * pxDeg) },
+                    Points = { (cx, cy + 8.7 * pxDeg) },
                 });
             }
+
+            // 长机也画速度条：一句 ADD POWER 说不清「差多少、到哪停」，
+            // 目标就是设定马赫换算出的真空速，和僚机用同一套尺。
+            if (_opt.LeadSpeedBar is (double curKmh, double tgtKmh, double dvKmh))
+                AddSpeedBars(prims, cx, cy + 10.1 * pxDeg, pxDeg, fontSmall, curKmh, tgtKmh, dvKmh,
+                             Math.Abs(dvKmh) >= 5);
+
             return;
         }
 
@@ -692,10 +754,53 @@ public sealed class HudGeometry
 
         var col = _opt.Color;
 
-        // ---- 0) 长机正在转弯：为什么下面的角度比目视看到的大 ----
+        // ---- 引导圈：把飞行矢量标记（FPM）横移到圈里 ----
+        // 纵向必须和 FPM 用同一个基准：FPM 画在 cy + (迎角 + 配平) 处，圈原来钉死在 cy，
+        // 巡航迎角 3–5° 时两者天然差半屏，飞行员怎么修都套不上。
+        // 上限 6°：大迎角（拉杆过猛）时让圈停住，免得压到下面的文字行。
+        if (Math.Abs(g.TurnDeg) >= 0.6)
+        {
+            double ox = cx + Math.Clamp(g.TurnDeg, -60.0, 60.0) * pxDeg;
+            double oy = cy + Math.Clamp(s.AoaDeg + _opt.FpmTrimDeg, -4.0, 6.0) * pxDeg;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Circle, Radius = 0.55 * pxDeg, Width = 1.8, Color = col,
+                Points = { (ox, oy) },
+            });
+        }
+
+        // ---- 编队完成：给长机的「可以开始机动了」信号 ----
+        // 只在刚到位那 3 秒出现，之后靠引导继续维持，不常驻（常驻会变成噪音）。
+        if (!string.IsNullOrEmpty(_opt.FormationNotice))
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text,
+                Text = _opt.FormationNotice,
+                Align = HudAlign.Center,
+                FontSize = fontSmall * 1.35,
+                Color = col,
+                Points = { (cx, cy + 2.85 * pxDeg) },
+            });
+        }
+
+        // ---- 0) 长机转弯：为什么下面的角度比目视看到的大 ----
         // 提前量把机头指向长机的未来位置，转弯时这个数值会比"长机在哪"大十几到二十几度。
         // 不说一句，飞行员会以为引导跳了。只在真的在转弯时出现，平飞完全不占视觉。
-        if (Math.Abs(g.LeadRateDeg) >= 1.5)
+        if (g.OverG)
+        {
+            // 超过阈值：不是"数值为什么大"，而是"跟不住了"—— 直接换成警告，别让飞行员以为在正常引导
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text,
+                Text = string.Format(L10n.Get(LangScope.Alerts, "guide.turnGWarn"), g.TurnG),
+                Align = HudAlign.Center,
+                FontSize = fontSmall * 1.25,
+                Color = _opt.WarnColor,
+                Points = { (cx, cy + 3.45 * pxDeg) },
+            });
+        }
+        else if (Math.Abs(g.LeadRateDeg) >= 1.5)
         {
             int rate = (int)Math.Round(Math.Abs(g.LeadRateDeg));
             string turnTpl = L10n.Get(LangScope.Alerts, g.LeadRateDeg > 0 ? "guide.leadTurnR" : "guide.leadTurnL");
@@ -729,9 +834,16 @@ public sealed class HudGeometry
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = dir, Align = HudAlign.Center,
-            FontSize = font * 1.55, Color = col, Points = { (cx, cy + 4.9 * pxDeg) },
+            FontSize = font * 1.55, Color = col, Points = { (cx, cy + 7.2 * pxDeg) },
         });
 
+        // ---- 速度条 + 加速度条 ----
+        // 抽成通用方法：长机模式也要看「我该飞多快」，那边不走 Guide，单独调。
+        // 加速度条与下面那行油门文字用同一个判据（有动作就画），
+        // 否则 Δv 在 0–5 之间会出现「有文字没条」的中间态。
+        AddSpeedBars(prims, cx, cy + 8.6 * pxDeg, pxDeg, fontSmall,
+                     g.CurrentKmh, g.CurrentKmh + g.DeltaKmh, g.DeltaKmh,
+                     g.Action != FormationAction.None);
         // ---- 2) 现在多远 → 目标多远 ----
         // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
         // 目标距离也画出来：只说"820m"飞行员不知道要追到多少，"820m → 400m"一眼就明白。
@@ -744,12 +856,12 @@ public sealed class HudGeometry
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = range, Align = HudAlign.Right, FontSize = fontSmall * 1.25,
-            Color = Fade(col, 0.85), Points = { (cx - gapPx, cy + 6.6 * pxDeg) },
+            Color = Fade(col, 0.85), Points = { (cx - gapPx, cy + 12.2 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = "\u2192 " + target, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
-            Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
+            Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 12.2 * pxDeg) },
         });
 
         // ---- 2.5) 高度差：只有数据链送来时才画 ----
@@ -766,7 +878,7 @@ public sealed class HudGeometry
                 Kind = HudPrimKind.Text, Text = altText, Align = HudAlign.Center,
                 FontSize = fontSmall * 1.1,
                 Color = altAbs < 15 ? Fade(col, 0.7) : _opt.FriendlyColor,
-                Points = { (cx, cy + 7.45 * pxDeg) },
+                Points = { (cx, cy + 13.0 * pxDeg) },
             });
         }
 
@@ -785,8 +897,121 @@ public sealed class HudGeometry
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
-                FontSize = font * 1.35, Color = hold ? col : _opt.WarnColor,
-                Points = { (cx, cy + 9.0 * pxDeg) },
+                FontSize = fontSmall * 1.15, Color = hold ? col : _opt.WarnColor,
+                Points = { (cx, cy + 11.4 * pxDeg) },
+            });
+        }
+    }
+
+    /// <summary>
+    /// 画「我在哪 / 该到哪」的速度条和「推多少油门」的加速度条。
+    /// </summary>
+    /// <param name="yTop">速度条轴线的纵坐标；数字在 +0.9°、加速度条在 +2.0°。</param>
+    /// <param name="currentKmh">本机真空速。&lt;=1 视为未知，不画速度条（加速度条仍可画）。</param>
+    /// <param name="targetKmh">目标真空速。轴心就是它。</param>
+    /// <param name="deltaKmh">建议的加减速量，决定加速度条上点的位置。</param>
+    /// <param name="showAccel">是否画加速度条。僚机传「有引导动作」，长机传「差值够大」——
+    /// 由调用方决定，两条路径的判据本来就不一样。</param>
+    private void AddSpeedBars(List<HudPrim> prims, double cx, double yTop, double pxDeg, double fontSmall,
+                              double currentKmh, double targetKmh, double deltaKmh, bool showAccel)
+    {
+        var col = _opt.Color;
+
+        // ---- 速度条：轴心 = 目标速度，实心点 = 本机真空速 ----
+        // 只给一个「+80」飞行员还得自己心算现在多少、要到多少；给一对绝对标记之后，
+        // 「我在哪、该到哪」直接可读，点往轴心靠就说明修对了。
+        if (currentKmh > 1)
+        {
+            double by = yTop;
+            // 半宽 2.2°：1.6° 在 1080p 下全长只有 50 px，缺口几十 km/h 时点几乎贴着轴心看不出来。
+            double half = 2.2 * pxDeg;
+            double frac = FormationBarScale.SpeedFrac(currentKmh, targetKmh);
+
+            // 轴线 + 两端端点：没有端点的横线读不出"量程"，加两笔就成了一把尺
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 1.4, Color = Fade(col, 0.55),
+                Points = { (cx - half, by), (cx + half, by) },
+            });
+            foreach (double endX in new[] { cx - half, cx + half })
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Line, Width = 1.4, Color = Fade(col, 0.75),
+                    Points = { (endX, by - 0.20 * pxDeg), (endX, by + 0.20 * pxDeg) },
+                });
+            }
+            // 轴心 = 目标速度：琥珀色三角扎在轴上，表示「系统希望到这里」。
+            // 原来是根半透明细刻度，和当前点的形状太像，飞行员分不清哪个是"该到"。
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Polyline, Width = 1.8, Color = _opt.WarnColor,
+                Points =
+                {
+                    (cx - 0.34 * pxDeg, by - 0.74 * pxDeg),
+                    (cx + 0.34 * pxDeg, by - 0.74 * pxDeg),
+                    (cx, by - 0.16 * pxDeg),
+                    (cx - 0.34 * pxDeg, by - 0.74 * pxDeg),
+                },
+            });
+            // 本机速度：实心块（短粗竖线 —— 渲染器不消费 Filled，画圆只会得到空心环）。
+            // 宽度 0.44° 对刻度线的 2 px，形状差异足够大，扫一眼就知道哪个是"现在"。
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 0.44 * pxDeg, Color = col,
+                Points = { (cx + frac * half, by - 0.30 * pxDeg), (cx + frac * half, by + 0.30 * pxDeg) },
+            });
+
+            // 数字：现在 → 目标。两块分开定位，连续空格在渲染里会被压掉。
+            double gapV = 0.55 * pxDeg;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = ((int)Math.Round(currentKmh)).ToString(),
+                Align = HudAlign.Right, FontSize = fontSmall * 1.25,
+                Color = Fade(col, 0.90), Points = { (cx - gapV, by + 0.9 * pxDeg) },
+            });
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text,
+                Text = "\u2192 " + ((int)Math.Round(targetKmh)).ToString() + " km/h",
+                Align = HudAlign.Left, FontSize = fontSmall * 1.25,
+                Color = Fade(col, 0.60), Points = { (cx + gapV, by + 0.9 * pxDeg) },
+            });
+        }
+
+        // ---- 加速度条：中点 = 不用动油门，向右 = 该加速、向左 = 该减速 ----
+        if (showAccel)
+        {
+            double frac = FormationBarScale.AccelFrac(deltaKmh);
+            double ay = yTop + 2.0 * pxDeg;
+            double half = 1.9 * pxDeg;
+            // 轴线 + 两端端点（和速度条同一套尺的读法）
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 1.4, Color = Fade(col, 0.55),
+                Points = { (cx - half, ay), (cx + half, ay) },
+            });
+            foreach (double endX in new[] { cx - half, cx + half })
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Line, Width = 1.4, Color = Fade(col, 0.75),
+                    Points = { (endX, ay - 0.18 * pxDeg), (endX, ay + 0.18 * pxDeg) },
+                });
+            }
+            // 中点刻度（0 位）
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 2.0, Color = Fade(col, 0.70),
+                Points = { (cx, ay - 0.22 * pxDeg), (cx, ay + 0.22 * pxDeg) },
+            });
+            // 指示块：这条条整个表达的就是「系统希望我加/减多少」，所以用琥珀色（和速度条的目标三角同色系），
+            // 不再用绿色 —— 绿色在这套界面里统一表示「你现在在哪」。
+            double tx = cx + frac * half;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 0.44 * pxDeg, Color = _opt.WarnColor,
+                Points = { (tx, ay - 0.28 * pxDeg), (tx, ay + 0.28 * pxDeg) },
             });
         }
     }
@@ -795,7 +1020,8 @@ public sealed class HudGeometry
                                      double pxDeg, double font, double fontSmall)
     {
         var col = _opt.Color;
-        double y = cy + 11.0 * pxDeg;
+        // 11.0 → 12.5：上面多了一条速度条和一行速度数字，读数整体让位。
+        double y = cy + 14.6 * pxDeg;
         double dx = 6.0 * pxDeg;
 
         void Cell(double x, string value, string unit)
@@ -1033,6 +1259,30 @@ public sealed class HudGeometry
             Align = HudAlign.Center, FontSize = font, Color = col,
             Points = { (cx, y + 2.3 * pxDeg) },
         });
+
+        // ---- 目标航向：琥珀色三角（绿色三角 = 我现在朝哪，琥珀 = 系统希望我朝哪）----
+        // 画在带上方、标签下方那一窄条：不压刻度数字，也不会和当前航向三角混在一起。
+        if (_opt.TargetHeadingDeg is double tgtHdg)
+        {
+            double rel = tgtHdg - hdg;
+            while (rel > 180) rel -= 360;
+            while (rel < -180) rel += 360;
+            double hx = cx + rel * pxPer10Deg / 10.0;
+            if (Math.Abs(hx - cx) <= span)
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Polyline, Width = 1.8, Color = _opt.WarnColor,
+                    Points =
+                    {
+                        (hx - 0.42 * pxDeg, y - 0.80 * pxDeg),
+                        (hx + 0.42 * pxDeg, y - 0.80 * pxDeg),
+                        (hx, y - 0.12 * pxDeg),
+                        (hx - 0.42 * pxDeg, y - 0.80 * pxDeg),
+                    },
+                });
+            }
+        }
     }
 
     // ---------------------------------------------------------------------- fpm

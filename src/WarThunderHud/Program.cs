@@ -61,8 +61,10 @@ public static class Program
                 return RunOverlay(args.Length > 0 ? args : new[] { "overlay" });
             case "fusiontest":
                 return FusionTest();
+            case "formationsim":
+                return FormationSim(args);
             default:
-                Console.WriteLine("usage: WtHud                       # start the HUD overlay (default)\n         WtHud overlay [seconds] [demo]\n         WtHud probe [seconds] | replay <file> [speed] | preview <out.png> [w] [h] [variant] | selftest | fusiontest | dumpgeo");
+                Console.WriteLine("usage: WtHud                       # start the HUD overlay (default)\n         WtHud overlay [seconds] [demo]\n         WtHud probe [seconds] | replay <file> [speed] | preview <out.png> [w] [h] [variant] | selftest | fusiontest | formationsim | dumpgeo");
                 return 2;
         }
     }
@@ -170,22 +172,65 @@ public static class Program
         // 太慢时不给提前量：50 m/s 以下这个公式会被噪声主导
         Check("lead pursuit too slow", LeadPursuitDeg(10, 400, 170, 45) == 0);
 
+        // ---- 固定站位：站位随长机航向转、左右镜像、居中时对准 ----
+        Check("station aligned when centered", Math.Abs(WingAimDeg(0, 400, 0, 0)) < 1e-9);
+        Check("station responds to lead heading",
+            Math.Abs(WingAimDeg(0, 400, +1, 30) - WingAimDeg(0, 400, +1, 0)) > 5);
+        Check("station left/right mirror at zero delta",
+            Math.Abs(WingAimDeg(0, 400, -1, 0) + WingAimDeg(0, 400, +1, 0)) < 1e-9);
+        Check("station center shifts with rel",
+            Math.Abs(WingAimDeg(30, 400, 0, 0) - WingAimDeg(0, 400, 0, 0)) > 5);
+        Check("inside turn right/right", IsInsideTurn(+1, +10));
+        Check("outside turn right/left", !IsInsideTurn(-1, +10));
+        Check("inside turn left/left", IsInsideTurn(-1, -10));
+        Check("outside turn left/right", !IsInsideTurn(+1, -10));
+        Check("C unset side keeps legacy lead",
+            Math.Abs(FormationLeadAheadDeg(10, 400, 600, 45, 0) - 24.77) < 0.1);
+        Check("C legacy lead mirrors turn direction",
+            Math.Abs(FormationLeadAheadDeg(-10, 400, 600, 45, 0)
+                     + FormationLeadAheadDeg(10, 400, 600, 45, 0)) < 0.1);
+        Check("C station drops lead inner", FormationLeadAheadDeg(10, 400, 600, 45, +1) == 0);
+        Check("C station drops lead outer", FormationLeadAheadDeg(10, 400, 600, 45, -1) == 0);
+        Check("C station drops lead both turns", FormationLeadAheadDeg(-10, 400, 600, 45, +1) == 0);
+
+        // ---- 僚机速度前馈：|ω|·(r_w−ρ)，外圈加速 / 内圈减速 / 上下限 ----
+        Check("feed straight is zero", FormationFeedKmh(0, 400, 600, +1, -30, 0, 0.8, 1.3) == 0);
+        Check("feed center wing is zero", FormationFeedKmh(10, 400, 600, 0, -30, 0, 0.8, 1.3) == 0);
+        Check("feed outer wing accelerates", FormationFeedKmh(10, 400, 600, -1, 30, 0, 0.8, 1.3) > 0);
+        Check("feed inner wing decelerates", FormationFeedKmh(10, 400, 600, +1, -30, 0, 0.8, 1.3) < 0);
+        Check("feed mirrors turn direction",
+            Math.Abs(FormationFeedKmh(-10, 400, 600, +1, -30, 0, 0.8, 1.3)
+                     - FormationFeedKmh(10, 400, 600, -1, 30, 0, 0.8, 1.3)) < 1e-9);
+        Check("feed clamped by max ratio",
+            FormationFeedKmh(20, 1500, 600, -1, 30, 0, 0.8, 1.3) <= 600 * 0.3 + 1e-9);
+
         // ---- 数据链报文：新格式回环 + 老格式兼容 ----
         string wire = WtHud.Telemetry.DataLink.BuildPayload(123456, 1000, -2.5, 359.6, -12.34);
         Check("datalink payload shape", wire == "WTDL2|123456|1000|-25|0|-123");
         Check("datalink roundtrip",
-            WtHud.Telemetry.DataLink.TryParsePayload(wire, out var dlId, out var dlAlt, out var dlVy, out var dlTurn)
+            WtHud.Telemetry.DataLink.TryParsePayload(wire, out var dlId, out var dlAlt, out var dlVy,
+                                                     out var dlTurn, out var dlHdg)
             && dlId == 123456 && dlAlt == 1000
             && Math.Abs(dlVy - (-2.5)) < 0.01
-            && dlTurn is double t && Math.Abs(t - (-12.3)) < 0.01);
-        // 老版本只发 4 段：高度照收，转向率给 null（上层退化为本地估算）
+            && dlTurn is double t && Math.Abs(t - (-12.3)) < 0.01
+            && dlHdg is double h && Math.Abs(h - 0) < 0.01);
+        // 老版本只发 4 段：高度照收，航向/转向率都给 null（上层退化为本地近似）
         Check("datalink legacy 4 fields",
-            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|999999|5000|-10", out _, out var oldAlt, out _, out var oldTurn)
-            && oldAlt == 5000 && oldTurn == null);
+            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|999999|5000|-10",
+                out _, out var oldAlt, out _, out var oldTurn, out var oldHdg)
+            && oldAlt == 5000 && oldTurn == null && oldHdg == null);
+        Check("datalink heading parsed",
+            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|1|1000|0|275|-123",
+                out _, out _, out _, out _, out var hdg275)
+            && hdg275 is double hp && Math.Abs(hp - 275) < 0.01);
         Check("datalink rejects wrong magic",
-            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL3|1|2|3", out _, out _, out _, out _));
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL3|1|2|3", out _, out _, out _, out _, out _));
         Check("datalink rejects garbage",
-            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|abc|1|2", out _, out _, out _, out _));
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|abc|1|2", out _, out _, out _, out _, out _));
+
+        // ---- 长机航向来源：有链路用自报值，没有用本机航向近似 ----
+        Check("lead heading prefers link", ResolveLeadHeading(275, 10) == 275);
+        Check("lead heading falls back to own", ResolveLeadHeading(null, 10) == 10);
 
         // ---- 转向率估计器：窗口首尾差 ----
         // 每 250 ms 涨 5° = 20°/s；窗口 1.0 s，所以稳态应读出 20
@@ -210,8 +255,73 @@ public static class Program
         for (int i = 0; i <= 4; i++) estRate = EstimateLeadTurnRate(0, 10, i * 0.25);
         Check("lead turn rate adds own rate", Math.Abs(estRate - 10) < 0.5);
 
+        // ---- 超载提示：n = V·ω/g，600 km/h 下 10°/s ≈ 2.97 G（阈值默认 2.5 G）----
+        Check("turn load 10degps at 600kmh is ~3G", Math.Abs(TurnLoadG(10, 600) - 2.97) < 0.05);
+        Check("turn load scales with speed",
+            Math.Abs(TurnLoadG(10, 400) - TurnLoadG(10, 600) * 400.0 / 600.0) < 0.01);
+        Check("turn load zero when straight", TurnLoadG(0, 600) == 0);
+        Check("turn load ignores turn direction",
+            Math.Abs(TurnLoadG(-10, 600) - TurnLoadG(10, 600)) < 1e-9);
+        // 阈值 1.5 G ≈ 5.1°/s @ 600 km/h：5.2°/s 越线，5°/s 还没到
+        Check("turn load 5.2degps exceeds 1.5G warn", TurnLoadG(5.2, 600) > 1.5);
+        Check("turn load 5degps below 1.5G warn", TurnLoadG(5, 600) < 1.5);
+        // 1 G 对应的转弯率（600 km/h 下 3.37°/s），sim 用它做「标准转弯」基准
+        Check("1G at 600kmh is ~3.37degps", Math.Abs(TurnLoadG(3.37, 600) - 1.0) < 0.02);
+
+        // 速度条：轴心是目标速度，块偏在哪边 = 差在哪边
+        Check("speed bar centred when on target",
+            FormationBarScale.SpeedFrac(600, 600) == 0);
+        Check("speed bar 100 slow is 5/6 left",
+            Math.Abs(FormationBarScale.SpeedFrac(600, 700) + 100.0 / 120.0) < 1e-9);
+        Check("speed bar right when fast",
+            FormationBarScale.SpeedFrac(760, 700) > 0);
+        Check("speed bar clamps past full scale",
+            FormationBarScale.SpeedFrac(1200, 700) == 1.0
+            && FormationBarScale.SpeedFrac(100, 700) == -1.0);
+        // 加速度条：中点 = 不用动油门
+        Check("accel bar centred at zero", FormationBarScale.AccelFrac(0) == 0);
+        Check("accel bar half-right at half scale",
+            Math.Abs(FormationBarScale.AccelFrac(60) - 0.5) < 1e-9);
+        Check("accel bar clamps both ways",
+            FormationBarScale.AccelFrac(999) == 1.0 && FormationBarScale.AccelFrac(-999) == -1.0);
+        // 两条条共用同一个满量程（120 km/h）：这样"油门打满"和"速度条走到头"是同一个位置，
+        // 飞行员不用记两套刻度
+        Check("both bars share one full scale",
+            FormationBarScale.SpeedHalfKmh == FormationBarScale.AccelHalfKmh);
+        Check("speed bar hits the end at accel full scale",
+            Math.Abs(FormationBarScale.SpeedFrac(600, 720) + 1.0) < 1e-9);
+
+        // 长机挑选：同型多架时取最近的，而不是列表里第一个（列表顺序是分析顺序，不可依赖）
+        var cand = new System.Collections.Generic.List<FriendlyContact>
+        {
+            new(0, 2400, "Fighter"), new(0, 900, "Fighter"), new(0, 1500, "Fighter"),
+        };
+        Check("nearest matching contact is the lead", NearestFriendlyIndex(cand) == 1);
+        Check("nearest ignores bearing", NearestFriendlyIndex(
+            new System.Collections.Generic.List<FriendlyContact>
+            {
+                new(-170, 500, "Fighter"), new(10, 700, "Fighter"),
+            }) == 0);
+        Check("no friendly means no lead",
+            NearestFriendlyIndex(new System.Collections.Generic.List<FriendlyContact>()) == -1);
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
+    }
+
+    /// <summary>
+    /// 从（已按机型过滤过的）友机里挑长机：取**最近**的那架。
+    /// <para>机型只能区分类别（同为 Fighter 的两架分不开），所以同型多架时靠距离决胜负 ——
+    /// 离我最近的那架才是我实际能编队的那架。抽成函数是为了能断言，
+    /// 免得以后有人把「取列表第一个」改成别的顺序（列表默认是分析顺序，不是距离序）。</para>
+    /// <para>返回 -1 表示没有可选目标（找不到长机，引导整段不画）。</para>
+    /// </summary>
+    internal static int NearestFriendlyIndex(System.Collections.Generic.IReadOnlyList<FriendlyContact> list)
+    {
+        int best = -1;
+        for (int i = 0; i < list.Count; i++)
+            if (best < 0 || list[i].RangeM < list[best].RangeM) best = i;
+        return best;
     }
 
     /// <summary>
@@ -219,6 +329,465 @@ public static class Program
     /// 曾经的问题：详情页用 Scoped.Get（跟着面板当前编辑的机型走）读值，导致 j16 的数据覆盖 f4j 的显示；
     /// 且运行时根本没读 perVehicleOverrides，这些「按机型」参数实际不生效。
     /// </summary>
+    /// <summary>
+    /// 双机编队仿真（真实级联 PID）：直线 / 右转 / 左转 × 侧位设定（0 / 左 / 右）。
+    /// <para>方向引导复用 WingAimDeg / IsInsideTurn / FormationLeadAheadDeg；油门复用
+    /// UpdateClosingRate / SmoothGuideDelta / ResetGuideState + HudConfig 默认增益，
+    /// 与 UpdateNavigation 是同一套公式、增益和限幅。</para>
+    /// <para>输出 2×2 俯视 XY 轨迹 PNG；数字摘要写同目录 .txt 供复核，不向控制台打表。</para>
+    /// </summary>
+    private static int FormationSim(string[] args)
+    {
+        const double vKmh = 600, dt = 0.25, maxTurnDegPerS = 20;
+        // 仿真时长：默认 30 s。WT_SIM_SEC=45 可延长，用来判断「没编上」是真追不上还是窗口不够
+        double totalS = 30;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_SEC"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double secEnv))
+            totalS = Math.Clamp(secEnv, 10, 120);
+        double vMs = vKmh / 3.6;
+        int steps = (int)(totalS / dt);
+        // 三档转向率，默认直线 / 右转 10 / 左转 10（°/s）。
+        // WT_SIM_RATES="0,20,-20" 可在不改代码的情况下压高转速，用来检查极限下会不会发散。
+        double[] rates = { 0, 10, -10 };
+        string? rateSpec = Environment.GetEnvironmentVariable("WT_SIM_RATES");
+        if (!string.IsNullOrWhiteSpace(rateSpec))
+        {
+            var parsed = rateSpec.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                 .Select(x => double.Parse(x.Trim(), CultureInfo.InvariantCulture))
+                                 .ToArray();
+            if (parsed.Length == 3 && parsed[0] == 0) rates = parsed;
+            else Console.WriteLine("WT_SIM_RATES ignored: need 3 values, first must be 0");
+        }
+        string[] scenarios = { "STRAIGHT", $"TURN R {rates[1]:0} deg/s", $"TURN L {Math.Abs(rates[2]):0} deg/s" };
+        int[] wings = { 0, -1, +1 };
+        var cfg = new HudConfig();
+        // 控制器选择：默认站位点追踪（现有产品行为）；WT_SIM_MODE=vector 切到「速度矢量匹配」实验分支
+        bool vectorMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "vector";
+        // WT_SIM_MODE=omega：角速度控制 —— ω_W = ω_L + k·(LOS 误差)，对应现实编队的「姿态跟随」
+        bool omegaMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "omega";
+        // WT_SIM_MODE=staged：两阶段状态机 —— 先 CONVERGE（位置追踪）编好队，再 MAINTAIN（角速度）保持
+        bool stagedMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "staged";
+        // WT_SIM_NOLINK=<秒>：从该时刻起模拟「数据链断掉」——拿不到 ω_L、状态机强制回落 CONVERGE
+        double linkLostAt = double.MaxValue;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_NOLINK"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double llAt))
+            linkLostAt = llAt;
+        // 切换平滑的时间常数（秒）。0.5 s 实测把尾随的保持能力拖垮（1.5G 掉回 CONVERGE），
+        // 0.15 s 只压掉切换那一帧的跳变，不影响稳态跟随。
+        double tauSwitch = 0.15;
+        // WT_SIM_SCATTER=1：三架僚机以**不同的初始位置 / 航向 / 速度**起步，
+        // 用来考验 CONVERGE 阶段（原来的设定是三架同航向同速度，等于把最难的部分绕过去了）。
+        bool scatter = Environment.GetEnvironmentVariable("WT_SIM_SCATTER") == "1";
+        double straightS = scatter ? 20.0 : 10.0;   // 长机平飞时间：散开起步需要更久才编得起来
+        // WT_SIM_MANEUVER=1：按时间表跑完整机动序列（只跑 1 个场景）：
+        //   平飞 20 s 编队 → 0.8 G 右转 90° → 直飞 10 s → 1 G 左转 90° → 直飞 10 s
+        //   → 5 G 右转 90°（远超 1.5 G 包线）→ 直飞 20 s，看编队能否自行重组
+        bool maneuver = Environment.GetEnvironmentVariable("WT_SIM_MANEUVER") == "1";
+        // 600 km/h：0.8G≈2.70°/s、1G≈3.37°/s、5G≈16.85°/s；每段按 90° 计算时长
+        double[] mt = { 0, 20.0, 53.3, 63.3, 90.0, 100.0, 105.3, 300.0 };
+        double[] mw = { 0, 2.70, 0, -3.37, 0, 16.85, 0 };
+        int nScen = maneuver ? 1 : 3;
+        // 角速度环增益（每秒每度偏差修正多少度/秒）。扫参结论：0.5 全面优于 1.0 ——
+        // 2G 尾随 R 518→439、cross −114→23 且不再掉回 CONVERGE；1G/1.5G 的尾随也更准（−30→−17、−18→−8）。
+        // 增益越大越容易过冲，然后被 120 m 阈值踢回 CONVERGE，反而更差。
+        double kAng = 0.5;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_KANG"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double kangEnv))
+            kAng = kangEnv;
+
+        string outPng = args.Length > 1 ? args[1] : "formation_sim.png";
+        string outTxt = System.IO.Path.ChangeExtension(outPng, ".txt");
+        string? dir = System.IO.Path.GetDirectoryName(outPng);
+        if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
+
+        var leaders = new List<(double x, double y)>[3];
+        var tracks = new List<(double x, double y)>[3][];
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"# mode: " + (stagedMode
+            ? $"staged (CONVERGE=station, MAINTAIN=omega k={kAng:F2})"
+            : omegaMode ? $"omega (w_L feedforward, k={kAng:F2})"
+            : vectorMode ? "vector (speed matching)" : "station (position tracking)"));
+        if (maneuver) summary.AppendLine(
+            "# maneuver: straight 20s -> 0.8G R90 -> straight 10s -> 1G L90 -> straight 10s -> 5G R90 -> straight 20s"
+            + (scatter ? " | scattered start" : ""));
+        else if (stagedMode) summary.AppendLine($"# leader flies straight {straightS:F0} s, then turns"
+            + (scatter ? " | scattered start: L(-600,200,h160,v500) R(400,-500,h40,v750) trail(0,-800,h0,v450)" : ""));
+
+        for (int si = 0; si < nScen; si++)
+        {
+            tracks[si] = new List<(double, double)>[3];
+            double omega = rates[si];
+            for (int wi = 0; wi < wings.Length; wi++)
+            {
+                int wing = wings[wi];
+                ResetGuideState();
+                double psiL = 0, lx = 0, ly = 0;   // 长机：V 型顶点，在原点中央
+                // V 型起点：左右僚机在斜后方（±150, −370 ≈ 400 m 间距），
+                // 尾随僚机在正后方更远处 (0, −600)。三架各自追长机、彼此无交互。
+                // 起点：默认从**站位**起步（编队辅助的实际用途是「跟住之后保持」，不是远距汇合）。
+                // WT_SIM_START=far 恢复旧起点（尾随 −600），用于对比汇合阶段的表现。
+                bool startFar = Environment.GetEnvironmentVariable("WT_SIM_START") == "far" || stagedMode;
+                double wx, wy, psiW0, vW0Kmh;
+                if (scatter)
+                {
+                    // 三架各自的烂摊子：左僚机在长机左前方且背向、右僚机在右后且快、尾随在正后且慢
+                    if (wing < 0) { wx = -600; wy = 200; psiW0 = 160; vW0Kmh = 500; }
+                    else if (wing > 0) { wx = 400; wy = -500; psiW0 = 40; vW0Kmh = 750; }
+                    else { wx = 0; wy = -800; psiW0 = 0; vW0Kmh = 450; }
+                }
+                else
+                {
+                    wx = wing < 0 ? -WingOffsetM : wing > 0 ? WingOffsetM : 0;
+                    wy = wing == 0
+                        ? (startFar ? -600 : -FormationTargetRangeM)
+                        : -StationBackM;
+                    psiW0 = 0; vW0Kmh = vKmh;
+                }
+                double psiW = psiW0;
+                double omegaSmooth = 0;                // staged 模式的角速度指令（一阶低通后的状态）
+                double vW = vW0Kmh / 3.6;              // 僚机当前地速（矢量模式用它算速度误差）
+                double maxAlong = double.MinValue;
+                double ahead0 = 0, finalRel = 0, finalR = 0, finalAlong = 0, finalCross = 0;
+                // 航向对齐子模式：航向差大时先摆正方向，再追站位点。
+                // 直接指向站位点会追着一条不断移动的尾迹绕圈（5G 机动后实测 35 s 回不来）。
+                bool aligning = false;
+                bool inMaintain = false;
+                double stageSince = 0;
+                int stageSwitches = 0;
+                double firstSwitchAt = -1;
+                var leadTrack = new List<(double, double)>();
+                var wingTrack = new List<(double, double)>();
+
+                for (int i = 0; i <= steps; i++)
+                {
+                    double nowS = i * dt;
+                    // staged 模式让长机先平飞（把队伍编好），之后才开始转弯
+                    // maneuver 模式改按时间表走完整机动序列
+                    double omegaNow;
+                    if (maneuver)
+                    {
+                        omegaNow = 0;
+                        for (int k = 0; k < mw.Length; k++)
+                            if (nowS >= mt[k] && nowS < mt[k + 1]) { omegaNow = mw[k]; break; }
+                    }
+                    else
+                    {
+                        omegaNow = (stagedMode && nowS < straightS) ? 0.0 : omega;
+                    }
+                    // 僚机「看得到」的 ω_L：断链后前馈失效，只能退回几何法
+                    bool linkLost = nowS >= linkLostAt;
+                    double omegaSeen = linkLost ? 0.0 : omegaNow;
+                    double ex = lx - wx, ey = ly - wy;
+                    double R = Math.Sqrt(ex * ex + ey * ey);
+                    double bearing = Math.Atan2(ex, ey) * 180.0 / Math.PI;
+                    double rel = NormalizeDeg(bearing - psiW);
+
+                    double guide;
+                    double vecFeed = 0;
+                    double omegaCmd = double.NaN;
+
+                    // 两阶段状态机（仅 staged 模式）：距离误差进 50 m 且驻留 3 s → MAINTAIN；
+                    // 掉到 120 m 以外 → 退回 CONVERGE。迟滞 50:120，避免在边界来回切。
+                    if (stagedMode)
+                    {
+                        double rangeErrNow = Math.Abs(R - FormationTargetRangeM);
+                        if (linkLost && inMaintain)
+                        {
+                            // 断链：拿不到 ω_L，角速度前馈失效 → 立刻回落，别在保持模式里瞎飞
+                            inMaintain = false; stageSince = nowS; stageSwitches++;
+                        }
+                        else if (!inMaintain && !linkLost && rangeErrNow < 60 && nowS - stageSince > 3.0)
+                        {
+                            // 断链时不许进 MAINTAIN：否则会「进→被踢→再进」反复抖（实测 10 次切换）
+                            inMaintain = true; stageSince = nowS; stageSwitches++;
+                            if (firstSwitchAt < 0) firstSwitchAt = nowS;
+                        }
+                        else if (inMaintain && rangeErrNow > 120)
+                        {
+                            // 试过给退出加 2 s 时间迟滞，结果更差（尾随 463 → 544 并掉出 MAINTAIN）：
+                            // 拖着不退出会让它在 MAINTAIN 的角速度算法里多飞 2 s 错方向。
+                            // 所以退出保持**瞬时**——那 3 次切换是系统在自适应，不是抖动。
+                            inMaintain = false; stageSince = nowS; stageSwitches++;
+                        }
+                    }
+
+                    // 外圈在保持阶段继续用「位置追踪」：
+                    // 角速度前馈基于站位点几何，而外圈站位点在转弯时并非稳定参考，
+                    // 实测外圈 cross 从 −155 掉到 −93；尾随/内圈反过来，角速度明显更准（38 → 3）。
+                    bool outerInMaintain = stagedMode && inMaintain && wing != 0 && !IsInsideTurn(wing, omegaNow);
+
+                    bool useOmega = ((stagedMode && inMaintain) || omegaMode) && !outerInMaintain;
+
+                    if (useOmega)
+                    {
+                        // ===== 实验分支：角速度控制（对应现实编队的「姿态跟随」）=====
+                        // 目标不是「指向某个点」，而是让 LOS 角稳定在站位对应的值上：
+                        //   ω_W = ω_L + k·(rel − targetRel)
+                        // 第一项是前馈（长机转多少我跟多少，即时），第二项才是偏差修正。
+                        double sideW = wing * WingOffsetM;
+                        double backW = wing == 0 ? -FormationTargetRangeM : -StationBackM;
+                        double stBrg = Math.Atan2(sideW, backW) * 180.0 / Math.PI;      // 站位点相对长机（机体系）
+                        double targetRel = NormalizeDeg(stBrg + 180.0 + (psiL - psiW)); // 长机相对我方的目标方位
+                        double errAng = NormalizeDeg(rel - targetRel);
+                        omegaCmd = omegaSeen + kAng * errAng;
+                        guide = 0;                 // 本模式不走「角度→角速度」通道
+                        ahead0 = 0;
+                        // 角速度前馈只管方向；外圈要多飞的路程仍得靠速度前馈补，否则被甩在后面
+                        vecFeed = FormationFeedKmh(omegaNow, R, vKmh, wing, rel, 0,
+                            cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
+                    }
+                    else if (vectorMode)
+                    {
+                        // ===== 实验分支：方向仍追站位点，只把「速度」换成矢量匹配 =====
+                        // 理由：纯矢量会让机头对准 V_s，收敛阶段丢失「该往哪飞」的指向性
+                        // （实测直线都漂到 421 m）；但速度这一路用站位点速度的模更准 ——
+                        // 站位点自带切向分量 ω×r，外圈该加速、内圈该减速是几何直接给出的。
+                        double aheadV = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
+                        guide = NormalizeDeg(WingAimDeg(rel, R, wing,
+                            NormalizeDeg(psiL - psiW)) + aheadV);
+                        ahead0 = aheadV;
+
+                        double om = omegaNow * Math.PI / 180.0;                    // rad/s，正 = 右转
+                        double sp = Math.Sin(psiL * Math.PI / 180.0);
+                        double cp = Math.Cos(psiL * Math.PI / 180.0);
+                        // ★ 切线速度按「僚机当前实际位置」算，不是站位点：
+                        //   V_s = V_L + ω×(P_W − P_L)。站位点版本在收敛阶段会退化成前馈≈0
+                        //   （内圈站位点几乎落在转弯圆心上），内圈反而更差。
+                        //   用实际位置时 R 大 → |V_s| 大 → 自动加速追近，兼顾收敛与保持。
+                        double rx = wx - lx, ry = wy - ly;                      // 僚机相对长机（世界系）
+                        double vsx = vMs * sp + om * ry;                        // ω×r = ω·(r_y, −r_x)
+                        double vsy = vMs * cp - om * rx;
+                        double vsMag = Math.Sqrt(vsx * vsx + vsy * vsy);
+                        vecFeed = (vsMag - vW) * 3.6;                           // 速度差 → 油门前馈
+                    }
+                    else
+                    {
+                        // 现有产品行为：指向随长机航向旋转的站位点 + 提前角
+                        // ★ 但航向差大时先摆正方向：直接指向站位点会追着一条不断移动的尾迹绕圈
+                        //   （5G 机动后实测 35 s 回不来，图上是绕大圈）。
+                        //   迟滞 30° 进入 / 15° 退出，避免在边界反复切。
+                        double hdgErr = NormalizeDeg(psiL - psiW);
+                        if (!aligning && Math.Abs(hdgErr) > 30) aligning = true;
+                        else if (aligning && Math.Abs(hdgErr) < 15) aligning = false;
+
+                        if (aligning)
+                        {
+                            guide = hdgErr;              // 先跟长机航向，距离交给后面的追赶逻辑
+                        }
+                        else
+                        {
+                            double ahead = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
+                            guide = NormalizeDeg(WingAimDeg(rel, R, wing, hdgErr) + ahead);
+                            if (i == 0) ahead0 = ahead;
+                        }
+                    }
+
+                    // ---- 真实级联 PID（与 UpdateNavigation 同公式 / 同增益 / 同限幅）----
+                    double deltaKmh = 0;
+                    double closing = UpdateClosingRate(R, nowS);
+                    // |rel|<50 这道门是给「指向」模式设计的（偏角大时先转向、别急着修速度）。
+                    // 角速度模式方向由 ω 环管，油门必须一直可用，否则一超出 50° 就没推力 → 发散。
+                    // ★ 掉队追赶：背向切入时（rel 接近 180°）这道门会把油门彻底关死，
+                    //   僚机只能一边转一边被长机拉远，形成「偏角大→不给油→追不上→偏角更大」的死循环。
+                    //   实测散开起步时左僚机 30 s 都没编上队。所以**只看距离**：超过 500 m 就进追赶，
+                    //   给满允许加速（maxRatio），先把距离拉回来再交回 PID。
+                    // ★ 追赶：只把「远景增益」提上来，加速量仍走 (want − closing) 这条接近率闭环 ——
+                    //   追近了 closing 变大、want−closing 自然减小，不会像开环加成那样冲过头。
+                    //   同时解除 |rel|<50 的门（背向切入时偏角大，但那不是「该不该给油」的依据）。
+                    // 对齐阶段也允许加速：只摆方向不补速度的话，平行飞追不上（尾随被甩到 566 m 就是这原因）
+                    // 阈值 450：525 时会在 476 m 处「刚好掉出追赶」，闭环推力不足以继续收敛，卡住不动
+                    bool chasing = R > 450 || (!useOmega && aligning);
+                    if (omegaMode || Math.Abs(rel) < 50 || chasing)
+                    {
+                        double err = R - FormationTargetRangeM;
+                        double pdt = guideIntegralLastT > 0
+                            ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5) : 0;
+                        guideIntegralLastT = nowS;
+                        double blend = Math.Max(100.0, cfg.FormationBlendM);
+                        double far = Math.Clamp(err / blend, 0.0, 1.0);
+                        double kp = err > 0
+                            ? cfg.FormationKp + (cfg.FormationKpNear - cfg.FormationKp) * (1.0 - far)
+                            : cfg.FormationKpNear;
+                        if (chasing) kp = Math.Max(kp, 0.15);   // 远距离把增益抬到能真追上
+                        // 追赶时把期望接近率上限从 30 放到 50 m/s：30×3.6=108 km/h 追不上匀速长机，
+                        // 而 maxRatio 允许 +180（=50 m/s）。闭环仍在 —— closing 上来后差值自动缩小。
+                        double wantMax = chasing ? 50.0 : 30.0;
+                        double want = Math.Clamp(kp * err + cfg.FormationKi * guideIntegral, -20, wantMax);
+                        double cosOff = Math.Max(0.5, Math.Cos(rel * Math.PI / 180.0));
+                        double dvRaw = (want - closing) * cfg.FormationKv / cosOff * 3.6;
+                        // ★ 追赶阶段加**加速下限**：纯闭环在「closing 很大」时会判成「追太快」而刹车
+                        //   （实测 t=115 R=666、closing=54 时给出 −22，然后距离又拉开，来回振荡卡在 566）。
+                        //   下限按距离给，只做保底，不替代闭环。
+                        if (chasing)
+                            dvRaw = Math.Max(dvRaw, Math.Clamp((R - 420) * 0.8, 0,
+                                vKmh * (cfg.FormationWingMaxRatio - 1)));
+                        // 与产品 UpdateNavigation 同一套前馈 + 上下限
+                        double feed = (vectorMode || omegaMode)
+                            ? vecFeed
+                            : FormationFeedKmh(omegaNow, R, vKmh, wing, rel, 0,
+                                cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
+                        deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw + feed, nowS, cfg.FormationGuideTauS),
+                            vKmh * (cfg.FormationWingMinRatio - 1),
+                            vKmh * (cfg.FormationWingMaxRatio - 1));
+                        if (pdt > 0 && Math.Abs(deltaKmh) < 114 && Math.Abs(want) < 29.4)
+                            guideIntegral = Math.Clamp(guideIntegral + err * pdt,
+                                -GuideIntegralLimit, GuideIntegralLimit);
+                    }
+                    // deltaKmh 是给飞行员看的油门建议（km/h），仿真里当成速度变化量直接应用
+                    vW = (vKmh + deltaKmh) / 3.6;
+
+                    double sL = Math.Sin(psiL * Math.PI / 180.0), cL = Math.Cos(psiL * Math.PI / 180.0);
+                    double along = (wx - lx) * sL + (wy - ly) * cL;
+                    double cross = (wx - lx) * cL - (wy - ly) * sL;
+                    maxAlong = Math.Max(maxAlong, along);
+                    finalRel = rel; finalR = R; finalAlong = along; finalCross = cross;
+
+                    leadTrack.Add((lx, ly));
+                    wingTrack.Add((wx, wy));
+
+                    // 调试打点（仅尾随位、每 5 s）：定位「为什么给不足加速」
+                    if (wing == 0 && i % (int)(5.0 / dt) == 0)
+                        summary.AppendLine($"# dbg t={nowS:F0} R={R:F0} dKmh={deltaKmh:F0} "
+                            + $"closing={closing:F1} vW={vW * 3.6:F0} want?={(Math.Abs(rel) < 50 ? "pid" : "gate")}");
+
+                    // 角速度模式直接给 ω（已经含 ω_L 前馈）；其余（含外圈的保持阶段）还是「角度误差 → 每步 0.25 增益」
+                    if (stagedMode)
+                    {
+                        // 只在 MAINTAIN 内部做低通：CONVERGE 本来就是稳定的角度环，
+                        // 给它加滞后会让收敛变慢（实测外圈因此掉到 500 m 并退回）。
+                        // 切出去时把 omegaSmooth 对齐到 guide，下次进 MAINTAIN 才不会从 0 爬。
+                        if (useOmega)
+                        {
+                            omegaSmooth += (omegaCmd - omegaSmooth) * Math.Min(1.0, dt / tauSwitch);
+                            psiW = NormalizeDeg(psiW + Math.Clamp(omegaSmooth, -maxTurnDegPerS, maxTurnDegPerS) * dt);
+                        }
+                        else
+                        {
+                            omegaSmooth = guide;
+                            psiW = NormalizeDeg(psiW + Math.Clamp(guide * 0.25,
+                                -maxTurnDegPerS * dt, maxTurnDegPerS * dt));
+                        }
+                    }
+                    else
+                    {
+                        psiW = (omegaMode || (stagedMode && inMaintain)) && !outerInMaintain
+                            ? NormalizeDeg(psiW + Math.Clamp(omegaCmd, -maxTurnDegPerS, maxTurnDegPerS) * dt)
+                            : NormalizeDeg(psiW + Math.Clamp(guide * 0.25,
+                                -maxTurnDegPerS * dt, maxTurnDegPerS * dt));
+                    }
+                    psiL = NormalizeDeg(psiL + omegaNow * dt);
+                    lx += vMs * Math.Sin(psiL * Math.PI / 180.0) * dt;
+                    ly += vMs * Math.Cos(psiL * Math.PI / 180.0) * dt;
+                    wx += vW * Math.Sin(psiW * Math.PI / 180.0) * dt;
+                    wy += vW * Math.Cos(psiW * Math.PI / 180.0) * dt;
+                }
+
+                if (wi == 0) leaders[si] = leadTrack;
+                tracks[si][wi] = wingTrack;
+                string wname = wing == 0 ? "0" : wing < 0 ? "L" : "R";
+                summary.AppendLine($"{scenarios[si]} wing={wname} inside={(IsInsideTurn(wing, omega) ? "Y" : "N")} "
+                    + $"ahead={ahead0:F1} finalRel={finalRel:F1} R={finalR:F0} "
+                    + $"along={finalAlong:F0} cross={finalCross:F0} crossed={(maxAlong > 0 ? "YES" : "no")}"
+                    + (stagedMode
+                        ? $" stage={(inMaintain ? "MAINTAIN" : "CONVERGE")} sw={stageSwitches} swAt={firstSwitchAt:F1}"
+                        : ""));
+            }
+        }
+        System.IO.File.WriteAllText(outTxt, summary.ToString());
+
+        // ---- 2×2 俯视轨迹图 ----
+        const int cell = 620, pad = 12;
+        int width = cell * 2 + pad * 3, height = cell * 2 + pad * 3;
+        using var bmp = new System.Drawing.Bitmap(width, height);
+        using var g = System.Drawing.Graphics.FromImage(bmp);
+        g.Clear(System.Drawing.Color.FromArgb(14, 16, 22));
+        var titleFont = new System.Drawing.Font("Arial", 17f, System.Drawing.FontStyle.Bold);
+        var labelFont = new System.Drawing.Font("Arial", 13f);
+        var leaderPen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(255, 95, 95), 3f);
+        var wingPens = new[]
+        {
+            new System.Drawing.Pen(System.Drawing.Color.FromArgb(155, 160, 175), 2.2f),  // 0
+            new System.Drawing.Pen(System.Drawing.Color.FromArgb(80, 210, 255), 2.2f),   // L
+            new System.Drawing.Pen(System.Drawing.Color.FromArgb(255, 205, 75), 2.2f),   // R
+        };
+        var gridPen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(45, 50, 62), 1f);
+        var panelBrush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(22, 25, 33));
+
+        for (int si = 0; si < nScen; si++)
+        {
+            int ox = pad + (si % 2) * (cell + pad), oy = pad + (si / 2) * (cell + pad);
+            g.FillRectangle(panelBrush, ox, oy, cell, cell);
+            for (int k = 1; k < 4; k++)
+            {
+                int gx = ox + cell * k / 4, gy = oy + cell * k / 4;
+                g.DrawLine(gridPen, gx, oy, gx, oy + cell);
+                g.DrawLine(gridPen, ox, gy, ox + cell, gy);
+            }
+
+            double minX = double.MaxValue, maxX = double.MinValue;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            void Include(double x, double y)
+            {
+                minX = Math.Min(minX, x); maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y); maxY = Math.Max(maxY, y);
+            }
+            foreach (var p in leaders[si]) Include(p.x, p.y);
+            for (int wi = 0; wi < 3; wi++) foreach (var p in tracks[si][wi]) Include(p.x, p.y);
+            double cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+            double span = Math.Max(maxX - minX, maxY - minY) * 1.15 + 1;
+            (int, int) Map(double x, double y) =>
+                (ox + (int)((x - cx) / span * cell + cell / 2),
+                 oy + cell / 2 - (int)((y - cy) / span * cell));
+
+            void DrawTrack(List<(double x, double y)> pts, System.Drawing.Pen pen)
+            {
+                for (int i = 1; i < pts.Count; i++)
+                {
+                    var a = Map(pts[i - 1].x, pts[i - 1].y);
+                    var b = Map(pts[i].x, pts[i].y);
+                    g.DrawLine(pen, a.Item1, a.Item2, b.Item1, b.Item2);
+                }
+                var s = Map(pts[0].x, pts[0].y);
+                var e = Map(pts[^1].x, pts[^1].y);
+                g.FillEllipse(System.Drawing.Brushes.White, s.Item1 - 3, s.Item2 - 3, 6, 6);
+                g.FillEllipse(new System.Drawing.SolidBrush(pen.Color), e.Item1 - 5, e.Item2 - 5, 10, 10);
+            }
+            DrawTrack(leaders[si], leaderPen);
+            for (int wi = 0; wi < 3; wi++) DrawTrack(tracks[si][wi], wingPens[wi]);
+            g.DrawString(scenarios[si], titleFont, System.Drawing.Brushes.White, ox + 12, oy + 10);
+        }
+
+        // 第 4 格：图例
+        {
+            int ox = pad + (cell + pad), oy = pad + (cell + pad);
+            g.FillRectangle(panelBrush, ox, oy, cell, cell);
+            g.DrawString("LEGEND", titleFont, System.Drawing.Brushes.White, ox + 12, oy + 10);
+            string[] names = { "LEADER", "TRAILER (center)", "WING L (back-left)", "WING R (back-right)" };
+            var pens = new[] { leaderPen, wingPens[0], wingPens[1], wingPens[2] };
+            for (int i = 0; i < 4; i++)
+            {
+                int yy = oy + 60 + i * 42;
+                g.DrawLine(pens[i], ox + 20, yy, ox + 80, yy);
+                g.DrawString(names[i], labelFont, System.Drawing.Brushes.White, ox + 95, yy - 10);
+            }
+            g.DrawString("white dot = start   colored dot = end", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 260);
+            g.DrawString("INNER keeps lead / OUTER pure pursuit", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 290);
+            g.DrawString("real cascade PID (formationKp/Ki/Kv)", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 320);
+            g.DrawString("V=600km/h  dt=0.25s  T=30s", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 350);
+            g.DrawString("V START: leader center, wings back,", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 380);
+            g.DrawString("trailer further behind", labelFont,
+                System.Drawing.Brushes.LightGray, ox + 20, oy + 405);
+        }
+        bmp.Save(outPng, System.Drawing.Imaging.ImageFormat.Png);
+        Console.WriteLine("PNG: " + outPng);
+        return 0;
+    }
+
     private static int ScopeTest()
     {
         Console.WriteLine("=== per-airframe setting scope ===");
@@ -1649,10 +2218,11 @@ public static class Program
     }
 
     /// <summary>
-    /// 油门建议的一阶低通。时间常数 1.2 s：够快能跟上编队修正，够慢不会让数字来回跳。
+    /// 油门建议的一阶低通。时间常数由 <c>formationGuideTauS</c> 配置（默认 0.5 s）：
+    /// 够快能跟上编队修正，够慢不会让数字来回跳。
     /// <para>首帧、断档（切图/暂停）或目标切换时直接取当前值，避免从 0 慢慢爬上去。</para>
     /// </summary>
-    private static double SmoothGuideDelta(double raw, double nowS)
+    private static double SmoothGuideDelta(double raw, double nowS, double tauS = 1.2)
     {
         double dt = nowS - guideDeltaLastT;
         if (!guideDeltaValid || dt <= 0 || dt > 1.0)
@@ -1663,7 +2233,7 @@ public static class Program
             return guideDeltaSmooth;
         }
 
-        double k = Math.Min(1.0, dt / 1.2);
+        double k = Math.Min(1.0, dt / Math.Max(0.2, tauS));
         guideDeltaSmooth += (raw - guideDeltaSmooth) * k;
         guideDeltaLastT = nowS;
         return guideDeltaSmooth;
@@ -1688,12 +2258,42 @@ public static class Program
         // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
         bool formationOn = cfg.FormationAssist || cfg.FormationOnly;
         map.CollectFriendlies = formationOn;
+        map.LeadIconFilter = cfg.LeadIcon ?? "";   // 指定长机图标时只收匹配的友机
         opt.FormationAssist = formationOn;
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
         opt.Guide = null;
         opt.LeadStatusMain = "";
         opt.LeadStatusSub = "";
+        opt.LeadSpeedBar = null;       // 长机的速度条数据，只有长机分支会填
+        opt.TargetHeadingDeg = null;   // 航向带上的琥珀三角，只有确定目标航向时才画
+        opt.FormationNotice = "";      // 每帧重置，只有状态机判定「刚到位」时才置上
+
+        // ---- 编队解除 / 恢复（按一下切换，边沿触发）----
+        // 解除后不再画引导，飞行员可以自由飞；再按一下重新建立，之后重新判定到位。
+        // 只对僚机生效：长机不画引导，按了只会把状态机打进 Disabled，
+        // 连「编队完成」都收不到（长机唯一的编队提示）。
+        bool fkDown = _formationKeyBinding.IsKeyDownIgnoringModifiers();
+        if (!cfg.LeadMode && fkDown && !formationKeyPrev)
+        {
+            if (formationStage == FormationStage.Disabled)
+            {
+                formationStage = FormationStage.Converge;
+                formationStageSince = snap.ElapsedSeconds;
+                formationDoneSince = -1;
+                formationNoticeUntil = -1;          // 恢复时不提示，等真到位再显示「编队完成」
+            }
+            else
+            {
+                formationStage = FormationStage.Disabled;
+                formationNoticeUntil = snap.ElapsedSeconds + 3.0;
+            }
+        }
+        formationKeyPrev = fkDown;
+        // 提示放在这里（而不是编队分支里）：解除时可能旁边没有长机，提示仍要能看到
+        if (snap.ElapsedSeconds < formationNoticeUntil)
+            opt.FormationNotice = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                formationStage == FormationStage.Disabled ? "guide.formationOff" : "guide.formationDone");
         if (!formationOn) ResetGuideState();
 
         opt.GridText = "";
@@ -1742,9 +2342,20 @@ public static class Program
             {
                 opt.Guide = null;
 
-                // 航向：配置给了就用配置；-1 表示留空 → 锁存进入长机模式那一刻的航向
+                // 长机航向：有数据链就用长机自报值，没有就用本机航向近似（两者实测差别不大）
+                double linkedHdg = 0;
+                bool hasLinkedHdg = dataLink != null && dataLink.TryGetPartnerHeading(out linkedHdg);
+
+                // 航向基准：
+                //  - 全向跟随 ON：实时长机航向（长机可全向机动，不再被要求转回某个设定航向）
+                //  - OFF：配置给了就用配置；-1 表示留空 → 锁存进入长机模式那一刻的航向
                 double targetHdg;
-                if (cfg.LeadHeadingDeg >= 0)
+                if (cfg.FormationOmniFollow)
+                {
+                    targetHdg = ResolveLeadHeading(hasLinkedHdg ? (double?)linkedHdg : null, navHeading);
+                    leadHeadingLockValid = false;          // 切回 OFF 时重新锁存
+                }
+                else if (cfg.LeadHeadingDeg >= 0)
                 {
                     targetHdg = cfg.LeadHeadingDeg;
                     leadHeadingLockValid = false;          // 以后改回留空时重新锁存
@@ -1770,8 +2381,11 @@ public static class Program
                 }
                 else
                 {
-                    var wing = opt.Friendlies[0];
+                    var wing = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
                     double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
+                    // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
+                    // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
+                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds);
 
                     if (wing.RangeM < 200)
                     {
@@ -1792,20 +2406,27 @@ public static class Program
                 // 副状态：姿态偏差（只报方向，不给数字）
                 var subs = new System.Collections.Generic.List<string>();
 
-                if ((hasHeading && leadHeadingLockValid) || cfg.LeadHeadingDeg >= 0)
+                // 全向跟随时基准就是长机实时航向，不再提示「转回设定航向」；马赫检查照旧保留
+                if (!cfg.FormationOmniFollow
+                    && ((hasHeading && leadHeadingLockValid) || cfg.LeadHeadingDeg >= 0))
                 {
                     double hdgErr = targetHdg - navHeading;
                     while (hdgErr > 180) hdgErr -= 360;
                     while (hdgErr < -180) hdgErr += 360;
+                    opt.TargetHeadingDeg = targetHdg;      // 航向带上的琥珀三角
                     if (Math.Abs(hdgErr) > 5)
-                        subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, hdgErr > 0 ? "guide.lead.turnR" : "guide.lead.turnL"));
+                        subs.Add(string.Format(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                            hdgErr > 0 ? "guide.lead.turnR" : "guide.lead.turnL"), Math.Abs(hdgErr)));
                 }
 
                 // 马赫：目标马赫按当前音速换算成真空速再比，避免高度变化时误判
                 if (cfg.LeadMach > 0.05 && snap.Mach > 0.05 && snap.TasKmh > 50)
                 {
                     double soundKmh = snap.TasKmh / snap.Mach;
-                    double tasErr = cfg.LeadMach * soundKmh - snap.TasKmh;
+                    double targetTas = cfg.LeadMach * soundKmh;
+                    double tasErr = targetTas - snap.TasKmh;
+                    // 文字只说「加/减」，条才能说清「加多少、到哪停」
+                    opt.LeadSpeedBar = (snap.TasKmh, targetTas, tasErr);
                     if (Math.Abs(tasErr) > 25)
                         subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, tasErr > 0 ? "guide.lead.add" : "guide.lead.reduce"));
                 }
@@ -1835,7 +2456,33 @@ public static class Program
             // 门槛都写在这里而不是几何层，方便按真机手感调，不用碰绘制代码。
             if (opt.Friendlies.Count > 0)
             {
-                var lead = opt.Friendlies[0];
+                // 已按机型过滤 + 距离排序；这里再走一遍「取最近」把约定钉死在代码里
+                var lead = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
+
+                // 长机航向 / 转向率：油门前馈和转弯提前量共用，放在 PID 之前算好。
+                // 有数据链就用长机自报值，没有就用本机航向近似 / 本地估算（实测差别不大）。
+                double leadHdgDelta = 0;
+                if (dataLink != null && dataLink.TryGetPartnerHeading(out double partnerHdg))
+                    leadHdgDelta = NormalizeDeg(partnerHdg - navHeading);
+
+                double leadRate = 0;
+                bool leadFromLink = false;
+                if (cfg.FormationLeadFeed)
+                {
+                    // 只在**链路里只有一个伙伴**时才信它的转向率：报文里没有位置，多伙伴时
+                    // 无法确认这个值来自编队长机还是战场上的其它队友，宁可退回本地估算。
+                    if (dataLink != null && dataLink.NodeCount == 1
+                        && dataLink.TryGetPartnerTurnRate(out double linkedRate))
+                    {
+                        leadRate = linkedRate;
+                        leadFromLink = true;
+                    }
+                    else
+                    {
+                        leadRate = EstimateLeadTurnRate(lead.RelBearingDeg, ownTurnRateDeg, snap.ElapsedSeconds);
+                    }
+                }
+
                 double closing = UpdateClosingRate(lead.RangeM, snap.ElapsedSeconds);
 
                 FormationAction action = FormationAction.None;
@@ -1871,8 +2518,16 @@ public static class Program
                     double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
                     double dvRaw = (wantClosing - closing) * cfg.FormationKv / cosOff * 3.6;
 
-                    // 平滑 + 收窄：不这么做的话数字会在几百 km/h 之间跳，看着没法用
-                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw, nowS), -120, 120);
+                    // 僚机速度前馈：外圈路径更长，按 |ω|·(r_w−ρ) 提前补速度差；
+                    // 纯反馈 PID 要等距离拉大才动作，天然滞后。前馈与反馈一起过低通避免突变。
+                    double tasRef = Math.Max(50, snap.TasKmh);
+                    double feed = FormationFeedKmh(leadRate, lead.RangeM, snap.TasKmh,
+                        cfg.FormationWingSide, lead.RelBearingDeg, leadHdgDelta,
+                        cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
+                    // 总增量按长机真空速倍数上下限收窄：外圈不许超速、内圈不许失速
+                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw + feed, nowS, cfg.FormationGuideTauS),
+                        tasRef * (cfg.FormationWingMinRatio - 1),
+                        tasRef * (cfg.FormationWingMaxRatio - 1));
 
                     // 抗积分饱和：外环顶到限幅、或油门已经饱和时都不再累积
                     if (dt > 0 && Math.Abs(deltaKmh) < 114 && Math.Abs(wantClosing) < 29.4)
@@ -1905,39 +2560,45 @@ public static class Program
                 // ---- 转弯提前量：把机头指向长机的未来位置 ----
                 // 优先用数据链里长机自报的转向率（准、无滞后）；没有就退化为相对方位变化率反推。
                 // 油门那一侧不动：提前量只改"往哪转"，距离仍由 PID 管。
-                double leadRate = 0;
-                bool leadFromLink = false;
-                if (cfg.FormationLeadFeed)
-                {
-                    // 只在**链路里只有一个伙伴**时才信它的转向率：报文里没有位置，多伙伴时
-                    // 无法确认这个值来自编队长机还是战场上的其它队友，宁可退回本地估算。
-                    if (dataLink != null && dataLink.NodeCount == 1
-                        && dataLink.TryGetPartnerTurnRate(out double linkedRate))
-                    {
-                        leadRate = linkedRate;
-                        leadFromLink = true;
-                    }
-                    else
-                    {
-                        leadRate = EstimateLeadTurnRate(lead.RelBearingDeg, ownTurnRateDeg, snap.ElapsedSeconds);
-                    }
-                }
+                // 设定了侧位后按内外圈分治：提前量按转弯半径重算、外圈反向，避免切进长机航线。
+                // leadHdgDelta / leadRate 已在上方（PID 之前）算好，油门前馈与转弯提前量共用
 
-                double guideTurn = lead.RelBearingDeg;
+                // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
+                double guideTurn = WingAimDeg(lead.RelBearingDeg, lead.RangeM,
+                                              cfg.FormationWingSide, leadHdgDelta);
+                // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
+                // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
+                double leadRateShown = 0;
                 if (cfg.FormationLeadFeed && Math.Abs(leadRate) >= Math.Max(0.2, cfg.FormationLeadMinRate))
                 {
-                    guideTurn += LeadPursuitDeg(leadRate, lead.RangeM, snap.TasKmh,
-                                                Math.Max(5, cfg.FormationLeadMaxDeg));
+                    guideTurn += FormationLeadAheadDeg(leadRate, lead.RangeM, snap.TasKmh,
+                                                       Math.Max(5, cfg.FormationLeadMaxDeg),
+                                                       cfg.FormationWingSide);
                     guideTurn = NormalizeDeg(guideTurn);
+                    leadRateShown = leadRate;   // 只有真叠了提前量，才需要解释"数值为什么比目视大"
+                }
+
+                double turnG = TurnLoadG(leadRate, snap.TasKmh);
+                bool overG = cfg.FormationWarnG > 0.05 && turnG >= cfg.FormationWarnG;
+
+                // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
+                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds);
+
+                // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
+                // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
+                //   解除后每帧又把 Guide 设回来，解除键等于失效。（曾经这样错过一次。）
+                if (formationStage == FormationStage.Disabled)
+                {
+                    opt.Guide = null;
                 }
                 else
                 {
-                    leadRate = 0;      // 没到门槛就不报转向率，免得提示行一直挂着
-                }
-
-                opt.Guide = new FormationLead(guideTurn, lead.RangeM,
+                    opt.TargetHeadingDeg = NormalizeDeg(navHeading + guideTurn);
+                    opt.Guide = new FormationLead(guideTurn, lead.RangeM,
                                              FormationTargetRangeM, action, deltaKmh,
-                                             leadRate, leadFromLink);
+                                             leadRateShown, leadFromLink, turnG, overG,
+                                             snap.TasKmh);
+                }
             }
             else
             {
@@ -2317,6 +2978,8 @@ public static class Program
     private static WtHud.Input.KeyBinding _stallKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+S", 0x53, "CTRL+ALT+S");
     private static WtHud.Input.KeyBinding _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse("H", 0x48, "H");
     private static bool airbrakeKeyOn;
+    private static WtHud.Input.KeyBinding _formationKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+SHIFT+F", 0x46, "CTRL+SHIFT+F");
+    private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
@@ -2329,6 +2992,8 @@ public static class Program
         _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
         _stallKeyBinding = WtHud.Input.KeyBinding.Parse(c.StallKey, 0x53, "CTRL+ALT+S");
         _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
+        _formationKeyBinding = WtHud.Input.KeyBinding.Parse(
+            string.IsNullOrWhiteSpace(c.FormationKey) ? "CTRL+SHIFT+F" : c.FormationKey, 0x46, "CTRL+SHIFT+F");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
                           $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
     }
@@ -2502,6 +3167,59 @@ public static class Program
     /// <para>物理含义：以 V 飞行时，要跟上以 ω 绕自己转、距离 R 的长机，机头必须多压这么多度。
     /// 400 m / 600 km/h / 10°/s 时约 25°，而引导把 ±3° 就当"对准"了 —— 这就是转弯时队形被甩的原因。</para>
     /// </summary>
+    /// <summary>编队引导阶段：未到位 → 保持中 → 手动解除。</summary>
+    private enum FormationStage { Converge, Maintain, Disabled }
+
+    private static FormationStage formationStage = FormationStage.Converge;
+    private static double formationStageSince;
+    private static double formationDoneSince = -1;   // 进入 40 m 的起始时刻（要持续 2 s 才算完成）
+    private static double formationNoticeUntil = -1; // 「编队完成 / 已解除」提示显示到什么时候
+
+    /// <summary>
+    /// 编队状态机（产品层）：只做「到位判定 + 提示」，不参与控制 —— HUD 是建议，飞行员才是控制器。
+    /// <para>到位线 40 m、需持续 2 s：40 m 比 sim 里的 60 m 更严，因为「编队完成」是给长机的承诺，
+    /// 一旦显示他就会开始机动。</para>
+    /// </summary>
+    private static void UpdateFormationStage(double rangeM, double nowS)
+    {
+        if (formationStage == FormationStage.Disabled) return;
+
+        double err = Math.Abs(rangeM - FormationTargetRangeM);
+        if (formationStage == FormationStage.Converge)
+        {
+            if (err <= 40)
+            {
+                if (formationDoneSince < 0) formationDoneSince = nowS;
+                else if (nowS - formationDoneSince >= 2.0)
+                {
+                    formationStage = FormationStage.Maintain;
+                    formationStageSince = nowS;
+                    formationNoticeUntil = nowS + 3.0;
+                    formationDoneSince = -1;
+                }
+            }
+            else formationDoneSince = -1;
+        }
+        else if (formationStage == FormationStage.Maintain && err > 120)
+        {
+            formationStage = FormationStage.Converge;
+            formationStageSince = nowS;
+            formationDoneSince = -1;
+        }
+    }
+
+    /// <summary>
+    /// 长机转弯的横向过载（G）：<c>n = V·ω / g</c>。
+    /// <para>用它当阈值而不是 °/s，因为它不随速度漂移：600 km/h 下 3 G ≈ 10 °/s，
+    /// 400 km/h 下 3 G 只需要一半的转弯率，但两种情况队形保持的难度是相当的。</para>
+    /// </summary>
+    private static double TurnLoadG(double turnRateDeg, double tasKmh)
+    {
+        double vMs = tasKmh / 3.6;
+        double omega = Math.Abs(turnRateDeg) * Math.PI / 180.0;
+        return vMs * omega / 9.80665;
+    }
+
     private static double LeadPursuitDeg(double turnRateDeg, double rangeM, double tasKmh, double maxDeg)
     {
         double vMs = tasKmh / 3.6;
@@ -2510,6 +3228,104 @@ public static class Program
         double omega = turnRateDeg * Math.PI / 180.0;             // rad/s
         double s = Math.Clamp(omega * rangeM / vMs, -0.98, 0.98);  // asin 的定义域
         return Math.Clamp(Math.Asin(s) * 180.0 / Math.PI, -maxDeg, maxDeg);
+    }
+
+    /// <summary>固定站位的横向偏移（m）：左右僚机在长机左右各 150 m。</summary>
+    private const double WingOffsetM = 150;
+    /// <summary>左右僚机站位：长机后方 370 m（与 150 m 横向合起来斜距 ≈ 400 m）。</summary>
+    private const double StationBackM = 370;
+    /// <summary>站位瞄准的最小前向距离（m）：见 WingAimDeg 里的原点病态说明。</summary>
+    private const double AimForwardMinM = 200;
+
+    /// <summary>
+    /// 固定站位瞄准：站位钉在**长机机体坐标系**里（左右 ±150 / 后 370、尾随后 400），
+    /// 用 leadHeadingDeltaDeg（长机航向 − 本机航向）把站位转到本机航向系，取 atan2 作为该转的方位。
+    /// <para>站位随长机航向一起转，长机转弯后 V 队形跟着转回来；delta = 0（无链路 / 航向一致）
+    /// 退化为本机航向系。站位点斜距都 ≈ 400 m，与 PID 目标间距一致，引导与油门不打架。</para>
+    /// </summary>
+    private static double WingAimDeg(double relBearingDeg, double rangeM, int wingSide,
+                                     double leadHeadingDeltaDeg = 0)
+    {
+        double rad = relBearingDeg * Math.PI / 180.0;
+        double delta = leadHeadingDeltaDeg * Math.PI / 180.0;
+        // 长机在本机航向系的位置
+        double lx = rangeM * Math.Sin(rad), ly = rangeM * Math.Cos(rad);
+        // 长机机体系的「右」「前」在本机航向系的方向
+        double rx = Math.Cos(delta), ry = -Math.Sin(delta);
+        double fx = Math.Sin(delta), fy = Math.Cos(delta);
+        double side = wingSide * WingOffsetM;
+        double back = wingSide == 0 ? -FormationTargetRangeM : -StationBackM;
+        double sx = lx + side * rx + back * fx;
+        double sy = ly + side * ry + back * fy;
+        // 僚机接近站位时 sy→0，atan2(sx, sy) 在原点附近是病态的：t=0 实测 sx=sy=0
+        // 却因浮点残差给出 ±90°，随后 sy 在 0 附近来回穿越会让引导角在 0~180° 乱跳，
+        // 内圈叠加正提前角后被打成倒飞。用最小前向距离限住分母，引导角随横向偏差平滑变化。
+        return Math.Atan2(sx, Math.Max(sy, AimForwardMinM)) * 180.0 / Math.PI;
+    }
+
+    /// <summary>
+    /// 长机转弯时僚机是否在内圈。右转圆心在长机右侧、左转圆心在左侧，
+    /// 所以「侧位方向与转向方向同侧」就是内圈（路径更短），异侧是外圈。
+    /// </summary>
+    private static bool IsInsideTurn(int wingSide, double turnRateDeg)
+    {
+        if (wingSide == 0 || Math.Abs(turnRateDeg) < 1e-9) return false;
+        return Math.Sign(wingSide) == Math.Sign(turnRateDeg);
+    }
+
+    /// <summary>
+    /// 转弯提前角。wingSide == 0（未设定侧位）保持旧 <c>asin(ω·R/V)</c>。
+    /// <para>wingSide != 0（固定站位系统）恒为 0：站位点随长机航向一起转，天然包含转弯预测，
+    /// 再叠加提前角会让内圈切过头（仿真实测 cross 从 +150 收到 +36）。外圈该多飞的距离
+    /// 交给速度前馈 + 油门 PID，方向引导不再叠提前量。</para>
+    /// </summary>
+    private static double FormationLeadAheadDeg(double turnRateDeg, double rangeM, double tasKmh,
+                                                double maxDeg, int wingSide)
+    {
+        // 侧位僚机不做提前量：站位点本身随长机航向旋转，已经含了转弯预测，
+        // 再叠一次 asin(ω·R/V) 会切过头（sim 实测内圈 cross +71 → +36）。
+        if (wingSide != 0) return 0;
+        return LeadPursuitDeg(turnRateDeg, rangeM, tasKmh, maxDeg);
+    }
+
+    /// <summary>
+    /// 长机转弯的共享几何：ρ = V/|ω|、僚机到圆心距离 r_w、相对半径差 Δr = r_w − ρ。
+    /// <para>C 提前角用它算幅度缩放，僚机速度前馈用它算 |ω|·Δr。两处必须同一套几何，
+    /// 否则一个按这个圆心、另一个按那个圆心，会互相打架。</para>
+    /// </summary>
+    private static (double RhoM, double RwM, double DeltaRM) TurnGeometry(
+        double turnRateDeg, double rangeM, double tasKmh,
+        double relBearingDeg, double leadHeadingDeltaDeg)
+    {
+        double vMs = tasKmh / 3.6;
+        double omega = Math.Abs(turnRateDeg) * Math.PI / 180.0;
+        if (omega < 1e-9 || vMs < 50) return (0, 0, 0);
+        double rho = vMs / omega;
+        double rad = relBearingDeg * Math.PI / 180.0;
+        double delta = leadHeadingDeltaDeg * Math.PI / 180.0;
+        double s = Math.Sign(turnRateDeg);
+        double cx = rangeM * Math.Sin(rad) + s * rho * Math.Cos(delta);
+        double cy = rangeM * Math.Cos(rad) - s * rho * Math.Sin(delta);
+        double rW = Math.Sqrt(cx * cx + cy * cy);
+        return (rho, rW, rW - rho);
+    }
+
+    /// <summary>
+    /// 僚机速度前馈：绕同一圆心以 ω 转弯时，外圈半径更大、需要更快；内圈更慢。
+    /// <para>ΔV = |ω|·(r_w − ρ)，速率是标量所以与转弯方向无关；外圈为正、内圈为负。
+    /// 钳在长机真空速的 [minRatio, maxRatio] 倍所对应的增量内。</para>
+    /// <para>wingSide == 0（正后方 / 未设定侧位）返回 0，保持默认编队行为不变。</para>
+    /// </summary>
+    private static double FormationFeedKmh(double turnRateDeg, double rangeM, double tasKmh,
+                                           int wingSide, double relBearingDeg,
+                                           double leadHeadingDeltaDeg, double minRatio, double maxRatio)
+    {
+        if (wingSide == 0 || Math.Abs(turnRateDeg) < 1e-9 || tasKmh < 180) return 0;
+        var (_, _, deltaR) = TurnGeometry(turnRateDeg, rangeM, tasKmh,
+                                          relBearingDeg, leadHeadingDeltaDeg);
+        double omega = Math.Abs(turnRateDeg) * Math.PI / 180.0;
+        double need = omega * deltaR * 3.6;               // km/h
+        return Math.Clamp(need, tasKmh * (minRatio - 1), tasKmh * (maxRatio - 1));
     }
 
     // 数据链（交换高度 + 航向/转向率）。null = 没开。
@@ -2521,6 +3337,14 @@ public static class Program
     private static volatile bool scoreboardHeld;
 
     /// <summary>数据链状态（面板"数据链设置"页显示）：off / 无伙伴 / 已连接 N 个。</summary>
+    /// <summary>
+    /// 长机航向来源：有数据链就用长机自报航向，没有就用本机航向近似。
+    /// <para>编队两机航向近似平行，实测两者差别不大；高度不在其列 —— map_obj 没有 z，
+    /// 高度只能走数据链（<c>TryGetPartnerAltitude</c>）。</para>
+    /// </summary>
+    private static double ResolveLeadHeading(double? linkedHeading, double ownHeading)
+        => linkedHeading ?? ownHeading;
+
     public static string DataLinkStatusText()
     {
         var link = dataLink;
@@ -2564,6 +3388,20 @@ public static class Program
         Valid = true, InFlight = true, VehicleType = "demo",
         IasKmh = 912, TasKmh = 1044, Mach = 0.87, AltM = 3520, VyMs = 12.4,
         AoaDeg = 5.2, AosDeg = 1.1, NyG = 2.4, HeadingDeg = 275, FuelKg = 4100, Fuel0Kg = 9400,
+    };
+
+    /// <summary>
+    /// 预览样张专用：把本机真空速换成引导样张里给的值。
+    /// <para>不然读数行还挂着写死的 1044、速度条却写 620，同一张图里两个速度互相矛盾，
+    /// 看图判断「直观不直观」的人会先被这处不一致绊住。</para>
+    /// </summary>
+    private static TelemetrySnapshot WithTas(TelemetrySnapshot s, double tasKmh) => new()
+    {
+        TimestampUtc = s.TimestampUtc, ElapsedSeconds = s.ElapsedSeconds, Valid = s.Valid, InFlight = s.InFlight,
+        VehicleType = s.VehicleType, IasKmh = tasKmh * 0.86, TasKmh = tasKmh, Mach = s.Mach, AltM = s.AltM,
+        VyMs = s.VyMs, AoaDeg = s.AoaDeg, AosDeg = s.AosDeg, NyG = s.NyG, RollRateDegS = s.RollRateDegS,
+        HeadingDeg = s.HeadingDeg, FuelKg = s.FuelKg, Fuel0Kg = s.Fuel0Kg, PitchDeg = s.PitchDeg,
+        BankDeg = s.BankDeg, TurnRateDegS = s.TurnRateDegS, Ammo = s.Ammo, Caps = s.Caps,
     };
 
     private static int Preview(string[] args)
@@ -2666,12 +3504,26 @@ public static class Program
                     double gLeadRate = g.Length >= 6
                         && double.TryParse(g[5], NumberStyles.Any, CultureInfo.InvariantCulture, out double glr) ? glr : 0;
                     bool gFromLink = g.Length >= 7 && g[6].Trim() == "1";
-                    opt.Guide = new FormationLead(gTurn, gRange, gTarget, gAct, gDelta, gLeadRate, gFromLink);
+                    // 第 8 段：长机转弯过载（G）；≥1.5 自动进「转弯过急」警告（与 formationWarnG 默认一致）
+                    double gTurnG = g.Length >= 8
+                        && double.TryParse(g[7], NumberStyles.Any, CultureInfo.InvariantCulture, out double gtg) ? gtg : 0;
+                    // 第 10 段：本机真空速（km/h），速度条要用；不写就不画速度条
+                    double gCur = g.Length >= 10
+                        && double.TryParse(g[9], NumberStyles.Any, CultureInfo.InvariantCulture, out double gc) ? gc : 0;
+                    if (gCur > 1) snap = WithTas(snap, gCur);
+                    opt.Guide = new FormationLead(gTurn, gRange, gTarget, gAct, gDelta,
+                                                  gLeadRate, gFromLink, gTurnG, gTurnG >= 1.5, gCur);
+                    // 样张也画目标航向三角：当前航向 + 引导转角
+                    opt.TargetHeadingDeg = ((snap.HeadingDeg + gTurn) % 360 + 360) % 360;
+                    // 第 9 段：预览「编队完成」提示（"set"）
+                    if (g.Length >= 9 && g[8].Trim() == "set")
+                        opt.FormationNotice = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.formationDone");
                 }
             }
             else
             {
-                opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90);
+                opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90,
+                                              0, false, 0, false, 640);
             }
 
             // 高度差样张：WT_PREVIEW_ALTD="120"（正 = 对方高）
@@ -2680,7 +3532,7 @@ public static class Program
                 && double.TryParse(altSpec, NumberStyles.Any, CultureInfo.InvariantCulture, out double pAlt))
                 opt.AltDiffM = pAlt;
 
-            // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)"
+            // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)[|当前速度,目标速度]"
             var leadSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_LEAD");
             if (!string.IsNullOrWhiteSpace(leadSpec))
             {
@@ -2689,6 +3541,17 @@ public static class Program
                 opt.LeadStatusMain = lp.Length > 0 ? lp[0] : "";
                 opt.LeadStatusSub = lp.Length > 1 ? lp[1] : "";
                 opt.LeadStatusWarn = lp.Length > 2 && lp[2] == "1";
+                if (lp.Length > 3)
+                {
+                    var sp = lp[3].Split(',');
+                    if (sp.Length >= 2
+                        && double.TryParse(sp[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double lc)
+                        && double.TryParse(sp[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double lt))
+                    {
+                        opt.LeadSpeedBar = (lc, lt, lt - lc);
+                        snap = WithTas(snap, lc);
+                    }
+                }
             }
         }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }

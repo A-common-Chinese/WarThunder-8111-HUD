@@ -54,6 +54,14 @@ public sealed class MapData : IDisposable
     /// </summary>
     public bool CollectFriendlies { get; set; }
 
+    /// <summary>
+    /// 长机图标过滤（map_obj 的 <c>icon</c>，如 Fighter / Bomber / Assault）。
+    /// <para>僚机靠「离我最近的友军」认长机时，战场上多一架友军就会认错。
+    /// 空字符串 = 不过滤（沿用最近友军）；非空则只保留图标匹配的友机。</para>
+    /// <para>★ 这是**类别**不是具体机型：同为 Fighter 的两架飞机无法区分。</para>
+    /// </summary>
+    public string LeadIconFilter { get; set; } = "";
+
     /// <summary>地图上的一架友机：位置（0..1 归一化）、航向单位向量、图标类别。</summary>
     public readonly record struct MapAircraft(double X, double Y, double Dx, double Dy, string Icon);
 
@@ -160,8 +168,13 @@ public sealed class MapData : IDisposable
                 // 颜色判据与地面单位/机场一致：蓝通道 > 红通道 = 友军。
                 // CollectFriendlies 由编队开关控制：关掉时连这一步解析都不做。
                 if (CollectFriendlies && IsFriendlyColor(e))
-                    friendlies.Add(new MapAircraft(GetDouble(e, "x"), GetDouble(e, "y"),
-                                                   GetDouble(e, "dx"), GetDouble(e, "dy"), icon));
+                {
+                    // 指定了长机图标就只收匹配的：多一架友军也不会把引导带偏
+                    if (LeadIconFilter.Length == 0
+                        || icon.Equals(LeadIconFilter, StringComparison.OrdinalIgnoreCase))
+                        friendlies.Add(new MapAircraft(GetDouble(e, "x"), GetDouble(e, "y"),
+                                                       GetDouble(e, "dx"), GetDouble(e, "dy"), icon));
+                }
                 continue;
             }
 
@@ -267,13 +280,23 @@ public sealed class MapData : IDisposable
     /// /map_obj 的 color 是敌我标识：蓝系（如 #174DFF）= 友军，红系（如 #fa0C00）= 敌人。
     /// 用通道比较而不是精确匹配十六进制，避免联队配色/高亮导致漏判。
     /// </summary>
+    /// <summary>
+    /// 友军颜色判据：**蓝系（普通友军）或绿系（同小队队友）**都算友军，红系（敌机）不算。
+    /// <para>★ 2026-11-11 实测 map_obj 实际取值：友军 <c>#134AFF</c>（蓝）、
+    /// 同小队队友 <c>#39D921</c>（绿）、敌机 <c>#fa0C00</c> 系（红）、自己 <c>#faC81E</c>（黄）。</para>
+    /// <para>原先只判「蓝通道 > 红通道」，会把**绿色队友误当敌机丢弃** ——
+    /// 两人组队时僚机根本看不见长机，编队功能直接失效。这里改成蓝、绿双白名单。</para>
+    /// </summary>
     private static bool IsFriendlyColor(JsonElement e)
     {
         string color = e.TryGetProperty("color", out var c) ? c.GetString() ?? "" : "";
         if (color.Length < 7 || color[0] != '#') return false;
         if (!int.TryParse(color.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int r)) return false;
+        if (!int.TryParse(color.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int g)) return false;
         if (!int.TryParse(color.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int b)) return false;
-        return b > r;
+        bool blue = b > r + 40;                   // 普通友军
+        bool green = g > r + 40 && g > b;         // 同小队队友：绿通道显著高于红、且盖过蓝
+        return blue || green;
     }
 
     private static double GetDouble(JsonElement e, string name)

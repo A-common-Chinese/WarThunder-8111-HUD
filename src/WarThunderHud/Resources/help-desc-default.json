@@ -1,5 +1,5 @@
 {
-  "_version": 7,
+  "_version": 12,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -75,14 +75,6 @@
   "row.formation": {
     "zh": "编队辅助：在航向带上标出友机方位与距离（近距离用米，超过 1 km 用公里）；超出航向带范围时退化成端头箭头，提示往哪边转。只显示友军 —— 游戏地图里的敌人会被颜色过滤掉，永远不会画出来。关掉时连数据都不解析。",
     "en": "Formation: draws friendly bearings and ranges above the heading tape (metres under 1 km, otherwise km); contacts outside the tape collapse into an end arrow showing which way to turn. Friendly aircraft only - contacts coloured as enemies are filtered out and never drawn. When off, not even the data is parsed."
-  },
-  "row.formationOnly": {
-    "zh": "编队模式：隐藏俯仰梯、数据带、数值区、导航与构型提示，只留友机方位和速度/高度/航向三个读数；此时编队辅助自动开启，并在准星下方给出编队引导（往哪转、当前距目标 400 m 还差多少、油门加减多少）。地形、失速、超速告警仍然保留。",
-    "en": "Formation only: hides the ladder, tapes, data block, navigation and configuration hints, leaving friendly bearings plus three readouts (speed, altitude, heading). Formation assist is implied, and guidance appears under the reticle (which way to turn, current versus target 400 m, how much throttle). Terrain, stall and overspeed alerts are kept."
-  },
-  "row.formationLeadFeed": {
-    "zh": "转弯提前量：长机转弯时，僚机的转向建议指向长机的「未来位置」而不是它现在的位置。纯追位会让僚机一直追着长机走过的轨迹，转弯时被甩到外圈；加上提前量（asin(ω·R/V)，400 m / 600 km/h / 10°/s 时约 25°）队形就能保持住。转向率优先取数据链里长机自报的值，没开数据链就退化为相对方位的变化率反推，此时提示行颜色会淡一档。平飞时不显示任何多余文字。",
-    "en": "Turn lead: while the leader turns, the wingman's steering solution points at where the leader will be, not where it is. Pure pursuit chases the leader's past track and gets thrown to the outside of the turn; the lead angle (asin(w*R/V), about 25 deg at 400 m / 600 km/h / 10 deg/s) holds the formation. Turn rate comes from the data link when the leader broadcasts it, otherwise it is inferred from the bearing rate and drawn one shade dimmer. Nothing extra is drawn in level flight."
   },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",
@@ -293,12 +285,16 @@
     "en": "Current program version."
   },
   "row.leadMode": {
-    "zh": "长机模式：打开后不追僚机，只按「长机航向 / 长机马赫」保持自己的姿态，并且只报状态（FORMATION / WINGMAN LATE / TOO CLOSE）不给任何数字 —— 长机不该被引导去追僚机。关掉就是僚机模式：追到长机后方 400 m。注意两人必须约定好角色，都设成僚机会互相追。",
+    "zh": "长机模式：打开后不追僚机，只按「长机马赫」保持自己的姿态，并且只报状态（编队完成 / 僚机掉队 / 距离过近）不给任何数字 —— 长机不该被引导去追僚机。关掉就是僚机模式：追到长机后方 400 m。注意两人必须约定好角色，都设成僚机会互相追。",
     "en": "Lead mode: does not chase the wingman; it holds its own heading and Mach and reports status only (FORMATION / WINGMAN LATE / TOO CLOSE), no numbers - a lead should never be steered at its wingman. Off means wingman mode: close to 400 m behind the lead. Both aircraft must agree on roles; two wingmen will chase each other."
   },
-  "row.leadHeading": {
-    "zh": "长机航向：设定后偏离超过 5° 会提示左转/右转。−1 表示留空 —— 在打开编队模式那一刻锁存当时的航向，之后偏离就提醒回来。",
-    "en": "Lead heading: deviating more than 5 degrees triggers a turn call. -1 means blank - the heading in use when formation mode was switched on is latched, and any drift is called out."
+  "row.formationOmni": {
+    "zh": "全向跟随（仅长机模式）：关 = 按锁存的航向直飞，偏离就提示转回；开 = 不锁航向，你可以任意方向机动，僚机按你的实时航向跟随。测试版建议打开 —— 这样长机想往哪转都行，不用先「转回设定航向」。",
+    "en": "Omni follow (lead only): off = hold the latched heading and get a turn-back call when drifting; on = no heading lock, maneuver freely and the wingman follows your live heading. Recommended on for the test build."
+  },
+  "row.leadIcon": {
+    "zh": "长机机型（图标类别）：僚机默认认「离我最近的友军」当长机，战场上多一架友军就会被带偏。填上长机的图标类别（例如 Fighter / Bomber / Assault）就只认这一类。★ 这是类别不是具体机型 —— 两架都填 Fighter 区分不了，请让长机换个大类。留空则回到「最近友军」。",
+    "en": "Lead icon (category): the wingman takes the nearest friendly as its lead by default, so one extra friendly in the area pulls the guidance away. Fill in the lead's icon category (Fighter / Bomber / Assault) to only accept that class. This is a category, not an exact type - two Fighters cannot be told apart; have the lead fly a different class. Blank falls back to nearest-friendly."
   },
   "row.leadMach": {
     "zh": "长机马赫：目标马赫数（默认 0.70）。偏差超过 0.02 马赫时提示加速/减速。用马赫而不是空速，是因为它不随高度变化；实际比较时按当前音速换算成真空速。",
@@ -311,5 +307,13 @@
   "page.datalink": {
     "zh": "数据链设置（独立模块）：开关「使用数据互联」、查看节点 ID / 链路状态 / 端口。关掉就回到只看平面的旧逻辑（水平距离与方位，无高度差）。",
     "en": "Data link (own module): toggle the link, inspect the node id, link state and port. When off, the HUD falls back to planar data only (horizontal range and bearing, no altitude)."
+  },
+  "row.wingSide": {
+    "zh": "僚机侧位：选你在长机的哪一侧。左僚机 / 尾随 / 右僚机三个站位到长机的距离都是 400 m（左和右各偏 22°，横向 150 m、纵向 370 m）。多架僚机在同一局时必须各选不同侧位，否则会抢同一个站位。长机模式用不到这一项。",
+    "en": "Wing position: which side of the lead you fly. Left wing / trail / right wing are all 400 m from the lead (the side slots sit 22 deg off the tail, 150 m across and 370 m back). With several wingmen in one mission each must pick a different slot or they will chase the same point. Not used in lead mode."
+  },
+  "row.formationWarnG": {
+    "zh": "转弯告警阈值：长机转弯的横向过载超过这个 G 值，僚机的引导上方就显示「转弯过急」，表示队形跟不住了。默认 1.5 G（600 km/h 下约 5.1°/s）。实测：1.0 G 内外圈偏差 5–15 m（几乎完美），1.5 G 偏差 21–50 m（刚开始偏），2.0 G 内圈偏差 144 m（断崖）。调小 = 更早提醒，调大 = 更晚。",
+    "en": "Turn warning threshold: when the lead's lateral load exceeds this G, the wingman sees TURN TOO TIGHT above the guidance, meaning the formation can no longer be held. Default 1.5 G (~5.1 deg/s at 600 km/h). Measured: 1.0 G keeps 5-15 m error, 1.5 G 21-50 m, 2.0 G the inner wing falls off to 144 m. Lower = earlier warning."
   }
 }

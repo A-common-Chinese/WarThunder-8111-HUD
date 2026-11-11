@@ -47,6 +47,9 @@ internal sealed class DataLink : IDisposable
     {
         public int AltM;
         public double VyMs;
+        /// <summary>对方自报的航向（0..359 度）。老版本不发这一段 → null。</summary>
+        public double? HeadingDeg;
+
         /// <summary>对方自报的转向率（°/s，正 = 右转）。老版本不发这一段 → null。</summary>
         public double? TurnRateDeg;
         public long TickAt;
@@ -126,6 +129,32 @@ internal sealed class DataLink : IDisposable
         }
     }
 
+    /// <summary>
+    /// 取最近最活跃那个伙伴的航向（度）。返回 false 表示没有可用数据
+    /// （链路没开、对方没发、对方是老版本只发 4 段、或全超时了）。
+    /// <para>没有链路时上层用本机航向近似长机航向 —— 编队两机航向近似平行，实测差别不大。</para>
+    /// </summary>
+    public bool TryGetPartnerHeading(out double headingDeg)
+    {
+        long now = Environment.TickCount64;
+        headingDeg = 0;
+
+        lock (_lock)
+        {
+            Remote? best = null;
+            foreach (var node in _nodes.Values)
+            {
+                if (now - node.TickAt >= StaleMs) continue;
+                if (node.HeadingDeg == null) continue;
+                if (best == null || node.TickAt > best.TickAt) best = node;
+            }
+            if (best?.HeadingDeg is not double hdg) return false;
+
+            headingDeg = hdg;
+            return true;
+        }
+    }
+
     public void Start()
     {
         if (_running) return;
@@ -164,16 +193,17 @@ internal sealed class DataLink : IDisposable
     }
 
     /// <summary>
-    /// 解析一行报文。<paramref name="turnRateDeg"/> 为 null 表示对方是老版本（只发 4 段），
-    /// 上层会自动退化为本地估算转向率。
+    /// 解析一行报文。<paramref name="headingDeg"/> / <paramref name="turnRateDeg"/> 为 null
+    /// 表示对方是老版本（只发 4 段）或该段无效，上层会退化为本地近似值。
     /// </summary>
     internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
-                                         out double? turnRateDeg)
+                                         out double? turnRateDeg, out double? headingDeg)
     {
         selfId = 0;
         altM = 0;
         vyMs = 0;
         turnRateDeg = null;
+        headingDeg = null;
 
         var parts = text.Split('|');
         if (parts.Length < 4 || parts[0] != "WTDL2") return false;
@@ -182,7 +212,12 @@ internal sealed class DataLink : IDisposable
         if (!int.TryParse(parts[3], out int vyTenths)) return false;
         vyMs = vyTenths / 10.0;
 
-        // 航向段存在但转向率解析失败 → 当作没有，不要因此丢掉整包高度
+        // 航向段（第 5 段）：0..359 度整数。老 4 段格式没有这一段 → null，上层用本机航向近似。
+        if (parts.Length >= 5 && int.TryParse(parts[4], out int hdgDeg)
+            && hdgDeg >= 0 && hdgDeg < 360)
+            headingDeg = hdgDeg;
+
+        // 转向率段（第 6 段）：解析失败只丢这一段，不要因此丢掉整包高度
         if (parts.Length >= 6 && int.TryParse(parts[5], out int turnTenths))
             turnRateDeg = turnTenths / 10.0;
 
@@ -234,7 +269,8 @@ internal sealed class DataLink : IDisposable
         try { text = Encoding.ASCII.GetString(data); }
         catch { return; }
 
-        if (!TryParsePayload(text, out int id, out int alt, out double vyMs, out double? turnRate)) return;
+        if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
+                             out double? turnRate, out double? heading)) return;
 
         if (id == _selfId)
         {
@@ -254,6 +290,7 @@ internal sealed class DataLink : IDisposable
             node.AltM = alt;
             node.VyMs = vyMs;
             // 航向/转向率是后加的两段：老版本不发，就保持 null，上层自动退化为本地估算
+            node.HeadingDeg = heading;
             node.TurnRateDeg = turnRate;
             node.TickAt = Environment.TickCount64;
         }

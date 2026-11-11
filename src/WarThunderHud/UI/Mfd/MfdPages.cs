@@ -200,12 +200,22 @@ internal static class MfdPages
             Number("row.hole", c => c.CursorHoleHalfPx, (c, v) => c.CursorHoleHalfPx = (int)v, 2, 0, 200, "px"),
             Toggle("row.ladder", c => c.ShowPitchLadder, (c, v) => c.ShowPitchLadder = v),
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
+            // 编队（0.4.6 极速测试版精简为 4 行：功能开关 / 角色 / 马赫 / 全向跟随）
+            // 砍掉的 formationOnly、formationLeadFeed、leadHeading 默认值恰好都是正常行为，
+            // 砍面板行不影响它们继续生效，只是不能调。
             Toggle("row.formation", c => c.FormationAssist, (c, v) => c.FormationAssist = v),
-            Toggle("row.formationOnly", c => c.FormationOnly, (c, v) => c.FormationOnly = v),
-            Toggle("row.formationLeadFeed", c => c.FormationLeadFeed, (c, v) => c.FormationLeadFeed = v),
+            Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
+            // 僚机侧位：三架僚机必须各选一边，否则全挤在长机正后方。
+            // 存的是 -1/0/+1，面板索引 0/1/2，所以两头各偏 1。
+            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
+                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1),
+            // 设定航向：长机靠它知道自己该往哪飞；-1 = 留空（锁存进入时的航向）
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
+            Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
+            // 超包线告警阈值：长机转弯过载超过它就说「转弯过急」，0.5–5 G
+            Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),

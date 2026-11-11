@@ -74,6 +74,12 @@ public sealed class HudConfig
     /// <summary>Long-press this key to hide the HUD (default U).</summary>
     [JsonPropertyName("holdHideKey")] public string HoldHideKey { get; set; } = "U";
 
+    /// <summary>
+    /// 编队解除 / 恢复键（按一下切换）。解除后不再画本轮引导，飞行员可以自由飞；
+    /// 再按一下重新建立，之后重新判定到位。默认 CTRL+SHIFT+F。
+    /// </summary>
+    [JsonPropertyName("formationKey")] public string FormationKey { get; set; } = "CTRL+SHIFT+F";
+
     /// <summary>Height tape shows radar (above-ground) altitude instead of barometric.</summary>
     [JsonPropertyName("tapeRadarAltitude")] public bool TapeRadarAltitude { get; set; } = true;
 
@@ -176,13 +182,75 @@ public sealed class HudConfig
     /// <summary>提前角上限（度）。防止低速大转向率时 asin 顶到 90° 把机头指到侧面去。</summary>
     [JsonPropertyName("formationLeadMaxDeg")] public double FormationLeadMaxDeg { get; set; } = 45;
 
+    /// <summary>
+    /// 超载告警阈值（G）。长机转弯的横向过载超过它，就在引导上方提示「转弯过急」。
+    /// <para>用 G 而不是 °/s，因为它不随速度漂移：600 km/h 下 1.5 G ≈ 5.1 °/s，
+    /// 400 km/h 下同样 1.5 G 只需要六成的转弯率，但两种情况队形保持的难度相当。</para>
+    /// <para>依据（sim 实测，600 km/h）：3 °/s（0.87 G）外圈/内圈与理想站位只差 **6–10 m**；
+    /// 6.7 °/s（2.0 G）内圈横位已丢 **144 m**（切到长机正后方）；10 °/s（2.97 G）差 55–79 m；
+    /// 15 °/s（5.9 G）外圈直接脱离。退化不是线性的 —— 2 G 之后断崖。
+    /// 所以取 **1.5 G（≈5.1 °/s）**：在明显跑偏**之前**提醒，而不是等队形散了才说。</para>
+    /// </summary>
+    [JsonPropertyName("formationWarnG")] public double FormationWarnG { get; set; } = 1.5;
+
+    // ---- 僚机侧位（编队位置设定）----
+    // 僚机主动声明飞在长机左侧还是右侧，引导就把机头指向「长机侧后方的虚拟点」而不是长机本体。
+    // 有了这个稳定设定，长机转弯时才能确定僚机在内圈还是外圈：
+    // 右转圆心在长机右侧 → 右侧 = 内圈、左侧 = 外圈；左转反之。
+    // 0 = 正后方（旧行为，不做内外圈区分），默认编队不受影响。
+
+    /// <summary>僚机侧位：-1 = 长机左侧，0 = 正后方（默认），+1 = 长机右侧。</summary>
+    [JsonPropertyName("formationWingSide")] public int FormationWingSide { get; set; } = 0;
+
+    /// <summary>
+    /// 僚机速度前馈的上限（相对长机真空速的倍数）。外圈路径更长，按 |ω|·(r_w−ρ) 补速。
+    /// <para>默认 **1.30**。2026-11-11 试过放宽到 1.60：15°/s 外圈确实从 R=730 收到 486，
+    /// 但 10°/s 内圈的横位从 +71 翻成 −77（越过站位切到内侧，误差 79 m → 227 m），
+    /// 而且 10°/s 是本系统最常用的档位 —— 所以放上限这一刀最后没有采纳，保持 1.30。</para>
+    /// <para>要真正改善大转弯率的外圈，得先改前馈公式（按站位点半径而不是僚机当前位置算），
+    /// 单靠放宽倍数不行。详见 <c>.ai/formation-redesign.md</c>。</para>
+    /// </summary>
+    [JsonPropertyName("formationWingMaxRatio")] public double FormationWingMaxRatio { get; set; } = 1.30;
+
+    /// <summary>
+    /// 僚机速度前馈的下限（相对长机真空速的倍数）。内圈要减速。
+    /// <para>**保持 0.80**（同日试过 0.50，10°/s 内圈从 cross +71 翻成 −78，减过头切到站位内侧，
+    /// 所以下限不能跟着上限一起放）。要覆盖 20°/s 内圈（需 0.69×）得先把速度前馈改成按
+    /// **站位点半径**算 —— 现在用的是当前距离，放大包线会同时放大这个近似误差。</para>
+    /// <para>★ 这是相对长机的倍数，不是绝对速度：长机飞得慢时 0.8× 也可能贴近失速。</para>
+    /// </summary>
+    [JsonPropertyName("formationWingMinRatio")] public double FormationWingMinRatio { get; set; } = 0.80;
+
+    /// <summary>
+    /// 油门建议的一阶低通时间常数（秒）。越小加速/减速响应越快。
+    /// <para>复评后收回 1.2 s：外圈改纯追踪后不再需要激进响应，放宽反而平白超速。
+    /// 太小会让 HUD 上的油门数字来回跳，别低于 0.2。</para>
+    /// </summary>
+    [JsonPropertyName("formationGuideTauS")] public double FormationGuideTauS { get; set; } = 1.2;
+
     // ---- 长机 / 僚机 ----
+
+    /// <summary>
+    /// 长机图标（map_obj 的 <c>icon</c>：Fighter / Bomber / Assault / …）。留空 = 认「离我最近的友军」。
+    /// <para>僚机靠最近友军认长机，战场上多一架友军就会被带偏。填了图标就只认该类别的飞机。</para>
+    /// <para>★ 这是**类别**不是具体机型：两架都填 Fighter 区分不了；测试时让长机换个大类（例如轰炸机）。</para>
+    /// </summary>
+    [JsonPropertyName("leadIcon")] public string LeadIcon { get; set; } = "";
 
     /// <summary>
     /// 长机模式。关 = 僚机（默认，追到长机后方 400 m）；开 = 长机，保持设定航向与马赫数，
     /// 只报状态不给数字 —— 长机不该被引导去追僚机。
+    /// <para>打开 <c>formationOmniFollow</c> 后航向不再锁定，改为跟随长机实时航向。</para>
     /// </summary>
     [JsonPropertyName("leadMode")] public bool LeadMode { get; set; }
+
+    /// <summary>
+    /// 全向跟随模式（仅长机模式有效）。关 = 按 <c>leadHeadingDeg</c> 指定航向直飞、偏离就提示转回；
+    /// 开 = 不锁航向，长机可全向机动，始终以长机实时航向为准
+    /// （有数据链用长机自报值，没有就用本机航向近似）。
+    /// 速度不受影响，两种模式都按 <c>leadMach</c> 设定。
+    /// </summary>
+    [JsonPropertyName("formationOmniFollow")] public bool FormationOmniFollow { get; set; }
 
     /// <summary>
     /// 长机的设定航向（度）。**-1 表示留空**：在打开编队模式那一刻锁存当时的航向，
@@ -193,11 +261,12 @@ public sealed class HudConfig
     /// <summary>长机的设定马赫数。用马赫而不是空速，是因为它不随高度变（喷气机习惯）。</summary>
     [JsonPropertyName("leadMach")] public double LeadMach { get; set; } = 0.7;
 
-    // ---- 数据链（只交换高度） ----
+    // ---- 数据链（高度 / 航向 / 转向率） ----
 
     /// <summary>
     /// 数据链开关。位置不需要共享（单机拿到的友机位置已经准到 1–2 m），
-    /// 但 `map_obj` 没有 z，高度只能靠这条链路。默认关。
+    /// 但 `map_obj` 没有 z，**高度只能靠这条链路**。
+    /// 航向 / 转向率有链路时直接用长机自报值，没有就退化为本地近似（实测差别不大）。默认关。
     /// </summary>
     [JsonPropertyName("dataLinkEnabled")] public bool DataLinkEnabled { get; set; }
 
@@ -246,7 +315,7 @@ public sealed class HudConfig
     [JsonPropertyName("playerName")] public string PlayerName { get; set; } = "";
 
     /// <summary>Hide the HUD while the cockpit view is active.</summary>
-    [JsonPropertyName("hideInCockpit")] public bool HideInCockpit { get; set; } = true;
+    [JsonPropertyName("hideInCockpit")] public bool HideInCockpit { get; set; } = false;
 
     /// <summary>Hide the HUD in the nose / gunner view (V twice). Off by default.</summary>
     [JsonPropertyName("hideInNose")] public bool HideInNose { get; set; }
