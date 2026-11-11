@@ -588,7 +588,8 @@ public static class Program
                           $"show={cfg.ShowKey} settings={cfg.SettingsKey} reset={cfg.ResetKey} view={cfg.ViewKey} " +
                           $"pitchZero={cfg.PitchZeroKey} bankFlip={cfg.BankFlipKey} bodyFixed={cfg.BodyFixedKey} " +
                           $"exit={cfg.ExitKey} save={cfg.SaveKey} " +
-                          $"guidance(kp={cfg.FormationKp:F3} ki={cfg.FormationKi:F4} kv={cfg.FormationKv:F2}) " +
+                          $"guidance(kp={cfg.FormationKp:F3}/{cfg.FormationKpNear:F2} blend={cfg.FormationBlendM:F0}m " +
+                          $"ki={cfg.FormationKi:F4} kv={cfg.FormationKv:F2}) " +
                           $"playerName={(string.IsNullOrWhiteSpace(cfg.PlayerName) ? "(empty)" : cfg.PlayerName)}");
         overlayRef = overlay;
         int hotkeyFails = overlay.ApplyHotkeys(cfg);
@@ -1682,7 +1683,15 @@ public static class Program
                         : 0;
                     guideIntegralLastT = nowS;
 
-                    double wantClosing = cfg.FormationKp * err + cfg.FormationKi * guideIntegral;
+                    // 增益调度：距离误差大时用小增益（慢慢追，别给自己挖坑），
+                    // 逼近 400 m 时过渡到大增益（快速收尾）。这一条把到位时间又压掉两成。
+                    double blend = Math.Max(100.0, cfg.FormationBlendM);
+                    double far = Math.Clamp(err / blend, 0.0, 1.0);
+                    double kp = err > 0
+                        ? cfg.FormationKp + (cfg.FormationKpNear - cfg.FormationKp) * (1.0 - far)
+                        : cfg.FormationKpNear;      // 太近了要果断拉开，直接用大增益
+
+                    double wantClosing = kp * err + cfg.FormationKi * guideIntegral;
                     // ★ 这一层限幅是安全底线。放开它会在大距离上索要上百 m/s 的接近率，
                     //   物理上根本刹不住（实测交叉场景需要 10 km 才能减速到位）。
                     wantClosing = Math.Clamp(wantClosing, -20, 30);

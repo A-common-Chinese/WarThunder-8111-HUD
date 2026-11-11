@@ -136,15 +136,26 @@ public sealed class HudConfig
 
     // ---- 编队引导的级联 PID（外环 PI → 期望接近率，内环 P → 油门） ----
     // 三个参数可以在这里直接改，改完重启生效。默认值是仿真扫参的结果：
-    // 1.6 km 追尾约 42 秒到位（纯 P 的旧逻辑要 80~95 秒），且交叉接近场景不劣化。
+    // 1.6 km 追尾约 32 秒到位（纯 P 的旧逻辑要 80~95 秒），且交叉接近场景不劣化。
+    //
+    // 外环的比例增益是**分段**的（增益调度）：
+    //   距离误差大 → formationKp（小，慢慢追，不给自己挖坑）
+    //   逼近 400 m → formationKpNear（大，快速收尾，不然末段磨叽）
+    // 中间按 formationBlendM 线性过渡，是连续函数，没有切换点突变。
     //
     // ★ 外环输出的"期望接近率"始终被夹在 -20…+30 m/s，这是安全底线：
-    //   放开它会在远距离索要 100 m/s 以上的接近率，物理上刹不住。
+    //   放开它会在远距离索要 100 m/s 以上的接近率，物理上刹不住（实测交叉场景需要 10 km）。
 
-    /// <summary>外环比例：把距离误差（m）换成期望接近率（m/s）。越大追得越急。</summary>
-    [JsonPropertyName("formationKp")] public double FormationKp { get; set; } = 0.07;
+    /// <summary>外环比例（远景）：距离误差大时用的增益。越大追得越急。</summary>
+    [JsonPropertyName("formationKp")] public double FormationKp { get; set; } = 0.04;
 
-    /// <summary>外环积分：消除残余偏差，近距离收敛更快。过大容易冲过头。</summary>
+    /// <summary>外环比例（近景）：逼近目标距离时用的增益。加大到 0.2 能把末段收尾快一倍。</summary>
+    [JsonPropertyName("formationKpNear")] public double FormationKpNear { get; set; } = 0.20;
+
+    /// <summary>增益过渡的距离尺度（m）：误差超过它就完全用远景增益，到 0 时完全用近景增益。</summary>
+    [JsonPropertyName("formationBlendM")] public double FormationBlendM { get; set; } = 800;
+
+    /// <summary>外环积分：消除残余偏差。过大容易冲过头。</summary>
     [JsonPropertyName("formationKi")] public double FormationKi { get; set; } = 0.006;
 
     /// <summary>内环比例：期望接近率与实际接近率之差放大成油门量。想更跟手就加大。</summary>
