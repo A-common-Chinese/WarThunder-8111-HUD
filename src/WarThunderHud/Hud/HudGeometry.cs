@@ -74,6 +74,13 @@ public sealed class HudOptions
     /// <summary>主状态是否该用警告色（僚机掉队、距离过近、没设速度等）。</summary>
     public bool LeadStatusWarn { get; set; }
 
+    /// <summary>
+    /// 与对方的气压高度差（m）。正 = **对方比我高**（我该爬升）。
+    /// null = 没有数据链数据（链路没开或对方没发），此时整行不画。
+    /// <para>高度是 map_obj 里唯一没有的量，所以这一项只能来自数据链。</para>
+    /// </summary>
+    public double? AltDiffM { get; set; }
+
     /// <summary>本帧的友机相对方位与距离，由宿主（Program）每帧填充。</summary>
     public List<FriendlyContact> Friendlies { get; } = new();
     public bool ShowFpm { get; set; } = true;
@@ -726,6 +733,24 @@ public sealed class HudGeometry
             Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 6.6 * pxDeg) },
         });
 
+        // ---- 2.5) 高度差：只有数据链送来时才画 ----
+        // 挂在距离行下面而不是右上角：编队时"水平多远"和"垂直差多少"是一起读的。
+        if (_opt.AltDiffM is double altDiff)
+        {
+            int altAbs = (int)Math.Round(Math.Abs(altDiff) / 5.0) * 5;   // 取整到 5 m，别给假精度
+            string altText = altAbs < 15
+                ? "高度一致"
+                : (altDiff > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m";
+
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = altText, Align = HudAlign.Center,
+                FontSize = fontSmall * 1.1,
+                Color = altAbs < 15 ? Fade(col, 0.7) : _opt.FriendlyColor,
+                Points = { (cx, cy + 7.45 * pxDeg) },
+            });
+        }
+
         // ---- 3) 油门：加/减速给数值，稳定时给"保持" ----
         if (g.Action != FormationAction.None)
         {
@@ -742,7 +767,7 @@ public sealed class HudGeometry
             {
                 Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
                 FontSize = font * 1.35, Color = hold ? col : _opt.WarnColor,
-                Points = { (cx, cy + 8.4 * pxDeg) },
+                Points = { (cx, cy + 9.0 * pxDeg) },
             });
         }
     }

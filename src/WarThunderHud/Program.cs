@@ -524,6 +524,22 @@ public static class Program
 
         var opt = new HudOptions();
         var cfg = HudConfig.Load();
+
+        // 数据链：只交换气压高度（map_obj 没有 z，单机拿不到）。
+        // 节点 ID 首次自动生成并写回配置，以后一直沿用，不需要人工配对。
+        if (cfg.DataLinkEnabled)
+        {
+            if (cfg.DataLinkId == 0)
+            {
+                cfg.DataLinkId = Random.Shared.Next(100000, 999999);
+                cfg.Save();
+                Console.WriteLine($"data link: assigned node id {cfg.DataLinkId} (saved to hud-config.json)");
+            }
+            dataLink = new WtHud.Telemetry.DataLink(cfg.DataLinkId);
+            dataLink.Start();
+            Console.WriteLine($"data link: on, node id {cfg.DataLinkId}, udp {WtHud.Telemetry.DataLink.Port} (heights only)");
+        }
+
         WtHud.UI.L10n.LoadFromConfig(cfg.Language);
         var envPanel = Environment.GetEnvironmentVariable("WT_MFD_PANEL");
         if (!string.IsNullOrEmpty(envPanel)) WtHud.UI.L10n.Panel = envPanel == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
@@ -1148,6 +1164,7 @@ public static class Program
             bool showRadarAlt = cfg.TapeRadarAltitude && hasRadioAlt;
             opt.AltTapeIsRadar = showRadarAlt;
             opt.AltTapeM = showRadarAlt ? snap.RadioAltM!.Value : snap.AltM;
+            dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs);
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -1745,6 +1762,14 @@ public static class Program
             opt.LeadStatusMain = "";
             opt.LeadStatusSub = "";
 
+            // 高度差：map_obj 没有 z，这一项只能来自数据链。正 = 对方比我高（我该爬）。
+            opt.AltDiffM = null;
+            if (dataLink != null && snap.AltM > 0
+                && dataLink.TryGetPartnerAltitude(out int partnerAlt, out _))
+            {
+                opt.AltDiffM = partnerAlt - snap.AltM;
+            }
+
             // --- 直接引导：只针对最近那一架（"往哪转、加减速"） ---
             // 门槛都写在这里而不是几何层，方便按真机手感调，不用碰绘制代码。
             if (opt.Friendlies.Count > 0)
@@ -2299,6 +2324,9 @@ public static class Program
     // 长机模式：航向留空（leadHeadingDeg = -1）时锁存进入那一刻的航向，偏离了才好提醒回来。
     private static double leadHeadingLocked;
     private static bool leadHeadingLockValid;
+
+    // 数据链（只交换高度）。null = 没开。
+    private static WtHud.Telemetry.DataLink? dataLink;
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
@@ -2445,6 +2473,12 @@ public static class Program
             {
                 opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90);
             }
+
+            // 高度差样张：WT_PREVIEW_ALTD="120"（正 = 对方高）
+            var altSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_ALTD");
+            if (!string.IsNullOrWhiteSpace(altSpec)
+                && double.TryParse(altSpec, NumberStyles.Any, CultureInfo.InvariantCulture, out double pAlt))
+                opt.AltDiffM = pAlt;
 
             // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)"
             var leadSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_LEAD");

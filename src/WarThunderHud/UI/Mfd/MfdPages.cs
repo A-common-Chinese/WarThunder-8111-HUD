@@ -209,6 +209,7 @@ internal static class MfdPages
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
+            Toggle("row.dataLink", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),

@@ -175,6 +175,7 @@ public static class L10n
         ["row.leadMode"] = ("长机模式", "LEAD MODE"),
         ["row.leadHeading"] = ("长机航向", "LEAD HDG"),
         ["row.leadMach"] = ("长机马赫", "LEAD MACH"),
+        ["row.dataLink"] = ("数据链高度", "DATA LINK"),
         ["row.extrapolate"] = ("插值平滑", "EXTRAPOLATE"),
         ["row.version"] = ("版本", "VERSION"),
         ["row.hideCockpit"] = ("座舱隐藏", "HIDE IN COCKPIT"),

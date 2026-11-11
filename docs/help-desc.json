@@ -1,5 +1,5 @@
 {
-  "_version": 3,
+  "_version": 4,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -299,5 +299,9 @@
   "row.leadMach": {
     "zh": "长机马赫：目标马赫数（默认 0.70）。偏差超过 0.02 马赫时提示加速/减速。用马赫而不是空速，是因为它不随高度变化；实际比较时按当前音速换算成真空速。",
     "en": "Lead Mach: target Mach number (default 0.70). A deviation beyond 0.02 triggers a power call. Mach is used instead of airspeed because it does not vary with altitude; the comparison converts it to true airspeed using the current speed of sound."
+  },
+  "row.dataLink": {
+    "zh": "数据链高度：打开后与同网段的另一位玩家交换各自的气压高度（UDP 广播，4 Hz，只传高度不传位置）。首次启用会自动生成一个节点 ID 存进配置文件，之后一直沿用，不需要人工配对。收到数据后编队模式的距离行下方会多一行：↑ 表示对方比你高、↓ 表示比你低、15 m 内显示「高度一致」。注意：Windows 防火墙首次可能弹窗，需要放行；广播只在同一网段有效。",
+    "en": "Data link: exchanges barometric altitude with another player on the same subnet (UDP broadcast, 4 Hz, altitude only - positions are not shared). A node id is generated on first use and saved to the config, so no manual pairing is needed. Once data arrives, a line appears under the range line in formation mode: up arrow means the partner is above you, down arrow below, and within 15 m it reads level. Windows Firewall may prompt the first time; broadcast only works on the same subnet."
   }
 }

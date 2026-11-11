@@ -178,6 +178,20 @@ public sealed class HudConfig
     /// <summary>长机的设定马赫数。用马赫而不是空速，是因为它不随高度变（喷气机习惯）。</summary>
     [JsonPropertyName("leadMach")] public double LeadMach { get; set; } = 0.7;
 
+    // ---- 数据链（只交换高度） ----
+
+    /// <summary>
+    /// 数据链开关。位置不需要共享（单机拿到的友机位置已经准到 1–2 m），
+    /// 但 `map_obj` 没有 z，高度只能靠这条链路。默认关。
+    /// </summary>
+    [JsonPropertyName("dataLinkEnabled")] public bool DataLinkEnabled { get; set; }
+
+    /// <summary>
+    /// 本机的数据链节点 ID。**0 表示还没分配** —— 首次启用数据链时自动生成一个 6 位数并存进
+    /// 配置文件，以后一直沿用。两台机器撞号概率极低，撞了会收到"自己"的包而被检测到。
+    /// </summary>
+    [JsonPropertyName("dataLinkId")] public int DataLinkId { get; set; }
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 
