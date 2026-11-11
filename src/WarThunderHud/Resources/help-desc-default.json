@@ -1,5 +1,5 @@
 {
-  "_version": 14,
+  "_version": 15,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -359,5 +359,17 @@
   "row.fMinRatio": {
     "zh": "速度前馈下限。默认 0.80。试过 0.50：10°/s 内圈减过头，未采纳。",
     "en": "Speed feed lower bound. Default 0.80. 0.50 was tried and over-braked the inner slot at 10 deg/s."
+  },
+  "row.fRange": {
+    "zh": "尾随站位：长机正后方的距离。默认 400 m。改大 = 队形更松、更好飞但更难看清长机；改小 = 更紧。★ 编队完成的判定是 40 m 绝对误差，站位放到 800 m 时会相对变严，建议一起放宽。",
+    "en": "Trail slot distance behind the lead. Default 400 m. Larger is a looser formation that is easier to fly; smaller is tighter. The 40 m completion check is an absolute number, so at 800 m it becomes relatively stricter."
+  },
+  "row.fWingOffset": {
+    "zh": "侧位僚机的横向偏移。默认 150 m（左僚机 −150、右僚机 +150）。与侧位后距一起决定斜距：默认 150² + 370² ≈ 400²，三个站位到长机都是 400 m，所以换侧位不用重新标定速度前馈。改了就不再相等。",
+    "en": "Lateral offset for the side slots. Default 150 m (left -150, right +150). Together with the station back distance it gives the slant range: 150^2 + 370^2 is about 400^2, so all three slots sit 400 m from the lead."
+  },
+  "row.fStationBack": {
+    "zh": "侧位僚机的纵向后距。默认 370 m。它是斜距的另一半（见「侧位横偏」）。单独改动会让左右两翼离长机更远或更近，与尾随位的距离不再一致。",
+    "en": "Longitudinal distance for the side slots. Default 370 m. It is the other half of the slant range; changing it alone makes the wing slots sit further or closer than the trail slot."
   }
 }

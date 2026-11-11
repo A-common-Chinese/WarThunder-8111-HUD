@@ -202,6 +202,28 @@ public sealed class HudConfig
     /// <summary>僚机侧位：-1 = 长机左侧，0 = 正后方（默认），+1 = 长机右侧。</summary>
     [JsonPropertyName("formationWingSide")] public int FormationWingSide { get; set; } = 0;
 
+    // ---- 站位间距（2026-11-11 从代码常量改成配置项） ----
+
+    /// <summary>
+    /// 尾随站位：长机正后方的距离（米）。默认 400。
+    /// <para>★ 改大之后「编队完成」的判定（40 m 绝对误差）会相对变严，因为它是绝对米数，
+    /// 不是百分比 —— 站位放到 800 m 时建议把判定一起放宽。</para>
+    /// </summary>
+    [JsonPropertyName("formationRangeM")] public double FormationRangeM { get; set; } = 400;
+
+    /// <summary>
+    /// 侧位僚机的横向偏移（米）。默认 150。左僚机 −150、右僚机 +150。
+    /// </summary>
+    [JsonPropertyName("formationWingOffsetM")] public double FormationWingOffsetM { get; set; } = 150;
+
+    /// <summary>
+    /// 侧位僚机的纵向后距（米）。默认 370。
+    /// <para>与 <see cref="FormationWingOffsetM"/> 一起决定斜距：默认 150² + 370² ≈ 400²，
+    /// 三个站位到长机的距离都是 400 m —— 这样切换侧位时速度前馈不用重新标定。
+    /// 改了这两个数就不再相等，属于有意为之的话没问题。</para>
+    /// </summary>
+    [JsonPropertyName("formationStationBackM")] public double FormationStationBackM { get; set; } = 370;
+
     /// <summary>
     /// 僚机速度前馈的上限（相对长机真空速的倍数）。外圈路径更长，按 |ω|·(r_w−ρ) 补速。
     /// <para>默认 **1.30**。2026-11-11 试过放宽到 1.60：15°/s 外圈确实从 R=730 收到 486，

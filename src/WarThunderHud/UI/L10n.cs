@@ -266,6 +266,9 @@ public static class L10n
         // ---- 编队调参页（僚机制导增益，平时不用动） ----
         ["page.formationTune"] = ("编队调参", "FORMATION TUNE"),
         ["menu.hint.formationTune"] = ("僚机制导增益与包线", "WINGMAN GAINS"),
+        ["row.fRange"] = ("尾随距离", "TRAIL RANGE"),
+        ["row.fWingOffset"] = ("侧位横偏", "WING OFFSET"),
+        ["row.fStationBack"] = ("侧位后距", "STATION BACK"),
         ["row.fKp"] = ("外环比例", "OUTER KP"),
         ["row.fKpNear"] = ("近距比例", "NEAR KP"),
         ["row.fKi"] = ("积分(‰)", "INTEGRAL (‰)"),

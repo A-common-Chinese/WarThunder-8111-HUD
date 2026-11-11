@@ -385,6 +385,10 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.formationTune",
         Items =
         {
+            // ---- 站位间距（改这三个要在一起看：150² + 370² ≈ 400² 是刻意凑的） ----
+            Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m"),
+            Number("row.fWingOffset", c => c.FormationWingOffsetM, (c, v) => c.FormationWingOffsetM = v, 10, 0, 600, "m"),
+            Number("row.fStationBack", c => c.FormationStationBackM, (c, v) => c.FormationStationBackM = v, 10, 200, 1200, "m"),
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头
             Number("row.fKp", c => c.FormationKp, (c, v) => c.FormationKp = v, 0.01, 0.01, 0.50, ""),
             // 近距离比例：进入 blend 距离后从 Kp 渐变到 KpNear，调大刹车更早

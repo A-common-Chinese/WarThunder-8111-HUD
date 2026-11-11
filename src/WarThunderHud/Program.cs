@@ -190,13 +190,13 @@ public static class Program
         Check("lead pursuit too slow", LeadPursuitDeg(10, 400, 170, 45) == 0);
 
         // ---- 固定站位：站位随长机航向转、左右镜像、居中时对准 ----
-        Check("station aligned when centered", Math.Abs(WingAimDeg(0, 400, 0, 0)) < 1e-9);
+        Check("station aligned when centered", Math.Abs(WingAimDeg(0, 400, 0, 0, 150, 400, 370)) < 1e-9);
         Check("station responds to lead heading",
-            Math.Abs(WingAimDeg(0, 400, +1, 30) - WingAimDeg(0, 400, +1, 0)) > 5);
+            Math.Abs(WingAimDeg(0, 400, +1, 30, 150, 400, 370) - WingAimDeg(0, 400, +1, 0, 150, 400, 370)) > 5);
         Check("station left/right mirror at zero delta",
-            Math.Abs(WingAimDeg(0, 400, -1, 0) + WingAimDeg(0, 400, +1, 0)) < 1e-9);
+            Math.Abs(WingAimDeg(0, 400, -1, 0, 150, 400, 370) + WingAimDeg(0, 400, +1, 0, 150, 400, 370)) < 1e-9);
         Check("station center shifts with rel",
-            Math.Abs(WingAimDeg(30, 400, 0, 0) - WingAimDeg(0, 400, 0, 0)) > 5);
+            Math.Abs(WingAimDeg(30, 400, 0, 0, 150, 400, 370) - WingAimDeg(0, 400, 0, 0, 150, 400, 370)) > 5);
         Check("inside turn right/right", IsInsideTurn(+1, +10));
         Check("outside turn right/left", !IsInsideTurn(-1, +10));
         Check("inside turn left/left", IsInsideTurn(-1, -10));
@@ -454,10 +454,10 @@ public static class Program
                 }
                 else
                 {
-                    wx = wing < 0 ? -WingOffsetM : wing > 0 ? WingOffsetM : 0;
+                    wx = wing < 0 ? -cfg.FormationWingOffsetM : wing > 0 ? cfg.FormationWingOffsetM : 0;
                     wy = wing == 0
-                        ? (startFar ? -600 : -FormationTargetRangeM)
-                        : -StationBackM;
+                        ? (startFar ? -600 : -cfg.FormationRangeM)
+                        : -cfg.FormationStationBackM;
                     psiW0 = 0; vW0Kmh = vKmh;
                 }
                 double psiW = psiW0;
@@ -507,7 +507,7 @@ public static class Program
                     // 掉到 120 m 以外 → 退回 CONVERGE。迟滞 50:120，避免在边界来回切。
                     if (stagedMode)
                     {
-                        double rangeErrNow = Math.Abs(R - FormationTargetRangeM);
+                        double rangeErrNow = Math.Abs(R - cfg.FormationRangeM);
                         if (linkLost && inMaintain)
                         {
                             // 断链：拿不到 ω_L，角速度前馈失效 → 立刻回落，别在保持模式里瞎飞
@@ -541,8 +541,8 @@ public static class Program
                         // 目标不是「指向某个点」，而是让 LOS 角稳定在站位对应的值上：
                         //   ω_W = ω_L + k·(rel − targetRel)
                         // 第一项是前馈（长机转多少我跟多少，即时），第二项才是偏差修正。
-                        double sideW = wing * WingOffsetM;
-                        double backW = wing == 0 ? -FormationTargetRangeM : -StationBackM;
+                        double sideW = wing * cfg.FormationWingOffsetM;
+                        double backW = wing == 0 ? -cfg.FormationRangeM : -cfg.FormationStationBackM;
                         double stBrg = Math.Atan2(sideW, backW) * 180.0 / Math.PI;      // 站位点相对长机（机体系）
                         double targetRel = NormalizeDeg(stBrg + 180.0 + (psiL - psiW)); // 长机相对我方的目标方位
                         double errAng = NormalizeDeg(rel - targetRel);
@@ -561,7 +561,8 @@ public static class Program
                         // 站位点自带切向分量 ω×r，外圈该加速、内圈该减速是几何直接给出的。
                         double aheadV = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
                         guide = NormalizeDeg(WingAimDeg(rel, R, wing,
-                            NormalizeDeg(psiL - psiW)) + aheadV);
+                            NormalizeDeg(psiL - psiW), cfg.FormationWingOffsetM,
+                            cfg.FormationRangeM, cfg.FormationStationBackM) + aheadV);
                         ahead0 = aheadV;
 
                         double om = omegaNow * Math.PI / 180.0;                    // rad/s，正 = 右转
@@ -594,7 +595,8 @@ public static class Program
                         else
                         {
                             double ahead = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
-                            guide = NormalizeDeg(WingAimDeg(rel, R, wing, hdgErr) + ahead);
+                            guide = NormalizeDeg(WingAimDeg(rel, R, wing, hdgErr, cfg.FormationWingOffsetM,
+                            cfg.FormationRangeM, cfg.FormationStationBackM) + ahead);
                             if (i == 0) ahead0 = ahead;
                         }
                     }
@@ -616,7 +618,7 @@ public static class Program
                     bool chasing = R > 450 || (!useOmega && aligning);
                     if (omegaMode || Math.Abs(rel) < 50 || chasing)
                     {
-                        double err = R - FormationTargetRangeM;
+                        double err = R - cfg.FormationRangeM;
                         double pdt = guideIntegralLastT > 0
                             ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5) : 0;
                         guideIntegralLastT = nowS;
@@ -2403,7 +2405,7 @@ public static class Program
                     double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
                     // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
                     // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
-                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds);
+                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds, cfg.FormationRangeM);
 
                     if (wing.RangeM < 200)
                     {
@@ -2511,7 +2513,7 @@ public static class Program
                 {
                     // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
                     // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
-                    double err = lead.RangeM - FormationTargetRangeM;
+                    double err = lead.RangeM - cfg.FormationRangeM;
 
                     double nowS = snap.ElapsedSeconds;
                     double dt = guideIntegralLastT > 0
@@ -2583,7 +2585,9 @@ public static class Program
 
                 // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
                 double guideTurn = WingAimDeg(lead.RelBearingDeg, lead.RangeM,
-                                              cfg.FormationWingSide, leadHdgDelta);
+                                              cfg.FormationWingSide, leadHdgDelta,
+                                              cfg.FormationWingOffsetM, cfg.FormationRangeM,
+                                              cfg.FormationStationBackM);
                 // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
                 // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
                 double leadRateShown = 0;
@@ -2614,7 +2618,7 @@ public static class Program
                 }
 
                 // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
-                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds);
+                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds, cfg.FormationRangeM);
 
                 // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
                 // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
@@ -2627,7 +2631,7 @@ public static class Program
                 {
                     opt.TargetHeadingDeg = NormalizeDeg(navHeading + guideTurn);
                     opt.Guide = new FormationLead(guideTurn, lead.RangeM,
-                                             FormationTargetRangeM, action, deltaKmh,
+                                             cfg.FormationRangeM, action, deltaKmh,
                                              leadRateShown, leadFromLink, turnG, overG,
                                              snap.TasKmh);
                 }
@@ -3108,7 +3112,6 @@ public static class Program
     private static readonly System.Collections.Generic.List<(double T, double R)> closingHistory = new();
 
     // 编队引导的目标间距：最终要稳定在友机后方 400 m。
-    private const double FormationTargetRangeM = 400;
 
     // 油门建议的平滑状态。closing 本身有噪声，不滤波的话数字会在几百 km/h 之间跳。
     private static double guideDeltaSmooth;
@@ -3221,11 +3224,11 @@ public static class Program
     /// <para>到位线 40 m、需持续 2 s：40 m 比 sim 里的 60 m 更严，因为「编队完成」是给长机的承诺，
     /// 一旦显示他就会开始机动。</para>
     /// </summary>
-    private static void UpdateFormationStage(double rangeM, double nowS)
+    private static void UpdateFormationStage(double rangeM, double nowS, double targetRangeM)
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        double err = Math.Abs(rangeM - FormationTargetRangeM);
+        double err = Math.Abs(rangeM - targetRangeM);
         if (formationStage == FormationStage.Converge)
         {
             if (err <= 40)
@@ -3272,9 +3275,7 @@ public static class Program
     }
 
     /// <summary>固定站位的横向偏移（m）：左右僚机在长机左右各 150 m。</summary>
-    private const double WingOffsetM = 150;
     /// <summary>左右僚机站位：长机后方 370 m（与 150 m 横向合起来斜距 ≈ 400 m）。</summary>
-    private const double StationBackM = 370;
     /// <summary>站位瞄准的最小前向距离（m）：见 WingAimDeg 里的原点病态说明。</summary>
     private const double AimForwardMinM = 200;
 
@@ -3285,7 +3286,8 @@ public static class Program
     /// 退化为本机航向系。站位点斜距都 ≈ 400 m，与 PID 目标间距一致，引导与油门不打架。</para>
     /// </summary>
     private static double WingAimDeg(double relBearingDeg, double rangeM, int wingSide,
-                                     double leadHeadingDeltaDeg = 0)
+                                     double leadHeadingDeltaDeg,
+                                     double wingOffsetM, double targetRangeM, double stationBackM)
     {
         double rad = relBearingDeg * Math.PI / 180.0;
         double delta = leadHeadingDeltaDeg * Math.PI / 180.0;
@@ -3294,8 +3296,8 @@ public static class Program
         // 长机机体系的「右」「前」在本机航向系的方向
         double rx = Math.Cos(delta), ry = -Math.Sin(delta);
         double fx = Math.Sin(delta), fy = Math.Cos(delta);
-        double side = wingSide * WingOffsetM;
-        double back = wingSide == 0 ? -FormationTargetRangeM : -StationBackM;
+        double side = wingSide * wingOffsetM;
+        double back = wingSide == 0 ? -targetRangeM : -stationBackM;
         double sx = lx + side * rx + back * fx;
         double sy = ly + side * ry + back * fy;
         // 僚机接近站位时 sy→0，atan2(sx, sy) 在原点附近是病态的：t=0 实测 sx=sy=0
@@ -3566,7 +3568,7 @@ public static class Program
             }
             else
             {
-                opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90,
+                opt.Guide = new FormationLead(12, 820, pcfg.FormationRangeM, FormationAction.Decelerate, -90,
                                               0, false, 0, false, 640);
             }
 
