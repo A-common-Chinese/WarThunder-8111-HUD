@@ -1,5 +1,5 @@
 {
-  "_version": 13,
+  "_version": 14,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -315,5 +315,49 @@
   "row.formationWarnG": {
     "zh": "转弯告警阈值：长机转弯的横向过载超过这个 G 值，僚机的引导上方就显示「转弯过急」，表示队形跟不住了。默认 1.5 G（600 km/h 下约 5.1°/s）。实测：1.0 G 内外圈偏差 5–15 m（几乎完美），1.5 G 偏差 21–50 m（刚开始偏），2.0 G 内圈偏差 144 m（断崖）。调小 = 更早提醒，调大 = 更晚。",
     "en": "Turn warning threshold: when the lead's lateral load exceeds this G, the wingman sees TURN TOO TIGHT above the guidance, meaning the formation can no longer be held. Default 1.5 G (~5.1 deg/s at 600 km/h). Measured: 1.0 G keeps 5-15 m error, 1.5 G 21-50 m, 2.0 G the inner wing falls off to 144 m. Lower = earlier warning."
+  },
+  "row.fKp": {
+    "zh": "外环比例：距离误差换算成「期望接近率」。默认 0.04。调大追得急、容易冲过头；调小追得慢、汇合更稳。改之前先确认不是在追一个十几公里外的 AI。",
+    "en": "Outer loop gain: distance error to desired closing rate. Default 0.04. Higher closes faster but overshoots; lower is gentler."
+  },
+  "row.fKpNear": {
+    "zh": "近距比例：进入「远近融合距离」后，增益从外环比例渐变成这个值。默认 0.20。调大刹车更早、末段更稳；调小末段更软。",
+    "en": "Near gain used past the blend distance. Default 0.20. Higher brakes earlier and steadies the last few hundred metres."
+  },
+  "row.fKi": {
+    "zh": "积分项，单位是千分之一：显示 6 表示 0.006。默认 6。作用是把稳态误差磨掉，给大了会来回振荡，一般不要超过 15。",
+    "en": "Integral term in thousandths: 6 means 0.006. Default 6. Removes steady-state error; much above 15 it oscillates."
+  },
+  "row.fKv": {
+    "zh": "接近率增益：实际接近率与期望接近率之差换算成油门。默认 1.0。调大油门反应更猛。",
+    "en": "Closing-rate gain: difference between wanted and actual closing rate becomes throttle. Default 1.0."
+  },
+  "row.fBlendM": {
+    "zh": "远近融合距离：距离误差超过它时用外环比例，接近后渐变到近距比例。默认 800 m。",
+    "en": "Blend distance: above it the outer gain applies, below it fades to the near gain. Default 800 m."
+  },
+  "row.fTau": {
+    "zh": "油门指令的低通时间常数。默认 1.2 s。调大更平滑但更迟钝；小于 0.5 会让油门数字跳。",
+    "en": "Low-pass time constant for throttle guidance. Default 1.2 s. Larger is smoother but slower; below 0.5 the number jitters."
+  },
+  "row.fLeadFeed": {
+    "zh": "转弯提前量总开关：打开后机头指向长机的未来位置。侧位僚机不受影响（站位点本身已含转弯预测）。",
+    "en": "Lead turn feed: points the nose at where the lead will be. Side slots are unaffected - their station already rotates with the lead."
+  },
+  "row.fLeadMin": {
+    "zh": "提前量起作用的转向率门槛。默认 1.5 °/s。低于它不叠加，免得平飞时指针乱动。",
+    "en": "Turn-rate threshold before lead feed kicks in. Default 1.5 deg/s, so straight flight stays quiet."
+  },
+  "row.fLeadMax": {
+    "zh": "提前量上限。默认 45°。防止低速大转向率时把机头指到侧面。",
+    "en": "Lead angle cap. Default 45 deg, stops the nose being pointed sideways at low speed and high turn rate."
+  },
+  "row.fMaxRatio": {
+    "zh": "速度前馈上限（相对长机真空速）。默认 1.30。试过 1.60：15°/s 外圈变好，但 10°/s 内圈从 +71 翻成 −77，未采纳。",
+    "en": "Speed feed upper bound relative to the lead's TAS. Default 1.30. 1.60 was tried: better outer at 15 deg/s but the inner slot flipped +71 to -77."
+  },
+  "row.fMinRatio": {
+    "zh": "速度前馈下限。默认 0.80。试过 0.50：10°/s 内圈减过头，未采纳。",
+    "en": "Speed feed lower bound. Default 0.80. 0.50 was tried and over-braked the inner slot at 10 deg/s."
   }
 }

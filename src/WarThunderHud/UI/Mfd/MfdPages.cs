@@ -126,7 +126,8 @@ internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), DataLink(), Airframes(), Diag(), Snapshots(),
+        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), DataLink(), FormationTune(),
+        Airframes(), Diag(), Snapshots(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set) =>
@@ -369,6 +370,43 @@ internal static class MfdPages
                 L10n.Alerts = Lang.En;
                 L10n.FollowSystem = false;
             }),
+        },
+    };
+
+    /// <summary>
+    /// 编队调参页：僚机的制导增益与包线。
+    /// <para>这些数**不该经常动**，所以单独一页、不混在常用设置里。改动前先看面板 HELP
+    /// （每行都有实测依据）；改坏了想回默认，把数字改成帮助里写的默认值即可。</para>
+    /// </summary>
+    private static MfdPage FormationTune() => new()
+    {
+        TitleKey = "page.formationTune",
+        MenuKey = "page.formationTune",
+        MenuHintKey = "menu.hint.formationTune",
+        Items =
+        {
+            // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头
+            Number("row.fKp", c => c.FormationKp, (c, v) => c.FormationKp = v, 0.01, 0.01, 0.50, ""),
+            // 近距离比例：进入 blend 距离后从 Kp 渐变到 KpNear，调大刹车更早
+            Number("row.fKpNear", c => c.FormationKpNear, (c, v) => c.FormationKpNear = v, 0.01, 0.05, 1.00, ""),
+            // 积分：消除稳态误差，给大了会振荡
+            // 0.006 在两位小数里显示不出来，所以按千分之一为单位编辑（6 = 0.006）
+            Number("row.fKi", c => c.FormationKi * 1000, (c, v) => c.FormationKi = v / 1000.0, 1, 1, 50, "‰"),
+            // 接近率环增益
+            Number("row.fKv", c => c.FormationKv, (c, v) => c.FormationKv = v, 0.1, 0.2, 3.0, ""),
+            // 远近增益融合距离
+            Number("row.fBlendM", c => c.FormationBlendM, (c, v) => c.FormationBlendM = v, 50, 100, 2000, "m"),
+            // 油门指令的低通时间常数：调大更稳但更慢
+            Number("row.fTau", c => c.FormationGuideTauS, (c, v) => c.FormationGuideTauS = v, 0.1, 0.2, 3.0, "s"),
+            // 转弯提前量总开关
+            Toggle("row.fLeadFeed", c => c.FormationLeadFeed, (c, v) => c.FormationLeadFeed = v),
+            // 提前量起作用的转向率门槛
+            Number("row.fLeadMin", c => c.FormationLeadMinRate, (c, v) => c.FormationLeadMinRate = v, 0.1, 0.2, 5.0, "°/s"),
+            // 提前量上限
+            Number("row.fLeadMax", c => c.FormationLeadMaxDeg, (c, v) => c.FormationLeadMaxDeg = v, 1, 5, 45, "°"),
+            // 速度前馈上下限（相对长机真空速的倍数）
+            Number("row.fMaxRatio", c => c.FormationWingMaxRatio, (c, v) => c.FormationWingMaxRatio = v, 0.05, 1.00, 2.00, "×"),
+            Number("row.fMinRatio", c => c.FormationWingMinRatio, (c, v) => c.FormationWingMinRatio = v, 0.05, 0.50, 1.00, "×"),
         },
     };
 

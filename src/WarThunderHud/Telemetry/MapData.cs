@@ -62,6 +62,13 @@ public sealed class MapData : IDisposable
     /// </summary>
     public string LeadIconFilter { get; set; } = "";
 
+    /// <summary>
+    /// 按机型过滤**之前**这一帧识别到的友军数量。
+    /// <para>用来区分「附近根本没有友军」和「有友军但机型都不匹配」——
+    /// 两种情况在界面上都是"什么都没画"，但对飞行员是两件事：一个该等，一个该改设置。</para>
+    /// </summary>
+    public int FriendlyTotal { get; private set; }
+
     /// <summary>地图上的一架友机：位置（0..1 归一化）、航向单位向量、图标类别。</summary>
     public readonly record struct MapAircraft(double X, double Y, double Dx, double Dy, string Icon);
 
@@ -144,6 +151,7 @@ public sealed class MapData : IDisposable
 
         (double, double)? self = null;
         int aircraftCount = 0;
+        FriendlyTotal = 0;
         var units = new List<(double X, double Y, string Icon, bool Friendly)>();
         var friendlies = new List<MapAircraft>();
         var fields = new List<MapPoint>();
@@ -169,6 +177,7 @@ public sealed class MapData : IDisposable
                 // CollectFriendlies 由编队开关控制：关掉时连这一步解析都不做。
                 if (CollectFriendlies && IsFriendlyColor(e))
                 {
+                    FriendlyTotal++;
                     // 指定了长机图标就只收匹配的：多一架友军也不会把引导带偏
                     if (LeadIconFilter.Length == 0
                         || icon.Equals(LeadIconFilter, StringComparison.OrdinalIgnoreCase))

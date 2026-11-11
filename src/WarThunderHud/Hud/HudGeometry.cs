@@ -124,6 +124,12 @@ public sealed class HudOptions
     public (double CurrentKmh, double TargetKmh, double DeltaKmh)? LeadSpeedBar { get; set; }
 
     /// <summary>
+    /// 编队引导的提示行：找不到长机时说明原因是哪一种。空 = 不画。
+    /// <para>没有它的话，条件不满足时界面上一个像素都不会变，飞行员只能猜是功能坏了还是设置错了。</para>
+    /// </summary>
+    public string FormationHint { get; set; } = "";
+
+    /// <summary>
     /// 系统希望我飞的航向（度）。航向带上画一个琥珀色三角指过去。
     /// <para>nil = 不画（没有目标航向时，比如长机开了全向跟随）。</para>
     /// </summary>
@@ -748,6 +754,18 @@ public sealed class HudGeometry
                              Math.Abs(dvKmh) >= 5);
 
             return;
+        }
+
+        // ---- 找不到长机：说明是哪一种，别让飞行员对着空屏猜 ----
+        if (_opt.FormationHint.Length > 0)
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.FormationHint, Align = HudAlign.Center,
+                FontSize = font * 1.15, Color = _opt.WarnColor,
+                // 7.6°：FPM 最高到 6.7°（迎角上限 6 + 半径 0.7），再往上会贴字
+                Points = { (cx, cy + 7.6 * pxDeg) },
+            });
         }
 
         if (_opt.Guide is not { } g) return;

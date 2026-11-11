@@ -2268,6 +2268,7 @@ public static class Program
         opt.LeadSpeedBar = null;       // 长机的速度条数据，只有长机分支会填
         opt.TargetHeadingDeg = null;   // 航向带上的琥珀三角，只有确定目标航向时才画
         opt.FormationNotice = "";      // 每帧重置，只有状态机判定「刚到位」时才置上
+        opt.FormationHint = "";        // 同上：只有「找不到长机」时才填
 
         // ---- 编队解除 / 恢复（按一下切换，边沿触发）----
         // 解除后不再画引导，飞行员可以自由飞；再按一下重新建立，之后重新判定到位。
@@ -2581,6 +2582,20 @@ public static class Program
                 double turnG = TurnLoadG(leadRate, snap.TasKmh);
                 bool overG = cfg.FormationWarnG > 0.05 && turnG >= cfg.FormationWarnG;
 
+                // ---- 两阶段：收敛阶段给明确指令，保持阶段只在小偏差时才开口 ----
+                // HUD 是显示层，sim 里那套「角速度前馈」没法直接搬（飞行员不是自动驾驶），
+                // 能落地的是**指令的松紧**：已经在 40 m 内的时候，指针还一直在动反而看不清，
+                // 所以保持阶段把小偏差直接归零，让界面安静下来；真偏了照样报。
+                if (formationStage == FormationStage.Maintain)
+                {
+                    if (Math.Abs(guideTurn) < 5.0) guideTurn = 0;      // 5° ≈ 400 m 上 35 m 横向
+                    if (Math.Abs(deltaKmh) < 20.0)
+                    {
+                        deltaKmh = 0;
+                        action = FormationAction.Hold;
+                    }
+                }
+
                 // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
                 UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds);
 
@@ -2604,6 +2619,15 @@ public static class Program
             {
                 opt.Guide = null;
                 ResetGuideState();
+
+                // 找不到长机：分两种情况说清。长机模式有自己的状态行（guide.lead.none），不重复。
+                if (formationOn && !cfg.LeadMode)
+                {
+                    string filter = (cfg.LeadIcon ?? "").Trim();
+                    opt.FormationHint = filter.Length > 0 && map.FriendlyTotal > 0
+                        ? string.Format(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noMatch"), filter)
+                        : WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noFriendly");
+                }
             }
         }
 
@@ -3515,6 +3539,9 @@ public static class Program
                                                   gLeadRate, gFromLink, gTurnG, gTurnG >= 1.5, gCur);
                     // 样张也画目标航向三角：当前航向 + 引导转角
                     opt.TargetHeadingDeg = ((snap.HeadingDeg + gTurn) % 360 + 360) % 360;
+                    // 「找不到长机」提示样张：WT_PREVIEW_HINT="无 Fighter 型友军 · 检查长机机型"
+                    if (Environment.GetEnvironmentVariable("WT_PREVIEW_HINT") is { Length: > 0 } hintSpec)
+                        opt.FormationHint = hintSpec;
                     // 第 9 段：预览「编队完成」提示（"set"）
                     if (g.Length >= 9 && g[8].Trim() == "set")
                         opt.FormationNotice = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.formationDone");

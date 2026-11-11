@@ -262,6 +262,21 @@ public static class L10n
         ["opt.wingTrail"] = ("尾随", "TRAIL"),
         ["opt.wingRight"] = ("右僚机", "RIGHT WING"),
         ["row.wingSide"] = ("僚机侧位", "WING POSITION"),
+
+        // ---- 编队调参页（僚机制导增益，平时不用动） ----
+        ["page.formationTune"] = ("编队调参", "FORMATION TUNE"),
+        ["menu.hint.formationTune"] = ("僚机制导增益与包线", "WINGMAN GAINS"),
+        ["row.fKp"] = ("外环比例", "OUTER KP"),
+        ["row.fKpNear"] = ("近距比例", "NEAR KP"),
+        ["row.fKi"] = ("积分(‰)", "INTEGRAL (‰)"),
+        ["row.fKv"] = ("接近率增益", "CLOSING KV"),
+        ["row.fBlendM"] = ("远近融合距离", "BLEND DIST"),
+        ["row.fTau"] = ("油门平滑", "THROTTLE TAU"),
+        ["row.fLeadFeed"] = ("转弯提前量", "LEAD TURN FEED"),
+        ["row.fLeadMin"] = ("提前量门槛", "LEAD MIN RATE"),
+        ["row.fLeadMax"] = ("提前量上限", "LEAD MAX ANG"),
+        ["row.fMaxRatio"] = ("速度上限倍率", "SPEED MAX RATIO"),
+        ["row.fMinRatio"] = ("速度下限倍率", "SPEED MIN RATIO"),
         ["row.formationWarnG"] = ("转弯告警阈值", "TURN WARN G"),
 
         ["opt.on"] = ("开", "ON"),
@@ -356,6 +371,9 @@ public static class L10n
         ["guide.turnGWarn"] = ("{0:0.0}G 转弯过急", "{0:0.0}G TOO TIGHT"),
         // 编队到位 / 解除：给长机看的「可以开始机动了」信号
         ["guide.formationDone"] = ("编队完成", "FORMATION SET"),
+        // 找不到长机的两种原因：说清是哪一种，否则空屏无从判断
+        ["formation.noFriendly"] = ("附近没有友军", "NO FRIENDLY NEARBY"),
+        ["formation.noMatch"] = ("无 {0} 型友军 · 检查长机机型", "NO {0} CONTACT · CHECK LEAD TYPE"),
         ["guide.formationOff"] = ("编队已解除", "FORMATION OFF"),
         ["guide.lead.nolink"] = ("无数据链", "NO LINK"),
         ["splash"] = ("击落", "SPLASH"),
