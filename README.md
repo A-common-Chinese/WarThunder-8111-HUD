@@ -349,6 +349,10 @@ interception, no automation. It never draws enemy positions (no ESP).
 
 Current version **v0.3.20** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
+> **The interface defaults to Chinese.** Press `F1` → `LANGUAGE` to switch the panel, the HUD and
+> the alerts to English — step-by-step with a screenshot under
+> [First run](#first-run-switch-the-interface-to-english).
+
 ## Screenshots
 
 | Third-person HUD | Close view |
@@ -509,6 +513,27 @@ installation is required.
 - First run writes `hud-config.json` next to the exe
 - Press `F11` twice to exit (a single press is ignored to avoid accidents)
 - Press `F1` to open the settings panel
+
+### First run: switch the interface to English
+
+The panel and the on-screen HUD both default to **Chinese**. Everything is switchable from the
+panel itself:
+
+1. Press **F1** to open the panel
+2. Select **LANGUAGE** — 6th module in the main menu (right column, third row)
+3. Set **PANEL LANGUAGE** (bezel button labels), **SCREEN LANGUAGE** (the on-screen HUD) and
+   **ALERT LANGUAGE** (`STALL`, `PULL UP`, `SPLASH`…) to **ENGLISH**
+4. Press **SAVE** (bottom right) so it is written to `hud-config.json`
+
+![Language module](docs/screenshots/mfd-language-en.png)
+
+Notes:
+
+- `CONFIRM` cycles a value forward, the **right mouse button** steps it backwards
+- `FOLLOW SYSTEM` (off by default) takes the language from Windows instead
+- `RESET LANGUAGES` puts all three back to Chinese
+- The three settings are independent — keeping the bezel in English and the HUD in Chinese works
+  fine and is what many players do
 
 ## Hotkeys
 
