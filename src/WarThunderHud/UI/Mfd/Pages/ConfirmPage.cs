@@ -97,18 +97,16 @@ internal sealed class ConfirmPage : MfdPageBase
         g.DrawString(sub, small, muted, glass.Left + glass.Width / 2 - sw / 2, cy + 4 * s,
                      StringFormat.GenericTypographic);
 
-        var rowH = 44 * s;
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
         for (var i = 0; i < 2; i++)
         {
             var row = _layout.ListRowRect(0, 2 + i);   // 侧键 2/3 竖排
-            var btn = new System.Drawing.RectangleF(row.X, row.Y, row.Width, row.Height);
-            var yy = btn.Y;
+            var yy = row.Y;
             var selected = i == Selected;
             if (selected)
             {
+                // 高亮块由同一份矩形外扩得到，不再单独写 44*s / colW
                 using var hi = new SolidBrush(i == 0 ? MfdTheme.Green : MfdTheme.GreenDim);
-                g.FillRectangle(hi, left - 6 * s, yy, colW + 12 * s, rowH);
+                g.FillRectangle(hi, row.X - 6 * s, row.Y, row.Width + 12 * s, row.Height);
             }
             using var fgBrush = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
             var text = L10n.Get(LangScope.Screen, i == 0 ? "confirm.ok" : "confirm.cancel");

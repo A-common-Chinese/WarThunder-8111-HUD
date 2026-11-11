@@ -26,7 +26,9 @@ internal sealed class MfdPageLayout
     public float Scale => _s;
     public float Pad => _pad;
 
-    public const float RowHeightDip = 44f;
+    /// <summary>行高（DIP）。必须与历史上真正画出来的高度一致，否则「画在哪里」和
+    /// 「点在哪里」会差几个像素 —— 这里统一取 40，与模块页/主菜单原有绘制一致。</summary>
+    public const float RowHeightDip = 40f;
 
     /// <summary>
     /// Physical side key (0-4 = left column top-down, 5-9 = right column) to the row-major cell
@@ -41,7 +43,9 @@ internal sealed class MfdPageLayout
     public RectangleF ListRowRect(int column, int row)
     {
         var colW = (Glass.Width - _pad * 2) / 2 - 34 * _s;
-        var x = column == 0 ? Glass.Left + _pad : Glass.Left + Glass.Width / 2 + _pad * 0.4f;
+        // 两列都按同一个内边距缩进：右列曾经写成 _pad * 0.4，比实际绘制的 18*s 窄 10.8*s，
+        // 导致命中区域向左多出一块。
+        var x = column == 0 ? Glass.Left + _pad : Glass.Left + Glass.Width / 2 + _pad;
         var btn = _layout.SideButtons[Math.Clamp(column * 5 + row, 0, _layout.SideButtons.Length - 1)];
         var h = RowHeightDip * _s;
         return new RectangleF(x, btn.Y + btn.Height / 2 - h / 2, colW, h);

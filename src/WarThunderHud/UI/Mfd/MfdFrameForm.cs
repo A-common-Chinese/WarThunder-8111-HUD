@@ -309,7 +309,7 @@ public sealed class MfdFrameForm : Form
 
         switch (_mode)
         {
-            case Mode.Menu: DrawMenu(g, s, glass, left, pad); break;
+            case Mode.Menu: DrawMenu(g, s); break;
             case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.TextEdit: _textPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
@@ -319,7 +319,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            default: DrawItems(g, s, glass, left, pad); break;
+            default: DrawItems(g, s); break;
         }
 
         using var hint = MfdTheme.MonoAt(14f * s);
@@ -341,10 +341,9 @@ public sealed class MfdFrameForm : Form
             glass.Left + glass.Width / 2 - g.MeasureString(hintText, hint).Width / 2, glass.Bottom - 20 * s);
     }
 
-    private void DrawMenu(System.Drawing.Graphics g, float s, RectangleF glass, float left, float pad)
+    private void DrawMenu(System.Drawing.Graphics g, float s)
     {
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
+        var pageLayout = new MfdPageLayout(_layout, s);
         using var name = MfdTheme.CjkAt(24f * s);
         using var hintF = MfdTheme.MonoAt(13f * s);
 
@@ -356,10 +355,11 @@ public sealed class MfdFrameForm : Form
             var i = first + cell;
             if (i >= _pages.Count) break;
 
-            var btn = _layout.SideButtons[(cell % 2) * 5 + cell / 2];
-            var cy = btn.Y + btn.Height / 2;
-            var x = cell % 2 == 0 ? left : glass.Left + glass.Width / 2 + 18 * s;
-            var y = cy - rowH / 2;
+            var row = pageLayout.ListRowRect(cell % 2, cell / 2);
+            var x = row.X;
+            var y = row.Y;
+            var rowH = row.Height;
+            var colW = row.Width;
             var selected = i == _menuSel;
 
             if (selected)
@@ -384,21 +384,23 @@ public sealed class MfdFrameForm : Form
         }
     }
 
-    private void DrawItems(System.Drawing.Graphics g, float s, RectangleF glass, float left, float pad)
+    private void DrawItems(System.Drawing.Graphics g, float s)
     {
         var page = CurrentPage!;
         var offset = _itemPage * 10;
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var rowH = 40 * s;
+        // 几何只从 MfdPageLayout 取：画和点用同一份矩形（以前这里自己算了一遍，
+        // 与 ListRowRect 的行高/右列缩进差几个像素）。
+        var pageLayout = new MfdPageLayout(_layout, s);
         using var label = MfdTheme.CjkAt(24f * s);
         using var value = MfdTheme.MonoBoldAt(22f * s);
 
         for (var i = 0; i < 10; i++)
         {
-            var btn = _layout.SideButtons[(i % 2) * 5 + i / 2];
-            var cy = btn.Y + btn.Height / 2;
-            var x = i % 2 == 0 ? left : glass.Left + glass.Width / 2 + 18 * s;
-            var y = cy - rowH / 2;
+            var row = pageLayout.ListRowRect(i % 2, i / 2);
+            var x = row.X;
+            var y = row.Y;
+            var rowH = row.Height;
+            var colW = row.Width;
             var selected = (offset + i) == _itemSel;
 
             if (selected)
@@ -459,7 +461,7 @@ public sealed class MfdFrameForm : Form
         var by = glass.Top + glass.Height * 0.36f;
         g.DrawString(shown, mono, green, cx - w / 2, by, StringFormat.GenericTypographic);
 
-        DrawDecisionRows(g, s, glass, pad);
+        DrawDecisionRows(g, s);
     }
 
     /// <summary>HELP 键：进入帮助页（再按一次退出）。页面的内容/翻页/选中都在 HelpPage 里。</summary>
@@ -497,26 +499,24 @@ public sealed class MfdFrameForm : Form
     /// 键位捕获页底部的 确认 / 取消 两行（对应左侧第 3、4 个键）。捕获页没有「选中项」，
     /// 第一行恒为主动作，所以这里不再依赖任何遗留选中字段。
     /// </summary>
-    private void DrawDecisionRows(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
+    private void DrawDecisionRows(System.Drawing.Graphics g, float s)
     {
-        var rowH = 44 * s;
-        var colW = (glass.Width - pad * 2) / 2 - 34 * s;
-        var left = glass.Left + pad;
+        var pageLayout = new MfdPageLayout(_layout, s);
         using var big = MfdTheme.CjkAt(28f * s);
 
         for (var i = 0; i < 2; i++)
         {
-            var btn = _layout.SideButtons[2 + i];
-            var yy = btn.Y + btn.Height / 2 - rowH / 2;
+            // 侧键 2 / 3 = 左列第 3、4 行（与 ConfirmPage 的 ListRowRect(0, 2 + i) 完全同一处）
+            var row = pageLayout.ListRowRect(0, 2 + i);
             var primary = i == 0;         // 第一行 = 主动作（确认），第二行只是取消键提示
             if (primary)
             {
                 using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, left - 6 * s, yy, colW + 12 * s, rowH);
+                g.FillRectangle(hi, row.X - 6 * s, row.Y, row.Width + 12 * s, row.Height);
             }
             using var fgBrush = new SolidBrush(primary ? MfdTheme.Dark : MfdTheme.Text);
             var text = L10n.Get(LangScope.Screen, primary ? "confirm.ok" : "confirm.cancel");
-            g.DrawString(text, big, fgBrush, left + 20 * s, yy + 2 * s, StringFormat.GenericTypographic);
+            g.DrawString(text, big, fgBrush, row.X + 20 * s, row.Y + 2 * s, StringFormat.GenericTypographic);
         }
     }
 
@@ -735,19 +735,14 @@ public sealed class MfdFrameForm : Form
         cell = -1;
         if (!_layout.Glass.Contains(p)) return false;
         var s = _layout.Width / 1330f;
-        var left = _layout.Glass.Left + 18 * s;
-        var rightStart = _layout.Glass.Left + _layout.Glass.Width / 2 + 18 * s;
-        var rowH = 40 * s;
+        var pageLayout = new MfdPageLayout(_layout, s);
 
         for (var i = 0; i < 10; i++)
         {
-            var col = i % 2;
-            var row = i / 2;
-            var btn = _layout.SideButtons[col * 5 + row];
-            var cy = btn.Y + btn.Height / 2;
-            var x0 = col == 0 ? left - 6 * s : rightStart - 6 * s;
-            var x1 = x0 + (_layout.Glass.Width - 36 * s) / 2 - 22 * s;
-            if (p.Y >= cy - rowH / 2 && p.Y <= cy + rowH / 2 && p.X >= x0 && p.X <= x1)
+            // 与绘制同源；横向多放 6*s 是给高亮块的外扩量（绘制时也是 x-6 .. +12 宽）
+            var row = pageLayout.ListRowRect(i % 2, i / 2);
+            var hit = System.Drawing.RectangleF.Inflate(row, 6 * s, 0);
+            if (hit.Contains(p))
             {
                 cell = i;
                 return true;
