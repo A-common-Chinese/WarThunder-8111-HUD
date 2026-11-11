@@ -30,6 +30,9 @@ public sealed class MfdFrameForm : Form
     private readonly HudConfig _cfg;
     private readonly HudConfig _work;
     private readonly List<MfdPage> _pages;
+    // 每个一级模块一个页面对象：绘制/命中/选中/翻页都在页面里，表单只留下「确认之后做什么」。
+    // 与 _pages 同索引、同顺序。
+    private readonly List<Pages.MfdItemsPage> _itemPages = new();
 
     private Mode _mode = Mode.Menu;
     private readonly Pages.MfdNavigator _nav = new();
@@ -41,13 +44,11 @@ public sealed class MfdFrameForm : Form
     private Pages.SnapshotsPage? _snapPageUI;
     private int _page;
     private int _menuSel;
-    private int _itemSel;
     private int _menuPageIdx;              // 主菜单页号（每页 10 个模块，与模块内页号独立）
     private MfdItem? _pendingAction;
     private bool _dirty;
     private bool _closeConfirm;
     private bool _forceClose;
-    private int _itemPage;                 // 当前模块内的页号（每页 10 格）
     private (ButtonKind Kind, int Index) _pressed = (ButtonKind.None, -1);
     private string? _toast;
     private string _captureText = "";      // 键位捕获结果
@@ -112,6 +113,15 @@ public sealed class MfdFrameForm : Form
         TopMost = true;
         _layout = _geo.ScaleTo(panelW, panelH);
         ApplySilhouetteRegion(panelW, panelH);
+
+        // 一级模块页对象：几何与配置都用委托/共享实例，页面自己不会去碰别的东西。
+        var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
+        foreach (var data in _pages)
+        {
+            var itemsPage = new Pages.MfdItemsPage(data, () => _work, pageLayout, Activate);
+            itemsPage.Build();          // 先造一遍按钮，首次按键就能路由
+            _itemPages.Add(itemsPage);
+        }
     }
 
     private static Bitmap LoadBezel()
@@ -126,9 +136,14 @@ public sealed class MfdFrameForm : Form
 
     private MfdPage? CurrentPage => _page >= 0 && _page < _pages.Count ? _pages[_page] : null;
 
+    /// <summary>当前模块的页面对象 —— 绘制、命中、选中、翻页都问它。</summary>
+    private Pages.MfdItemsPage? ItemsPage =>
+        _page >= 0 && _page < _itemPages.Count ? _itemPages[_page] : null;
+
     /// <summary>当前占着面板的二级页面（没有就是 null）。</summary>
     private Pages.MfdPageBase? ActivePage => _mode switch
     {
+        Mode.Items => ItemsPage,
         Mode.Confirm => _confirmPage,
         Mode.EditNumber => _editPage,
         Mode.TextEdit => _textPage,
@@ -160,15 +175,8 @@ public sealed class MfdFrameForm : Form
         return cmd != null && page.Handle(cmd);
     }
 
-    private MfdItem? SelectedItem
-    {
-        get
-        {
-            var page = CurrentPage;
-            if (page == null || _itemSel < 0 || _itemSel >= page.Items.Count) return null;
-            return page.Items[_itemSel];
-        }
-    }
+    /// <summary>选中项由当前模块页面持有（表单不再存一份副本）。</summary>
+    private MfdItem? SelectedItem => ItemsPage?.SelectedItem;
 
     private static RectangleF InsetRect(RectangleF r, float d) =>
         new(r.X + d, r.Y + d, Math.Max(2, r.Width - d * 2), Math.Max(2, r.Height - d * 2));
@@ -299,7 +307,7 @@ public sealed class MfdFrameForm : Form
         var (pageNo, pages) = _mode switch
         {
             Mode.Menu => (_menuPageIdx + 1, (_pages.Count + 9) / 10),
-            Mode.Items when CurrentPage != null => (_itemPage + 1, (CurrentPage.Items.Count + 9) / 10),
+            Mode.Items when ItemsPage != null => (ItemsPage.PageIndex + 1, ItemsPage.PageCount),
             _ => (1, 1),
         };
         var ver = (pages > 1 ? pageNo + "/" + pages + "  " : "") + "v" + Program.ShortVersion;
@@ -317,7 +325,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            default: DrawItems(g, s); break;
+            default: ItemsPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
         }
 
         using var hint = MfdTheme.MonoAt(14f * s);
@@ -341,7 +349,7 @@ public sealed class MfdFrameForm : Form
         using var hintF = MfdTheme.MonoAt(13f * s);
 
         // 主菜单也分页：每页 10 个模块（两列五行，正好用满 10 个侧键）。
-        // 页号与模块内页号（_itemPage）互相独立，这样模块再多也不会被静默截断。
+        // 页号与模块内页号（ItemsPage.PageIndex）互相独立，这样模块再多也不会被静默截断。
         var first = _menuPageIdx * 10;
         for (var cell = 0; cell < 10; cell++)
         {
@@ -376,58 +384,6 @@ public sealed class MfdFrameForm : Form
             g.DrawString(countText, hintF, fgBrush, x + colW - hw, y + 12 * s, StringFormat.GenericTypographic);
         }
     }
-
-    private void DrawItems(System.Drawing.Graphics g, float s)
-    {
-        var page = CurrentPage!;
-        var offset = _itemPage * 10;
-        // 几何只从 MfdPageLayout 取：画和点用同一份矩形（以前这里自己算了一遍，
-        // 与 ListRowRect 的行高/右列缩进差几个像素）。
-        var pageLayout = new MfdPageLayout(_layout, s);
-        using var label = MfdTheme.CjkAt(24f * s);
-        using var value = MfdTheme.MonoBoldAt(22f * s);
-
-        for (var i = 0; i < 10; i++)
-        {
-            var row = pageLayout.ListRowRect(i % 2, i / 2);
-            var x = row.X;
-            var y = row.Y;
-            var rowH = row.Height;
-            var colW = row.Width;
-            var selected = (offset + i) == _itemSel;
-
-            if (selected)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
-            }
-            var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
-            using var fgBrush = new SolidBrush(fg);
-
-            var itemIndex = offset + i;
-            if (itemIndex < page.Items.Count)
-            {
-                var item = page.Items[itemIndex];
-                if (i % 2 == 0)
-                {
-                    using var mark = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Green);
-                    g.FillRectangle(mark, x, y + rowH / 2 - 5 * s, 9 * s, 9 * s);
-                }
-                g.DrawString(L10n.Get(LangScope.Screen, item.LabelKey), label, fgBrush,
-                             x + 16 * s, y + 4 * s, StringFormat.GenericTypographic);
-                var val = item.ValueText(_work);
-                var vw = g.MeasureString(val, value).Width;
-                g.DrawString(val, value, fgBrush, x + colW - vw, y + 6 * s, StringFormat.GenericTypographic);
-            }
-            else
-            {
-                using var dim = new SolidBrush(Color.FromArgb(60, MfdTheme.Muted));
-                g.DrawString("—", label, dim, x + 16 * s, y + 4 * s, StringFormat.GenericTypographic);
-            }
-        }
-    }
-
-
 
     /// <summary>Second-level page: live key capture.</summary>
     private void DrawCapturePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
@@ -465,7 +421,7 @@ public sealed class MfdFrameForm : Form
 
         _helpPrevMode = _mode;
         _helpPrevPage = _page;
-        _helpPrevItemSel = _itemSel;
+        _helpPrevItemSel = ItemsPage?.Selected ?? 0;
         _helpPageUI = new Pages.HelpPage(
             pages: () => _pages,
             cfg: () => _cfg,
@@ -481,7 +437,7 @@ public sealed class MfdFrameForm : Form
         _nav.Clear();
         _mode = _helpPrevMode;      // EnterHelp 在已是 Help 时提前返回，所以这里不会是 Help
         _page = _helpPrevPage;
-        _itemSel = _helpPrevItemSel;
+        ItemsPage?.SelectRaw(_helpPrevItemSel);
         _toast = null;
         SyncDiagProbe();
     }
@@ -657,6 +613,26 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        // 一级模块页：十个格子的命中由页面自己算 —— 和它自己的绘制同一个 ListRowRect，
+        // 所以「画在哪里就能点在哪里」对一级页也成立。
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Items &&
+            ItemsPage is { } itemsPage && itemsPage.HitCell(new PointF(e.X, e.Y)) is int hitCell && hitCell >= 0)
+        {
+            // 复刻历史判断：拿「格号」和模块项数比较（不是绝对索引），所以最后一页不满时
+            // 点空格仍会高亮一行 "—"、按确认没反应。要改这条得单独提，别混在重构里。
+            if (hitCell >= (CurrentPage?.Items.Count ?? 0)) { _lastHitCell = -1; return; }
+
+            var nowI = DateTime.UtcNow;
+            var repeatedI = hitCell == _lastHitCell && (nowI - _lastHitUtc).TotalMilliseconds < 400;
+            _lastHitCell = hitCell;
+            _lastHitUtc = nowI;
+
+            itemsPage.SelectRaw(itemsPage.PageIndex * 10 + hitCell);
+            if (repeatedI || e.Clicks >= 2) Confirm();
+            Invalidate();
+            return;
+        }
+
         // 拟真按键模式：屏幕行不接受鼠标，只能用实体按键/方向键
         if (!_work.Mfd.RealisticKeys &&
             RowHitTest(new PointF(e.X, e.Y), out var rowCell))
@@ -677,10 +653,7 @@ public sealed class MfdFrameForm : Form
                 return;
             }
 
-            var valid = _mode == Mode.Menu
-                ? rowCell < _pages.Count
-                : rowCell < CurrentPage!.Items.Count;
-            if (!valid) { _lastHitCell = -1; return; }     // 空单元格：不选也不确认
+            if (rowCell >= _pages.Count) { _lastHitCell = -1; return; }     // 空单元格：不选也不确认
 
             var now = DateTime.UtcNow;
             var repeated = rowCell == _lastHitCell &&
@@ -692,11 +665,6 @@ public sealed class MfdFrameForm : Form
             {
                 _menuSel = rowCell;
                 if (repeated || e.Clicks >= 2) EnterPage();
-            }
-            else if (_mode == Mode.Items)
-            {
-                _itemSel = _itemPage * 10 + rowCell;
-                if (repeated || e.Clicks >= 2) Confirm();
             }
             Invalidate();
             return;
@@ -791,9 +759,8 @@ public sealed class MfdFrameForm : Form
     {
         var cell = MfdPageLayout.CellFromSideKey(index);
 
-        // 二级页面（确认 / 数值 / 文本 / 预设 / 机型 / 快照）把按钮交给各自的 router：
-        // 页面在 Build() 里声明「哪个槽位、哪个侧键、发什么命令」，这里只转发，
-        // 不再由表单硬编码 index==2/3/7 的含义。
+        // 页面（一级模块页 / 二级页）把按钮交给各自的 router：页面在 Build() 里声明
+        // 「哪个槽位、哪个侧键、发什么命令」，这里只转发，不再由表单硬编码 index 的含义。
         if (RouteSideKeyToPage(index))
         {
             _toast = null;
@@ -820,11 +787,7 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        if (_mode != Mode.Items) return;      // 编辑/捕获时侧键不改变选择
-
-        var page = CurrentPage!;
-        var itemIdx = _itemPage * 10 + cell;
-        if (itemIdx < page.Items.Count) _itemSel = itemIdx;
+        // 其余情况（一级模块页的空格子 / 编辑 / 捕获 / 确认）：侧键不改变任何选中
     }
 
     protected override void OnKeyPress(KeyPressEventArgs e)
@@ -1017,15 +980,14 @@ public sealed class MfdFrameForm : Form
         }
         else
         {
-            var baseIdx = _itemPage * 10;
-            _itemSel = baseIdx + ((_itemSel - baseIdx + delta + 10) % 10);
+            ItemsPage?.Move(delta);
         }
         _toast = null;
     }
 
     private void Step(int direction)
     {
-        if (_mode == Mode.Items) SelectedItem?.Activate(_work, direction);
+        if (_mode == Mode.Items) ItemsPage?.Step(direction);
     }
 
     private void Confirm()
@@ -1067,7 +1029,7 @@ public sealed class MfdFrameForm : Form
                 _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             default:
-                if (SelectedItem is { } item) Activate(item);
+                ItemsPage?.ActivateSelected();
                 break;
         }
     }
@@ -1408,8 +1370,7 @@ public sealed class MfdFrameForm : Form
         if (_menuSel < 0 || _menuSel >= _pages.Count) return;
         _page = _menuSel;
         _menuPageIdx = _menuSel / 10;      // 记住是从哪一页的模块进来的，返回时还回那一页
-        _itemPage = 0;
-        _itemSel = 0;
+        ItemsPage?.Reset();                // 进模块从头开始（页号归零、选中第一行）
         _toast = null;
 
         // 快照模块没有行列表：直接进入快照页（页面自己负责列表与选中）
@@ -1574,15 +1535,11 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        var page = CurrentPage!;
-        var pages = (page.Items.Count + 9) / 10;
-        if (pages <= 1) { _toast = L10n.Get(LangScope.Screen, "page.single"); return; }
+        var items = ItemsPage;
+        if (items == null) return;
+        if (items.PageCount <= 1) { _toast = L10n.Get(LangScope.Screen, "page.single"); return; }
+        if (!items.CyclePage(delta)) { _toast = L10n.Get(LangScope.Screen, "page.edge"); return; }
 
-        var next = Math.Clamp(_itemPage + delta, 0, pages - 1);
-        if (next == _itemPage) { _toast = L10n.Get(LangScope.Screen, "page.edge"); return; }
-
-        _itemPage = next;
-        _itemSel = next * 10;
         _toast = null;
     }
 
@@ -1678,7 +1635,13 @@ public sealed class MfdFrameForm : Form
     {
         _page = Math.Clamp(pageIndex, 0, _pages.Count - 1);
         _mode = Mode.Items;
-        _itemSel = Math.Clamp(itemIndex, 0, 9);
+        // 只把索引钳到 0..9，不按本模块的项数再钳一次：越界索引会高亮一行空 "—"，
+        // 这是既有行为（Move/鼠标都能落到空格上），预览必须能复现它。
+        if (ItemsPage is { } items)
+        {
+            items.GoTo(0, 0);
+            items.SelectRaw(Math.Clamp(itemIndex, 0, 9));
+        }
         _menuSel = _page;
     }
 
@@ -1686,14 +1649,17 @@ public sealed class MfdFrameForm : Form
     public void PreviewOpenItem(int pageIndex, int absoluteItem)
     {
         PreviewOpen(pageIndex, 0);
-        _itemPage = Math.Max(0, absoluteItem / 10);
-        _itemSel = Math.Max(0, absoluteItem);
+        if (ItemsPage is { } items)
+        {
+            items.GoTo(absoluteItem / 10, 0);
+            items.SelectRaw(Math.Max(0, absoluteItem));
+        }
     }
 
     /// <summary>Preview helper: switch the module's item page (0-based, 10 cells per page).</summary>
     public void PreviewItemPage(int page)
     {
-        _itemPage = Math.Max(0, page);
+        if (ItemsPage is { } items) items.GoTo(page, items.Selected);
         Invalidate();
     }
 
@@ -1714,6 +1680,7 @@ public sealed class MfdFrameForm : Form
     /// </summary>
     public int PreviewActiveSelection => ActivePage switch
     {
+        Pages.MfdItemsPage p => p.Selected,
         Pages.ConfirmPage p => p.Selected,
         Pages.NumberEditPage p => p.Choice,
         Pages.PresetPage p => p.Selected,
@@ -1721,6 +1688,9 @@ public sealed class MfdFrameForm : Form
         Pages.SnapshotsPage p => p.Selected,
         _ => -1,
     };
+
+    /// <summary>预览用：当前一级模块页的页号（没有模块页时 -1）。</summary>
+    public int PreviewActivePageIndex => ItemsPage?.PageIndex ?? -1;
 
     /// <summary>
     /// 预览时模拟按底部的「上页/下页」（index 1 = 上页，2 = 下页）。
@@ -1823,8 +1793,8 @@ public sealed class MfdFrameForm : Form
         if (idx < 0) return;
         _page = idx;
         _menuSel = idx;
-        _itemSel = 0;
         _mode = Mode.Items;
+        ItemsPage?.GoTo(0, 0);
         if (SelectedItem is { } item) Activate(item);
     }
 
@@ -1835,8 +1805,8 @@ public sealed class MfdFrameForm : Form
         if (idx < 0) return;
         _page = idx;
         _menuSel = idx;
-        _itemSel = 0;
         _mode = Mode.Items;
+        ItemsPage?.GoTo(0, 0);
         EnterDetail(new MfdItem { LabelKey = vehicleId, Kind = ItemKind.Detail });
     }
 

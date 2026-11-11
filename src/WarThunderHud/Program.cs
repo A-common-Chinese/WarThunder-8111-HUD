@@ -2652,6 +2652,24 @@ public static class Program
                 form.PreviewSideKey(int.Parse(parts[2]));
                 Console.WriteLine($"SEL {parts[1]} side{parts[2]} -> {form.PreviewActiveSelection}");
             }
+            else if (view.StartsWith("itemsidekey:"))
+            {
+                // 形如 itemsidekey:0:7[:1] —— 一级模块页按侧键，核对「侧键槽位 → 格号 → 选中」；
+                // 可选的第四段先翻到模块内第 N 页，验证换页后按钮也跟着换。
+                var parts = view.Split(':');
+                form.PreviewOpen(int.Parse(parts[1]), 0);
+                if (parts.Length > 3) form.PreviewItemPage(int.Parse(parts[3]));
+                form.PreviewSideKey(int.Parse(parts[2]));
+                Console.WriteLine($"SEL items p{parts[1]} page{form.PreviewActivePageIndex} side{parts[2]} -> {form.PreviewActiveSelection}");
+            }
+            else if (view.StartsWith("itemnextpage:"))
+            {
+                // 形如 itemnextpage:0 —— 走真实按钮路径翻模块内下一页
+                var p = int.Parse(view.Split(':')[1]);
+                form.PreviewOpen(p, 0);
+                form.PreviewBottomKey(2);
+                Console.WriteLine($"PAGE items p{p} after PAGE+ -> page{form.PreviewActivePageIndex} sel{form.PreviewActiveSelection}");
+            }
             else if (view == "diag") { form.PreviewOpen(8, 0); }   // 模块顺序：… Airframes(7) → Diag(8)，此前写的 7 出的是机型页
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }

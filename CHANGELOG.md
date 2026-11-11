@@ -5,6 +5,27 @@
 > 本版是**累积版**：数据链独立成模块、菜单分页、页面按钮接 router、删除俯仰检测页、
 > 几何收敛都并到 0.3.20，不再每改一处升一次版本号。
 
+### 重构（一级模块页独立成页面）
+- 以前一级模块页的四件事分散在表单里：`DrawItems` 画、`RowHitTest` 点、`SidePressed` 选、
+  `_itemSel` / `_itemPage` 两个 int 存状态 —— 改一处要同步另外三处。
+- 新增 `Pages/MfdItemsPage : MfdPageBase`，持有模块数据 + 页号 + 选中序号，负责：
+  绘制、10 格命中、选中、本页 10 格内循环移动、翻页，以及为每个有内容的格子造一个
+  `VirtualButton`（槽位 = 格号，命令 `items.select <绝对序号>`）。
+- 表单删掉 `DrawItems`（48 行）和那两个 int；`SelectedItem` 改读页面，
+  `Step` / `MoveSelection` / `CyclePage` / `Confirm` / `EnterPage` 全部转发给页面。
+- **一级模块页并入 `ActivePage`**，侧键走和二级页同一条 router —— 页面按钮不再是死数据，
+  `SidePressed` 里「侧键 → 格号 → 选中」的硬编码消失（只剩一句「其余情况不改变选中」）。
+- `MfdFrameForm` 2077 → 2049 行；新增页面文件 200 行（含注释）。
+
+**验证**：用 git worktree 检出上一版（`e42cc43`）单独构建基准二进制，同一份 `hud-config.json`，
+20 个视图（9 个模块 × 选中第 1 / 第 6 行，加显示页与按键页的第 2 页）逐像素比对 ——
+**全部完全相同**，连页眉版本号那一条带也一样。交互侧：侧键 0..9 → 选中 0,2,4,6,8,1,3,5,7,9
+（`CellFromSideKey`）；模块第 2 页按 side7 → 15；`PAGE+` → 第 2 页且选中 10；单页模块翻页不动。
+`selftest` 22 PASS / 0 FAIL，连跑两次。
+
+**已知瑕疵（本次按原样保留）**：最后一页不满时点空格会高亮一行 `—`、按确认没反应 ——
+原判断拿「格号」跟模块项数比较（不是绝对索引），属既有行为；重构不改语义，留作单独一项。
+
 ### 修复（题头版本号挤到标题上）
 - `Application.ProductVersion` 读的是 `AssemblyInformationalVersion`，SDK 会自动拼上 40 位 commit，
   于是题头写着 `v0.3.20+cd56ea85a76878da1c82caffae8531b0d4be9eed`——比标题还长。
