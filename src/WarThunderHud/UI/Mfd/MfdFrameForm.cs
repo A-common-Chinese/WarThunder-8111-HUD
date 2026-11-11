@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, TextEdit, Preset, Help, Detail, PickVehicle, PitchDetect, Snapshots }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, TextEdit, Preset, Help, Detail, PickVehicle, Snapshots }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -33,7 +33,6 @@ public sealed class MfdFrameForm : Form
 
     private Mode _mode = Mode.Menu;
     private readonly Pages.MfdNavigator _nav = new();
-    private Pages.PitchDetectPage? _pitchPage;
     private Pages.ConfirmPage? _confirmPage;
     private Pages.NumberEditPage? _editPage;
     private Pages.TextEditPage? _textPage;
@@ -137,7 +136,6 @@ public sealed class MfdFrameForm : Form
         Mode.Help => _helpPageUI,
         Mode.Detail => _detailPageUI,
         Mode.PickVehicle => _pickPageUI,
-        Mode.PitchDetect => _pitchPage,
         Mode.Snapshots => _snapPageUI,
         _ => null,
     };
@@ -281,7 +279,6 @@ public sealed class MfdFrameForm : Form
             Mode.EditNumber => "edit.title",
             Mode.TextEdit => "tedit.title",
             Mode.CaptureKey => "capture.title",
-            Mode.PitchDetect => "row.pitchDetect",
             _ => CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
@@ -321,7 +318,6 @@ public sealed class MfdFrameForm : Form
             case Mode.Help: _helpPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            case Mode.PitchDetect: _nav.Current?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: DrawItems(g, s, glass, left, pad); break;
         }
@@ -334,7 +330,6 @@ public sealed class MfdFrameForm : Form
             Mode.Preset => "selectPreset",
             Mode.Help => "help.pagerHint",
             Mode.PickVehicle => "pick.hint",
-            Mode.PitchDetect => "pitchdetect.hint",
             Mode.Snapshots => "snap.hint",
             Mode.EditNumber => "edit.prompt",
             Mode.TextEdit => "tedit.hint",
@@ -1083,11 +1078,6 @@ public sealed class MfdFrameForm : Form
             case Mode.Snapshots:
                 _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
-            case Mode.PitchDetect:
-                _nav.Current?.Handle(MfdCommand.Of("confirm.ok"));
-                _toast = _pitchPage?.ResultToast;
-                _mode = Mode.Items;
-                break;
             default:
                 if (SelectedItem is { } item) Activate(item);
                 break;
@@ -1308,16 +1298,6 @@ public sealed class MfdFrameForm : Form
     }
 
     /// <summary>俯仰方向检测：需要现场采样，确认后进入采样页。</summary>
-    private void EnterPitchDetect()
-    {
-        _pitchPage = new Pages.PitchDetectPage(
-            onFinished: () => { _nav.Clear(); _mode = Mode.Items; _dirty = true; },
-            onCancelled: () => { _nav.Clear(); _mode = Mode.Items; });
-        _nav.Push(_pitchPage);
-        _pitchPage.StartRepaint(Invalidate);
-        _mode = Mode.PitchDetect;
-    }
-
     /// <summary>Builds the confirm sheet as a page instead of a mode-specific switch branch.</summary>
     private void EnterConfirm()
     {
@@ -1374,13 +1354,6 @@ public sealed class MfdFrameForm : Form
         WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         _pendingAction = null;
         _toast = null;
-
-        // 需要现场采样的动作（俯仰方向检测）确认后进入采样页
-        if (WtHud.Hud.PitchDetect.Active)
-        {
-            EnterPitchDetect();
-            return;
-        }
         _mode = Mode.Items;
     }
 
@@ -1545,9 +1518,6 @@ public sealed class MfdFrameForm : Form
                 break;
             case Mode.Preset:
                 _presetPage?.Handle(MfdCommand.Of("nav.back"));
-                break;
-            case Mode.PitchDetect:
-                _nav.Current?.Handle(MfdCommand.Of("nav.back"));
                 break;
             case Mode.Help:
                 _helpPageUI?.Handle(MfdCommand.Of("nav.back"));   // onClose -> LeaveHelp
@@ -1924,12 +1894,6 @@ public sealed class MfdFrameForm : Form
         _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
     }
 
-    /// <summary>Preview helper: 直接进入俯仰方向采样页（验证 EnterPitchDetect 构造）。</summary>
-    public void PreviewPitch()
-    {
-        EnterPitchDetect();
-    }
-
     /// <summary>Preview helper: 机型详情页按 RESET（验证 _resetConfirm → ConfirmPage 文案）。</summary>
     public void PreviewDetailReset()
     {
@@ -1996,12 +1960,6 @@ public sealed class MfdFrameForm : Form
         // 以前这里会把「全局告警阈值」写进当前机型档案（StoreAlertOverrides），形成第二套
         // per-aircraft 数据源，和 perVehicleOverrides 打架。现在按机型的值只走覆盖表，
         // 全局值就是全局，不再偷偷改机型档案。
-
-        if (WtHud.Hud.PitchDetect.PendingSave is var (veh, sign))
-        {
-            WtHud.Hud.SettingsRouter.SetFor(_cfg, veh, "row.pitchSign", sign);
-            WtHud.Hud.PitchDetect.ClearPendingSave();
-        }
 
         WtHud.Hud.ConfigSnapshots.SaveHistory(_work, "save");
         WtHud.Hud.ConfigSnapshots.EndSession();   // SAVE 成功后清掉本次会话快照

@@ -1,6 +1,35 @@
 # Changelog
 
-## 未发布（v0.3.20）
+## 未发布（v0.3.21）
+
+### 删除
+- **移除「俯仰方向自动检测」采样页**（连同它的采样引擎），净减 **297 行**。这是一整套不可达的死流程：
+
+  | 环节 | 状态 |
+  |---|---|
+  | 面板入口 | 全仓没有任何 `MfdItem` 引用 `row.pitchDetect`，只有文案键残留 |
+  | 触发 | `PitchDetect.Request()` 零调用，`BeginRequested` 事件零订阅 |
+  | 开始采样 | `Begin()` 零调用 → `Active` 永远 false |
+  | 进入页面 | `RunPending()` 里 `if (PitchDetect.Active) EnterPitchDetect()` 因此永不成立 |
+  | 页面按钮 | `Build()` 建了 finish/cancel，`Draw()` 只画四行文字，按钮不可见 |
+
+  它来自 `b4fc47b`（v0.2.2 WIP 快照，和 MfdPageBase 页面层同一提交），本意是手动采 5 秒、
+  用「游戏俯仰 vs 航迹角」相关系数判定符号。该职责已由 `Telemetry/AttitudeFusion.cs` 的
+  **自动投票**（60 样本点积判号，按机型记忆，日志 `native pitch sign for <机型>: ±1`）
+  和面板 `pitchSign`（自动 / 正 / 负）覆盖。
+
+  删除内容：`Hud/PitchDetect.cs`、`UI/Mfd/Pages/PitchDetectPage.cs`、`Mode.PitchDetect` 及其
+  12 处分支（枚举 / ActivePage / 标题 / 绘制 / 页脚 / Confirm / Back / Enter / RunPending / 预览 / SAVE 落盘）、
+  `Program.cs` 的 `Feed` 与 2 秒探针、7 条 L10n 文案。
+
+### 验证
+- 编译 0 error / 0 warning；`selftest` 连跑 3 次均 exit 0（Debug + 发布版）。
+- 全仓（含 json）搜索 `pitchdetect|PitchDetect` **零残留**。
+- 18 个预览变体全部 exit 0：显示 1/2 页、帮助、预设、数值编辑、确认、机型、快照（含确认/恢复）、
+  详情、主菜单、菜单翻页，以及 `sidekey:edit/preset/pick` 三条侧键路径 —— 说明删掉这一页没有碰坏
+  导航栈和 `Mode` 分支。
+
+## v0.3.20 — 2026-11-11（仅本地构建）
 
 ### 变更
 - **二级页面的按钮真正接上 router**。之前 `ConfirmPage` / `NumberEditPage` / `TextEditPage` /

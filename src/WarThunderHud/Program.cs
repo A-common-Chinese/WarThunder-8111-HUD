@@ -1423,21 +1423,6 @@ public static class Program
                                   $"hole=({cal.CenterOffsetX:F0},{cal.CenterOffsetY:F0}) screen={scrW}x{scrH}");
             }
 
-            // 俯仰方向检测：用游戏姿态 vs 航迹角(gamma) 的相关系数判断符号
-            if (WtHud.Hud.PitchDetect.Active)
-                WtHud.Hud.PitchDetect.Feed(snap.PitchDeg, att.PitchDeg);   // att = 实际画到 HUD 上的俯仰
-
-            if (WtHud.Hud.PitchDetect.Active && nowTicks - lastPitchProbeTicks > 2000)
-            {
-                lastPitchProbeTicks = nowTicks;
-                var dbgPitch = snap.PitchDeg;
-                Console.WriteLine("pitchdetect probe: pitch=" +
-                                  (dbgPitch.HasValue ? dbgPitch.Value.ToString("F1") : "null") +
-                                  " gamma=" + snap.FlightPathAngleDeg.ToString("F1") +
-                                  " samples=" + WtHud.Hud.PitchDetect.SampleCount +
-                                  " skip=" + WtHud.Hud.PitchDetect.Rejected);
-            }
-
             long key = FrameKey(snap, shown, opt, cal, draw, hiddenByView);
             if (key != lastFrameKey)
             {
@@ -2262,7 +2247,6 @@ public static class Program
     private static DateTime navDbgUtc = DateTime.MinValue;
     private static int lastAircraftMarkers = -1;
     private static long lastFramePollTicks;
-    private static long lastPitchProbeTicks;
     private static long perfLastPrintTicks;
     private static double perfBuildMs, perfDrawMs, perfPresentMs;
     private static int perfPresents, perfLoops;
@@ -2695,7 +2679,6 @@ public static class Program
             else if (view == "pickpicked") { form.PreviewPickPicked(); }
             else if (view == "pickback") { form.PreviewPickBack(); }
             else if (view == "presetapply") { form.PreviewPresetApply(); }
-            else if (view == "pitch") { form.PreviewPitch(); }
             else if (view == "detailreset") { form.PreviewDetailReset(); }
             using var bmp = new System.Drawing.Bitmap(form.Width, form.Height);
             using (var g = System.Drawing.Graphics.FromImage(bmp))
