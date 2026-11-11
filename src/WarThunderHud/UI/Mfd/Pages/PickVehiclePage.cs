@@ -35,11 +35,16 @@ internal sealed class PickVehiclePage : MfdPageBase
         for (var i = 0; i < 10; i++)
         {
             var cell = i;
+            // 与 Draw 的 ListRowRect(i % 2, i / 2) 必须一致：Slot 是行、Column 是列。
+            // 以前写成 Slot = cell % 5 / Column = cell / 5，矩形会落到另一列，
+            // 因为没人读这些按钮所以一直没被发现。
             Buttons.Add(new VirtualButton($"pick{cell}", VirtualButtonKind.Action)
             {
-                Slot = cell % 5,
-                Column = cell / 5,
+                Slot = cell / 2,
+                Column = cell % 2,
                 Text = () => cell < _list.Count ? _list[cell] : "",
+                Target = MfdCommand.Of("pick.select", cell.ToString()),
+                ActivateBy = new[] { "SIDE" + cell },
             });
         }
     }
@@ -63,6 +68,9 @@ internal sealed class PickVehiclePage : MfdPageBase
     {
         switch (cmd.Id)
         {
+            case "pick.select":
+                if (int.TryParse(cmd.Arg, out var cell)) SelectCell(cell);
+                return true;
             case "confirm.ok":
                 if (Selected >= 0 && Selected < _list.Count) _onPicked(_list[Selected]);
                 return true;

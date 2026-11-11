@@ -56,9 +56,13 @@ internal sealed class SnapshotsPage : MfdPageBase
             var cell = i;
             Buttons.Add(new VirtualButton($"snap{cell}", VirtualButtonKind.Action)
             {
-                Slot = cell % 5,            // 行槽位：0-4 左列、5-9 右列
-                Column = cell / 5,          // 0 = 左列，1 = 右列
+                // 与 Draw 的 ListRowRect(i % 2, i / 2) 一致：Slot 是行、Column 是列。
+                // （原来写成 Slot = cell % 5 / Column = cell / 5，矩形会落到另一列。）
+                Slot = cell / 2,
+                Column = cell % 2,
                 Text = () => DisplayAt(cell),
+                Target = MfdCommand.Of("snap.select", cell.ToString()),
+                ActivateBy = new[] { "SIDE" + cell },
             });
         }
 
@@ -89,6 +93,9 @@ internal sealed class SnapshotsPage : MfdPageBase
     {
         switch (cmd.Id)
         {
+            case "snap.select":
+                if (int.TryParse(cmd.Arg, out var cell)) SelectCell(cell);
+                return true;
             case "confirm.ok":
                 var entry = Current;
                 if (entry is not null) _onPicked(entry);    // 空列表不触发回调

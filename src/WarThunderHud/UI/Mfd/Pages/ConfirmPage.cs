@@ -35,15 +35,22 @@ internal sealed class ConfirmPage : MfdPageBase
     public override void Build()
     {
         Buttons.Clear();
-        Buttons.Add(new VirtualButton("confirm.ok", VirtualButtonKind.Action)
+        // 侧键 2 / 3 是这两个选项在面板上的真实槽位。按钮自己声明位置和按键，
+        // 表单不再靠 index==2/3 的硬编码去猜（那样一改版面就错）。
+        // Target 是「执行」而不是「选中」：这与原来的侧键行为一致（按下即确认/取消）。
+        AddOption("confirm.ok", sideKey: 2, index: 0);
+        AddOption("confirm.cancel", sideKey: 3, index: 1);
+    }
+
+    private void AddOption(string id, int sideKey, int index)
+    {
+        Buttons.Add(new VirtualButton(id, VirtualButtonKind.Action)
         {
-            Slot = 2,
-            Text = () => L10n.Get(LangScope.Screen, "confirm.ok"),
-        });
-        Buttons.Add(new VirtualButton("confirm.cancel", VirtualButtonKind.Action)
-        {
-            Slot = 3,
-            Text = () => L10n.Get(LangScope.Screen, "confirm.cancel"),
+            Slot = sideKey % 5,
+            Column = sideKey / 5,
+            Text = () => L10n.Get(LangScope.Screen, id),
+            Target = MfdCommand.Of(id, index.ToString()),
+            ActivateBy = new[] { "SIDE" + MfdPageLayout.CellFromSideKey(sideKey) },
         });
     }
 

@@ -29,6 +29,25 @@ internal sealed class PresetPage : MfdPageBase
 
     public int Selected { get; private set; }
 
+    public override void Build()
+    {
+        Buttons.Clear();
+        // 每个预设格 = 一个按钮：位置与 Draw 的 ListRowRect(i % 2, i / 2) 一致，
+        // 侧键只负责选中，应用仍走 CONFIRM。
+        for (var i = 0; i < MfdTheme.Presets.Length; i++)
+        {
+            var cell = i;
+            Buttons.Add(new VirtualButton("preset" + cell, VirtualButtonKind.Action)
+            {
+                Slot = cell / 2,
+                Column = cell % 2,
+                Text = () => L10n.Get(LangScope.Screen, "color." + MfdTheme.Presets[cell].Key),
+                Target = MfdCommand.Of("preset.select", cell.ToString()),
+                ActivateBy = new[] { "SIDE" + cell },
+            });
+        }
+    }
+
     public void Select(int index) => Selected = Math.Clamp(index, 0, MfdTheme.Presets.Length - 1);
 
     public void Move(int delta) =>
@@ -38,6 +57,9 @@ internal sealed class PresetPage : MfdPageBase
     {
         switch (cmd.Id)
         {
+            case "preset.select":
+                if (int.TryParse(cmd.Arg, out var i)) Select(i);
+                return true;
             case "confirm.ok":
                 _onApply(MfdTheme.Presets[Selected].Key);
                 return true;

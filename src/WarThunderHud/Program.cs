@@ -2626,6 +2626,31 @@ public static class Program
             else if (view == "menunext") { form.PreviewBottomKey(2); }            // 按「下页」
             else if (view == "menuedge") { form.PreviewMenuPage(1); form.PreviewBottomKey(2); }  // 末页再按
             else if (view == "menusingle") { form.PreviewBottomKey(2); }          // 只有一页时按
+            // 二级页面侧键：走 SidePressed → page router，用来核对按钮槽位与命令是否接上
+            else if (view == "confirmkey") { form.PreviewConfirm(5, 9); form.PreviewSideKey(3); }
+            else if (view == "editkey") { form.PreviewEdit(0, 7); form.PreviewSideKey(3); }
+            else if (view == "editkey7") { form.PreviewEdit(0, 7); form.PreviewSideKey(7); }
+            else if (view == "presetkey") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(2); }
+            else if (view == "pickkey") { form.PreviewPickVehicle(); form.PreviewSideKey(5); }
+            else if (view == "presetkey0") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(0); }
+            else if (view == "presetkey1") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(1); }
+            else if (view == "presetkey5") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(5); }
+            else if (view.StartsWith("sidekey:"))
+            {
+                // 形如 sidekey:edit:3 / sidekey:preset:2 / sidekey:confirm:3
+                var parts = view.Split(':');
+                switch (parts[1])
+                {
+                    case "confirm": form.PreviewConfirm(5, 9); break;
+                    case "edit": form.PreviewEdit(0, 7); break;
+                    case "preset": form.PreviewOpen(4, 0); form.PreviewPreset(); break;
+                    case "pick": form.PreviewPickVehicle(); break;
+                    case "text": form.PreviewOpenItem(0, 22); form.PreviewPreset(); break;   // 第 22 行 = 玩家昵称（文本行）
+                    case "snap": form.PreviewSnapshots(); break;
+                }
+                form.PreviewSideKey(int.Parse(parts[2]));
+                Console.WriteLine($"SEL {parts[1]} side{parts[2]} -> {form.PreviewActiveSelection}");
+            }
             else if (view == "diag") { form.PreviewOpen(7, 0); }
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }

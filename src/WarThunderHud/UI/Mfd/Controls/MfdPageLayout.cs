@@ -28,6 +28,15 @@ internal sealed class MfdPageLayout
 
     public const float RowHeightDip = 44f;
 
+    /// <summary>
+    /// Physical side key (0-4 = left column top-down, 5-9 = right column) to the row-major cell
+    /// number used by two-column list pages (0 = left row 0, 1 = right row 0, 2 = left row 1 …).
+    /// </summary>
+    public static int CellFromSideKey(int sideKey) => (sideKey % 5) * 2 + sideKey / 5;
+
+    /// <summary>Inverse of <see cref="CellFromSideKey"/>.</summary>
+    public static int SideKeyFromCell(int cell) => (cell % 2) * 5 + cell / 2;
+
     /// <summary>Row rectangle of a two-column list page (row = side-button row 0-4).</summary>
     public RectangleF ListRowRect(int column, int row)
     {

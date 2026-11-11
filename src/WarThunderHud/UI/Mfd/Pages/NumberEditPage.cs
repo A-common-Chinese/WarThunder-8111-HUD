@@ -43,21 +43,23 @@ internal sealed class NumberEditPage : MfdPageBase
     public override void Build()
     {
         Buttons.Clear();
-        Buttons.Add(new VirtualButton("edit.commit", VirtualButtonKind.Action)
+        // 侧键 2 / 3 / 7 是这三行在面板上的真实槽位（7 = 右列第三行），
+        // 按钮自己声明位置与按键，表单不再硬编码 index 到选项的映射。
+        AddChoice("edit.commit", sideKey: 2, choice: 0, "confirm.ok", () => Buffer);
+        AddChoice("edit.cancel", sideKey: 3, choice: 1, "confirm.cancel", () => "");
+        AddChoice("edit.pick", sideKey: 7, choice: 2, "edit.pick", () => "");
+    }
+
+    private void AddChoice(string id, int sideKey, int choice, string labelKey, Func<string> value)
+    {
+        Buttons.Add(new VirtualButton(id, VirtualButtonKind.Action)
         {
-            Slot = 2,
-            Text = () => L10n.Get(LangScope.Screen, "confirm.ok"),
-            Value = () => Buffer,
-        });
-        Buttons.Add(new VirtualButton("edit.cancel", VirtualButtonKind.Action)
-        {
-            Slot = 3,
-            Text = () => L10n.Get(LangScope.Screen, "confirm.cancel"),
-        });
-        Buttons.Add(new VirtualButton("edit.pick", VirtualButtonKind.Action)
-        {
-            Slot = 7,
-            Text = () => L10n.Get(LangScope.Screen, "edit.pick"),
+            Slot = sideKey % 5,
+            Column = sideKey / 5,
+            Text = () => L10n.Get(LangScope.Screen, labelKey),
+            Value = value,
+            Target = MfdCommand.Of("edit.select", choice.ToString()),
+            ActivateBy = new[] { "SIDE" + MfdPageLayout.CellFromSideKey(sideKey) },
         });
     }
 
@@ -78,6 +80,9 @@ internal sealed class NumberEditPage : MfdPageBase
     {
         switch (cmd.Id)
         {
+            case "edit.select":
+                if (int.TryParse(cmd.Arg, out var i)) Select(i);
+                return true;
             case "edit.commit":
                 _onCommit(Buffer);
                 return true;

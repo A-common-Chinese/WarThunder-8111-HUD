@@ -1,6 +1,46 @@
 # Changelog
 
-## 未发布（v0.3.19）
+## 未发布（v0.3.20）
+
+### 变更
+- **二级页面的按钮真正接上 router**。之前 `ConfirmPage` / `NumberEditPage` / `TextEditPage` /
+  `PickVehiclePage` / `SnapshotsPage` 都在 `Build()` 里造了 `VirtualButton`，但全仓只有主菜单调用过
+  `SetButtons` —— 这些按钮从没被读过，侧键仍由表单按 `index == 2 / 3 / 7` 硬编码分发。
+  现在每页自己声明「槽位 + 侧键 + 命令」，`SidePressed` 只做转发：
+  - 新增 `_pageRouter` 与 `RouteSideKeyToPage()`；`ActivePage` 把「当前是哪个页面」集中成一处（原来
+    分散在 8 个 `if (_mode == ...)` 里）。
+  - 按钮命令：确认页 `confirm.ok/cancel`（与原行为一致，按下即执行）；数值页 `edit.select`（选中，
+    CONFIRM 才提交）；文本页 `tedit.commit/cancel`（按下即执行）；机型/快照 `pick.select` / `snap.select`
+    （选中）；预设 `preset.select`（新增，预设页此前完全没有按钮对象）。
+  - `SidePressed` 从 8 个 mode 分支缩到 2 个（CaptureKey、Menu）+ Items 兜底。
+- **槽位定义统一**：新增 `MfdPageLayout.CellFromSideKey()` / `SideKeyFromCell()`，物理侧键与
+  「两列五行格子号」的换算只此一份。表单和页面都用它，不再各算一遍。
+- 修掉两处按钮矩形与画面错位（此前无人消费所以没暴露）：
+  - `PickVehiclePage` / `SnapshotsPage` 把 `Slot` 当成格子号、`Column` 当成列号，`RectFor` 会落到另一列；
+    现在 `Slot = 行`、`Column = 列`，与 `Draw` 的 `ListRowRect(i % 2, i / 2)` 一致。
+  - `ConfirmPage` / `NumberEditPage` / `TextEditPage` 的 `Slot` 原来是物理侧键号（>4 时 `RectFor` 会钳到
+    第 4 行），现在按 `sideKey % 5` / `sideKey / 5` 拆成行列。
+
+### 验证
+侧键走真实入口（`PreviewSideKey` → `SidePressed` → router → 页面命令），断言选中序号：
+
+| 页面 | 侧键 → 选中 |
+|---|---|
+| 数值编辑 | 2→确认(0)、3→取消(1)、7→手动选择机型(2)、9→不变(0) |
+| 预设 | 0→白(0)、1→紫(2)、2→红(4)、5→绿(1) |
+| 机型选择 | 0→0、5→1、9→9 |
+| 快照 | 0→0、5→1 |
+| 确认页 | 3→取消并返回上一层（截图确认回到语言页） |
+| 文本页 | 9→不变（未绑定）、3→取消并回到显示页 3/3 |
+
+另外出图确认：数值页侧键 3/7 高亮落在「取消」「手动选择机型」；预设页侧键 2 后红色格出现绿框。
+
+### 遗留（未改，等定）
+- `PitchDetectPage` 声明了两个按钮但页面根本不绘制它们，所以没有 `ActivateBy` —— 接上会变成"看不见的
+  可点区域"。要么给它画两行，要么删掉这两个按钮。
+- 文本编辑页的提示文字（"直接打字。Ctrl+V 粘贴…"）压在「确认」那一行上，是既有排版问题，与本次改动无关。
+
+## v0.3.19 — 2026-11-11（仅本地构建）
 
 ### 修复
 - **主菜单没有分页**。`CyclePage` 里本来留了菜单分支，但判断完页数就直接 `return`，注释还写着

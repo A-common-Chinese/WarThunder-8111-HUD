@@ -61,6 +61,9 @@ public sealed class MfdFrameForm : Form
     private bool _resetConfirm;
     private MfdScreenPage? _menuPage;
     private MfdInputRouter? _menuRouter;
+    // 二级页面自己的 router：页面在 Build() 里声明按钮（位置 + 侧键 + 命令），
+    // 这里只负责换绑，不再由表单硬编码 index→选项。
+    private MfdInputRouter? _pageRouter;
     private List<RealButton>? _realButtons;
     private int _lastHitCell = -1;
     private DateTime _lastHitUtc = DateTime.MinValue;
@@ -123,6 +126,41 @@ public sealed class MfdFrameForm : Form
     }
 
     private MfdPage? CurrentPage => _page >= 0 && _page < _pages.Count ? _pages[_page] : null;
+
+    /// <summary>当前占着面板的二级页面（没有就是 null）。</summary>
+    private Pages.MfdPageBase? ActivePage => _mode switch
+    {
+        Mode.Confirm => _confirmPage,
+        Mode.EditNumber => _editPage,
+        Mode.TextEdit => _textPage,
+        Mode.Preset => _presetPage,
+        Mode.Help => _helpPageUI,
+        Mode.Detail => _detailPageUI,
+        Mode.PickVehicle => _pickPageUI,
+        Mode.PitchDetect => _pitchPage,
+        Mode.Snapshots => _snapPageUI,
+        _ => null,
+    };
+
+    /// <summary>
+    /// 把侧键交给当前页面的按钮：页面自己声明了槽位和按键，表单不再猜 index 的含义。
+    /// 返回 true 表示页面消费了这次按键。
+    /// </summary>
+    private bool RouteSideKeyToPage(int sideKey)
+    {
+        var page = ActivePage;
+        if (page == null || page.Buttons.Count == 0) return false;
+
+        _pageRouter ??= new MfdInputRouter(
+            new MfdPageLayout(_layout, _layout.Width / 1330f), _realButtons);
+        // 每次按键都重绑：页面重复 Push 会重新 Build（按钮对象全换），
+        // 缓存绑定会留上一轮的对象。最多 10 个，成本可忽略。
+        _pageRouter.SetButtons(page.Buttons);
+
+        var cmd = _pageRouter.PressSlot("SIDE" + MfdPageLayout.CellFromSideKey(sideKey),
+                                        InputSource.RealButton);
+        return cmd != null && page.Handle(cmd);
+    }
 
     private MfdItem? SelectedItem
     {
@@ -768,49 +806,19 @@ public sealed class MfdFrameForm : Form
 
     private void SidePressed(int index)
     {
-        var cell = (index % 5) * 2 + index / 5;
+        var cell = MfdPageLayout.CellFromSideKey(index);
 
-        if (_mode == Mode.Preset)
+        // 二级页面（确认 / 数值 / 文本 / 预设 / 机型 / 快照）把按钮交给各自的 router：
+        // 页面在 Build() 里声明「哪个槽位、哪个侧键、发什么命令」，这里只转发，
+        // 不再由表单硬编码 index==2/3/7 的含义。
+        if (RouteSideKeyToPage(index))
         {
-            if (cell < MfdTheme.Presets.Length) { _presetPage?.Select(cell); }
+            _toast = null;
+            Invalidate();
             return;
         }
 
-        if (_mode == Mode.EditNumber)
-        {
-            _editPage?.Select(index == 2 ? 0 : index == 3 ? 1 : index == 7 ? 2 : -1);
-            return;
-        }
-
-        if (_mode == Mode.TextEdit)
-        {
-            if (index == 2) _textPage?.Handle(MfdCommand.Of("tedit.commit"));
-            else if (index == 3) _textPage?.Handle(MfdCommand.Of("tedit.cancel"));
-            return;
-        }
-
-        if (_mode == Mode.PickVehicle)
-        {
-            _pickPageUI?.SelectCell(cell);
-            return;
-        }
-
-        if (_mode == Mode.Snapshots)
-        {
-            _snapPageUI?.SelectCell(cell);
-            return;
-        }
-
-        if (_mode == Mode.Confirm)
-        {
-            // 必须走页面回调：快照确认的「取消」要回快照列表、「确认」要执行恢复。
-            // 直接调 RunPending/CancelPending 会落到快照模块那个 0 行的 Items 页（空白页）。
-            if (index == 2) _confirmPage?.Handle(MfdCommand.Of("confirm.ok"));
-            else if (index == 3) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
-            return;
-        }
-
-        if (_mode == Mode.CaptureKey)      // 数值编辑页在上面已经 return
+        if (_mode == Mode.CaptureKey)
         {
             if (index == 2) Confirm();
             else if (index == 3) CancelSecondLevel();
@@ -1716,6 +1724,14 @@ public sealed class MfdFrameForm : Form
         _menuSel = _page;
     }
 
+    /// <summary>预览用：按模块内的绝对序号打开某一行（跨页，PreviewOpen 只认单页 0-9）。</summary>
+    public void PreviewOpenItem(int pageIndex, int absoluteItem)
+    {
+        PreviewOpen(pageIndex, 0);
+        _itemPage = Math.Max(0, absoluteItem / 10);
+        _itemSel = Math.Max(0, absoluteItem);
+    }
+
     /// <summary>Preview helper: switch the module's item page (0-based, 10 cells per page).</summary>
     public void PreviewItemPage(int page)
     {
@@ -1733,6 +1749,20 @@ public sealed class MfdFrameForm : Form
         _menuRouter?.Select(_menuSel);
         Invalidate();
     }
+
+    /// <summary>
+    /// 预览/自检用：当前二级页面选中的序号（无页面时 -1）。
+    /// 用来验证「侧键 → router → 页面命令」这条链路是否把选中落到了正确的项上。
+    /// </summary>
+    public int PreviewActiveSelection => ActivePage switch
+    {
+        Pages.ConfirmPage p => p.Selected,
+        Pages.NumberEditPage p => p.Choice,
+        Pages.PresetPage p => p.Selected,
+        Pages.PickVehiclePage p => p.Selected,
+        Pages.SnapshotsPage p => p.Selected,
+        _ => -1,
+    };
 
     /// <summary>
     /// 预览时模拟按底部的「上页/下页」（index 1 = 上页，2 = 下页）。

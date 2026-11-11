@@ -58,13 +58,22 @@ internal sealed class TextEditPage : MfdPageBase
     public override void Build()
     {
         Buttons.Clear();
-        Buttons.Add(new VirtualButton("tedit.commit", VirtualButtonKind.Action)
+        // 这两行是动作而不是选项（按下即提交/取消），所以 Target 直接是执行命令，
+        // 与原来的侧键行为一致。
+        AddAction("tedit.commit", sideKey: 2, "confirm.ok", () => Buffer);
+        AddAction("tedit.cancel", sideKey: 3, "confirm.cancel", () => "");
+    }
+
+    private void AddAction(string id, int sideKey, string labelKey, Func<string> value)
+    {
+        Buttons.Add(new VirtualButton(id, VirtualButtonKind.Action)
         {
-            Slot = 2, Text = () => L10n.Get(LangScope.Screen, "confirm.ok"), Value = () => Buffer,
-        });
-        Buttons.Add(new VirtualButton("tedit.cancel", VirtualButtonKind.Action)
-        {
-            Slot = 3, Text = () => L10n.Get(LangScope.Screen, "confirm.cancel"),
+            Slot = sideKey % 5,
+            Column = sideKey / 5,
+            Text = () => L10n.Get(LangScope.Screen, labelKey),
+            Value = value,
+            Target = MfdCommand.Of(id),
+            ActivateBy = new[] { "SIDE" + MfdPageLayout.CellFromSideKey(sideKey) },
         });
     }
 
