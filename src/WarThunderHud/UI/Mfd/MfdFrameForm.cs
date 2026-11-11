@@ -302,7 +302,7 @@ public sealed class MfdFrameForm : Form
             Mode.Items when CurrentPage != null => (_itemPage + 1, (CurrentPage.Items.Count + 9) / 10),
             _ => (1, 1),
         };
-        var ver = (pages > 1 ? pageNo + "/" + pages + "  " : "") + "v" + Application.ProductVersion;
+        var ver = (pages > 1 ? pageNo + "/" + pages + "  " : "") + "v" + Program.ShortVersion;
         g.DrawString(ver, meta, muted, glass.Right - pad - g.MeasureString(ver, meta).Width, glass.Top + 8 * s);
 
         switch (_mode)

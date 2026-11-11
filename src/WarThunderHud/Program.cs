@@ -15,6 +15,15 @@ namespace WtHud;
 
 public static class Program
 {
+    /// <summary>
+    /// 屏幕上显示的版本号：去掉 <c>+&lt;commit&gt;</c> 后缀。
+    /// <see cref="Application.ProductVersion"/> 取的是 AssemblyInformationalVersion，SDK 会自动拼上
+    /// 40 位 commit（0.3.20+cd56ea85a768…），在 1330 宽的题头里比标题还长，两个会贴在一起。
+    /// 构建号留给日志和文件属性，题头与 DIAG 页只要 0.3.20。
+    /// </summary>
+    public static string ShortVersion =>
+        Application.ProductVersion.Split('+')[0];
+
     public static int Main(string[] args)
     {
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
@@ -2643,7 +2652,7 @@ public static class Program
                 form.PreviewSideKey(int.Parse(parts[2]));
                 Console.WriteLine($"SEL {parts[1]} side{parts[2]} -> {form.PreviewActiveSelection}");
             }
-            else if (view == "diag") { form.PreviewOpen(7, 0); }
+            else if (view == "diag") { form.PreviewOpen(8, 0); }   // 模块顺序：… Airframes(7) → Diag(8)，此前写的 7 出的是机型页
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }
             else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）

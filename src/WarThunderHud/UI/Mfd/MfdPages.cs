@@ -418,7 +418,7 @@ internal static class MfdPages
             Info("row.diagInd", _ => DiagProbe.IndicatorsText),
             Info("row.diagMap", _ => DiagProbe.MapText),
             Info("row.diagInfo", _ => DiagProbe.MapInfoText),
-            Info("row.version", _ => "v" + System.Windows.Forms.Application.ProductVersion),
+            Info("row.version", _ => "v" + WtHud.Program.ShortVersion),
             Info("row.mapFlip", c => c.MapYFlip ? "Y" : "N"),
             Info("row.stallMem", c => c.StallAoaByVehicle.Count + " veh"),
             Info("row.pitchMem", c => c.PerVehicleOverrides.Count + " veh"),
@@ -437,7 +437,7 @@ internal static class UpdateState
 
     public static void Start()
     {
-        var current = System.Windows.Forms.Application.ProductVersion;
+        var current = WtHud.Program.ShortVersion;
         Text = "…";
         _ = Task.Run(async () =>
         {
