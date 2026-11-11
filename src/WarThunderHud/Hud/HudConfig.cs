@@ -134,6 +134,22 @@ public sealed class HudConfig
     /// <summary>编队模式：隐藏原 HUD 其余元素，只留友机信息 + 速度/高度/航向三个读数。</summary>
     [JsonPropertyName("formationOnly")] public bool FormationOnly { get; set; }
 
+    // ---- 编队引导的级联 PID（外环 PI → 期望接近率，内环 P → 油门） ----
+    // 三个参数可以在这里直接改，改完重启生效。默认值是仿真扫参的结果：
+    // 1.6 km 追尾约 42 秒到位（纯 P 的旧逻辑要 80~95 秒），且交叉接近场景不劣化。
+    //
+    // ★ 外环输出的"期望接近率"始终被夹在 -20…+30 m/s，这是安全底线：
+    //   放开它会在远距离索要 100 m/s 以上的接近率，物理上刹不住。
+
+    /// <summary>外环比例：把距离误差（m）换成期望接近率（m/s）。越大追得越急。</summary>
+    [JsonPropertyName("formationKp")] public double FormationKp { get; set; } = 0.07;
+
+    /// <summary>外环积分：消除残余偏差，近距离收敛更快。过大容易冲过头。</summary>
+    [JsonPropertyName("formationKi")] public double FormationKi { get; set; } = 0.006;
+
+    /// <summary>内环比例：期望接近率与实际接近率之差放大成油门量。想更跟手就加大。</summary>
+    [JsonPropertyName("formationKv")] public double FormationKv { get; set; } = 1.0;
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 

@@ -588,6 +588,7 @@ public static class Program
                           $"show={cfg.ShowKey} settings={cfg.SettingsKey} reset={cfg.ResetKey} view={cfg.ViewKey} " +
                           $"pitchZero={cfg.PitchZeroKey} bankFlip={cfg.BankFlipKey} bodyFixed={cfg.BodyFixedKey} " +
                           $"exit={cfg.ExitKey} save={cfg.SaveKey} " +
+                          $"guidance(kp={cfg.FormationKp:F3} ki={cfg.FormationKi:F4} kv={cfg.FormationKv:F2}) " +
                           $"playerName={(string.IsNullOrWhiteSpace(cfg.PlayerName) ? "(empty)" : cfg.PlayerName)}");
         overlayRef = overlay;
         int hotkeyFails = overlay.ApplyHotkeys(cfg);
@@ -1603,6 +1604,8 @@ public static class Program
         guideDeltaLastT = 0;
         guideDeltaValid = false;
         guideActionPrev = FormationAction.None;
+        guideIntegral = 0;
+        guideIntegralLastT = 0;
     }
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
@@ -1669,17 +1672,32 @@ public static class Program
                 // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
                 if (Math.Abs(lead.RelBearingDeg) < 50)
                 {
-                    // 闭环：距离误差当作输入，比例换算出"该以多快的速度接近"。
-                    // 斜率 0.035 → 1 km 处约 21 m/s，400 m 处正好 0；限幅是为了远处别给出过猛的追法。
+                    // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
+                    // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
                     double err = lead.RangeM - FormationTargetRangeM;
-                    double wantClosing = Math.Clamp(err * 0.035, -20, 30);
 
-                    // 油门量 = 期望与实际接近率之差，再按偏角修正（斜着飞时沿视线的分量更小）
+                    double nowS = snap.ElapsedSeconds;
+                    double dt = guideIntegralLastT > 0
+                        ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5)
+                        : 0;
+                    guideIntegralLastT = nowS;
+
+                    double wantClosing = cfg.FormationKp * err + cfg.FormationKi * guideIntegral;
+                    // ★ 这一层限幅是安全底线。放开它会在大距离上索要上百 m/s 的接近率，
+                    //   物理上根本刹不住（实测交叉场景需要 10 km 才能减速到位）。
+                    wantClosing = Math.Clamp(wantClosing, -20, 30);
+
+                    // 内环：期望与实际接近率之差 → 油门；按偏角修正（斜着飞时沿视线的分量更小）
                     double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
-                    double dvRaw = (wantClosing - closing) / cosOff * 3.6;
+                    double dvRaw = (wantClosing - closing) * cfg.FormationKv / cosOff * 3.6;
 
                     // 平滑 + 收窄：不这么做的话数字会在几百 km/h 之间跳，看着没法用
-                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw, snap.ElapsedSeconds), -120, 120);
+                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw, nowS), -120, 120);
+
+                    // 抗积分饱和：外环顶到限幅、或油门已经饱和时都不再累积
+                    if (dt > 0 && Math.Abs(deltaKmh) < 114 && Math.Abs(wantClosing) < 29.4)
+                        guideIntegral = Math.Clamp(guideIntegral + err * dt,
+                                                   -GuideIntegralLimit, GuideIntegralLimit);
 
                     // 滞回：进入要 18，已经在动作里只要还大于 8 就继续，避免在两个动作之间抖
                     bool wasAccel = guideActionPrev == FormationAction.Accelerate;
@@ -2178,6 +2196,11 @@ public static class Program
     private static double guideDeltaLastT;
     private static bool guideDeltaValid;
     private static FormationAction guideActionPrev;
+
+    // 级联 PID 的积分项。只有外环没顶到限幅、油门也没饱和时才累积（抗积分饱和）。
+    private static double guideIntegral;
+    private static double guideIntegralLastT;
+    private const double GuideIntegralLimit = 400.0;   // m·s，够大但不至于失控
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
