@@ -13,13 +13,18 @@ namespace WtHud.Telemetry;
 /// </summary>
 public static class HudKillFeed
 {
-    // 成对出现的颜色/联队标记：^DFCN^ ^ZJWB^ ^LostC^ ...
-    private static readonly Regex ColorTag = new(@"\^[A-Za-z0-9]{2,10}\^", RegexOptions.Compiled);
+    // 成对出现的颜色/联队标记：^DFCN^ ^ZJWB^ ^LostC^，也可能是中文联队名 ^雄鹰^
+    // 字符集放宽到「任意非 ^」，只保留成对与长度约束 —— 原来只认 [A-Za-z0-9]，
+    // 中文战队标签会原地留下，清洗后 actor 变成 "^雄鹰^张三"，跟设置里的昵称对不上。
+    private static readonly Regex ColorTag = new(@"\^[^^]{1,16}\^", RegexOptions.Compiled);
     // U+200B..U+200D / BOM / word-joiner：WT 会在中文词之间插这些
     private static readonly Regex ZeroWidth = new(@"[\u200B-\u200D\uFEFF\u2060]", RegexOptions.Compiled);
-    // A (机型) 击落了 B (机型)  —— 只命中「击落了」
-    private static readonly Regex KillLine = new(
-        @"^(?<actor>.+?)\s*\((?<type>[^)]+)\)\s*击落了\s*(?<target>.+)$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 空战击落的动词。中文客户端「击落了」，英文客户端 "shot down"。
+    /// <para>「击毁了 / destroyed」是打地面目标，不算击落，故意不收。</para>
+    /// </summary>
+    private static readonly string[] KillVerbs = { "击落了", "shot down" };
 
     /// <summary>清洗一条 hudmsg 文本：去颜色标记、零宽字符、前导装饰符，首尾空白。</summary>
     public static string Clean(string? raw)
@@ -33,14 +38,45 @@ public static class HudKillFeed
     }
 
     /// <summary>解析「actor (机型) 击落了 target」；不是击落消息返回 false。</summary>
+    /// <remarks>
+    /// 不能再用一条从头匹配的正则：`(?&lt;actor&gt;.+?)` 是非贪婪的，遇到第一个 `(` 就停，
+    /// 昵称里带括号（张三(老阳)）会被截成「张三」。改成先按动词切两半、再从**最后**一个
+    /// `" ("` 处切机型 —— 机型括号永远跟在名字后面，这个位置是确定的。
+    /// </remarks>
     public static bool TryParse(string? raw, out string actor, out string actorType, out string target)
     {
         actor = actorType = target = "";
-        var m = KillLine.Match(Clean(raw));
-        if (!m.Success) return false;
-        actor = m.Groups["actor"].Value.Trim();
-        actorType = m.Groups["type"].Value.Trim();
-        target = m.Groups["target"].Value.Trim();
+        string s = Clean(raw);
+        if (s.Length == 0) return false;
+
+        // 取最靠后的一次动词出现：昵称里万一含有同样的词，宁可让 actor 长一点也别切错
+        int vi = -1, vl = 0;
+        foreach (var v in KillVerbs)
+        {
+            int i = s.LastIndexOf(v, StringComparison.OrdinalIgnoreCase);
+            if (i > vi) { vi = i; vl = v.Length; }
+        }
+        if (vi <= 0) return false;                 // 没有动词，或者动词在开头（没有 actor）
+
+        string left = s[..vi].Trim();
+        string right = s[(vi + vl)..].Trim();
+        if (left.Length == 0 || right.Length == 0) return false;
+
+        // 机型括号前一定有一个空格（"张三 (J-7)"），昵称里的括号通常紧跟（"张三(老阳)"）。
+        // 用 " (" 而不是 '(' 就是为了区分这两种，否则无机型的消息会把昵称括号当机型。
+        int sp = left.LastIndexOf(" (", StringComparison.Ordinal);
+        if (sp > 0 && left.EndsWith(')'))
+        {
+            actor = left[..sp].Trim();
+            actorType = left[(sp + 2)..^1].Trim();
+        }
+        else
+        {
+            actor = left;                          // 没有机型括号的消息也接受
+            actorType = "";
+        }
+
+        target = right;                            // 目标保持原样（含机型），播报里直接显示
         return actor.Length > 0 && target.Length > 0;
     }
 

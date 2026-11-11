@@ -161,6 +161,23 @@ public static class Program
             !HudKillFeed.TryParse("\u22C6 DFCN^ ACCvTARDISdevice (F/A-18A) \u83B7\u200B\u5F97\u200B\u5609\u200B\u5956", out _, out _, out _));
         Check("killfeed requires name", !HudKillFeed.IsOwnKill(killLine, "", out _));
 
+        // 中文昵称 / 中文战队标签 / 昵称带括号：这三类以前都会让 actor 对不上设置里的名字
+        const string zhLine = "^雄鹰^张三 (J-7E) 击落了 李四 (F-16)";
+        Check("killfeed strips chinese squad tag",
+            HudKillFeed.TryParse(zhLine, out var zhActor, out var zhType, out var zhTarget)
+            && zhActor == "张三" && zhType == "J-7E" && zhTarget == "李四 (F-16)");
+        Check("killfeed matches chinese player name", HudKillFeed.IsOwnKill(zhLine, "张三", out _));
+        Check("killfeed chinese name is not split by zero-width",
+            HudKillFeed.IsOwnKill("张\u200B三 (J-7E) 击落了 李四", "张三", out _));
+        Check("killfeed nickname with parentheses",
+            HudKillFeed.TryParse("张三(老阳) (J-7E) 击落了 李四 (F-16)", out var pnActor, out var pnType, out _)
+            && pnActor == "张三(老阳)" && pnType == "J-7E");
+        Check("killfeed english client",
+            HudKillFeed.TryParse("Zhang San (J-7E) shot down Li Si (F-16)", out var enActor, out var enType, out var enTarget)
+            && enActor == "Zhang San" && enType == "J-7E" && enTarget == "Li Si (F-16)");
+        Check("killfeed still ignores ground destroy",
+            !HudKillFeed.TryParse("张三 (J-7E) 击毁了 T-72", out _, out _, out _));
+
         // ---- 转弯提前量：asin(ω·R/V) 与守卫 ----
         // 400 m 间距、600 km/h、长机 10°/s 右转 → 提前 24.8°（这正是"±3° 算对准"盖不住的量）
         double lead = LeadPursuitDeg(10, 400, 600, 45);
