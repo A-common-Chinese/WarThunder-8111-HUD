@@ -1,5 +1,5 @@
 {
-  "_version": 2,
+  "_version": 3,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -9,8 +9,8 @@
     "en": "Main menu: pick a module with the side keys, CONFIRM enters it; PAGE flips within a module."
   },
   "page.display": {
-    "zh": "显示设置：HUD 总开关、视场角、整体偏移、俯仰零点、光标洞、俯仰梯、飞行矢量与编队辅助/编队模式等。",
-    "en": "Display: HUD master switch, FoV, vertical offset, pitch zero, cursor hole, ladder, FPM, and formation assist / formation-only mode."
+    "zh": "显示设置：HUD 总开关、视场角、整体偏移、俯仰零点、光标洞、俯仰梯、飞行矢量，以及编队辅助 / 编队模式 / 长机模式。",
+    "en": "Display: HUD master switch, FoV, vertical offset, pitch zero, cursor hole, ladder, FPM, plus formation assist / formation-only / lead mode."
   },
   "page.camera": {
     "zh": "视角与姿态：俯仰零点校准、俯仰梯显示、飞行矢量标记、坡度方向与微调、相机滚转耦合。",
@@ -287,5 +287,17 @@
   "row.version": {
     "zh": "当前程序版本号。",
     "en": "Current program version."
+  },
+  "row.leadMode": {
+    "zh": "长机模式：打开后不追僚机，只按「长机航向 / 长机马赫」保持自己的姿态，并且只报状态（FORMATION / WINGMAN LATE / TOO CLOSE）不给任何数字 —— 长机不该被引导去追僚机。关掉就是僚机模式：追到长机后方 400 m。注意两人必须约定好角色，都设成僚机会互相追。",
+    "en": "Lead mode: does not chase the wingman; it holds its own heading and Mach and reports status only (FORMATION / WINGMAN LATE / TOO CLOSE), no numbers - a lead should never be steered at its wingman. Off means wingman mode: close to 400 m behind the lead. Both aircraft must agree on roles; two wingmen will chase each other."
+  },
+  "row.leadHeading": {
+    "zh": "长机航向：设定后偏离超过 5° 会提示左转/右转。−1 表示留空 —— 在打开编队模式那一刻锁存当时的航向，之后偏离就提醒回来。",
+    "en": "Lead heading: deviating more than 5 degrees triggers a turn call. -1 means blank - the heading in use when formation mode was switched on is latched, and any drift is called out."
+  },
+  "row.leadMach": {
+    "zh": "长机马赫：目标马赫数（默认 0.70）。偏差超过 0.02 马赫时提示加速/减速。用马赫而不是空速，是因为它不随高度变化；实际比较时按当前音速换算成真空速。",
+    "en": "Lead Mach: target Mach number (default 0.70). A deviation beyond 0.02 triggers a power call. Mach is used instead of airspeed because it does not vary with altitude; the comparison converts it to true airspeed using the current speed of sound."
   }
 }

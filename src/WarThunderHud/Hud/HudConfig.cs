@@ -161,6 +161,23 @@ public sealed class HudConfig
     /// <summary>内环比例：期望接近率与实际接近率之差放大成油门量。想更跟手就加大。</summary>
     [JsonPropertyName("formationKv")] public double FormationKv { get; set; } = 1.0;
 
+    // ---- 长机 / 僚机 ----
+
+    /// <summary>
+    /// 长机模式。关 = 僚机（默认，追到长机后方 400 m）；开 = 长机，保持设定航向与马赫数，
+    /// 只报状态不给数字 —— 长机不该被引导去追僚机。
+    /// </summary>
+    [JsonPropertyName("leadMode")] public bool LeadMode { get; set; }
+
+    /// <summary>
+    /// 长机的设定航向（度）。**-1 表示留空**：在打开编队模式那一刻锁存当时的航向，
+    /// 之后偏离就提醒回来。
+    /// </summary>
+    [JsonPropertyName("leadHeadingDeg")] public double LeadHeadingDeg { get; set; } = -1;
+
+    /// <summary>长机的设定马赫数。用马赫而不是空速，是因为它不随高度变（喷气机习惯）。</summary>
+    [JsonPropertyName("leadMach")] public double LeadMach { get; set; } = 0.7;
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 

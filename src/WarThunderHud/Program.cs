@@ -1607,6 +1607,7 @@ public static class Program
         guideActionPrev = FormationAction.None;
         guideIntegral = 0;
         guideIntegralLastT = 0;
+        leadHeadingLockValid = false;
     }
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
@@ -1618,6 +1619,8 @@ public static class Program
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
         opt.Guide = null;
+        opt.LeadStatusMain = "";
+        opt.LeadStatusSub = "";
         if (!formationOn) ResetGuideState();
 
         opt.GridText = "";
@@ -1659,6 +1662,88 @@ public static class Program
             }
             opt.Friendlies.Sort((a, b) => a.RangeM.CompareTo(b.RangeM));
             while (opt.Friendlies.Count > 4) opt.Friendlies.RemoveAt(opt.Friendlies.Count - 1);
+
+            // ================= 长机模式 =================
+            // 长机不追人：只看自己有没有在设定航向 / 设定马赫上，僚机只当"状态"报，不给数字。
+            if (cfg.LeadMode)
+            {
+                opt.Guide = null;
+
+                // 航向：配置给了就用配置；-1 表示留空 → 锁存进入长机模式那一刻的航向
+                double targetHdg;
+                if (cfg.LeadHeadingDeg >= 0)
+                {
+                    targetHdg = cfg.LeadHeadingDeg;
+                    leadHeadingLockValid = false;          // 以后改回留空时重新锁存
+                }
+                else
+                {
+                    if (!leadHeadingLockValid && hasHeading)
+                    {
+                        leadHeadingLocked = navHeading;
+                        leadHeadingLockValid = true;
+                    }
+                    targetHdg = leadHeadingLocked;
+                }
+
+                // 主状态：僚机在不在位（长机唯一需要关心的事）
+                string main;
+                bool warn = false;
+                if (opt.Friendlies.Count == 0)
+                {
+                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.none");
+                    warn = true;
+                    ResetGuideState();
+                }
+                else
+                {
+                    var wing = opt.Friendlies[0];
+                    double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
+
+                    if (wing.RangeM < 200)
+                    {
+                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.close");
+                        warn = true;
+                    }
+                    else if (wing.RangeM > 1000 || (wing.RangeM > 600 && wingClosing < -10))
+                    {
+                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
+                        warn = true;
+                    }
+                    else
+                    {
+                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.formation");
+                    }
+                }
+
+                // 副状态：姿态偏差（只报方向，不给数字）
+                var subs = new System.Collections.Generic.List<string>();
+
+                if ((hasHeading && leadHeadingLockValid) || cfg.LeadHeadingDeg >= 0)
+                {
+                    double hdgErr = targetHdg - navHeading;
+                    while (hdgErr > 180) hdgErr -= 360;
+                    while (hdgErr < -180) hdgErr += 360;
+                    if (Math.Abs(hdgErr) > 5)
+                        subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, hdgErr > 0 ? "guide.lead.turnR" : "guide.lead.turnL"));
+                }
+
+                // 马赫：目标马赫按当前音速换算成真空速再比，避免高度变化时误判
+                if (cfg.LeadMach > 0.05 && snap.Mach > 0.05 && snap.TasKmh > 50)
+                {
+                    double soundKmh = snap.TasKmh / snap.Mach;
+                    double tasErr = cfg.LeadMach * soundKmh - snap.TasKmh;
+                    if (Math.Abs(tasErr) > 25)
+                        subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, tasErr > 0 ? "guide.lead.add" : "guide.lead.reduce"));
+                }
+
+                opt.LeadStatusMain = main;
+                opt.LeadStatusSub = string.Join("  ·  ", subs);
+                opt.LeadStatusWarn = warn;
+                return;                                    // 长机不再走僚机那套引导
+            }
+            opt.LeadStatusMain = "";
+            opt.LeadStatusSub = "";
 
             // --- 直接引导：只针对最近那一架（"往哪转、加减速"） ---
             // 门槛都写在这里而不是几何层，方便按真机手感调，不用碰绘制代码。
@@ -2210,6 +2295,10 @@ public static class Program
     private static double guideIntegral;
     private static double guideIntegralLastT;
     private const double GuideIntegralLimit = 400.0;   // m·s，够大但不至于失控
+
+    // 长机模式：航向留空（leadHeadingDeg = -1）时锁存进入那一刻的航向，偏离了才好提醒回来。
+    private static double leadHeadingLocked;
+    private static bool leadHeadingLockValid;
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
@@ -2355,6 +2444,17 @@ public static class Program
             else
             {
                 opt.Guide = new FormationLead(12, 820, FormationTargetRangeM, FormationAction.Decelerate, -90);
+            }
+
+            // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)"
+            var leadSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_LEAD");
+            if (!string.IsNullOrWhiteSpace(leadSpec))
+            {
+                var lp = leadSpec.Split('|');
+                opt.Guide = null;
+                opt.LeadStatusMain = lp.Length > 0 ? lp[0] : "";
+                opt.LeadStatusSub = lp.Length > 1 ? lp[1] : "";
+                opt.LeadStatusWarn = lp.Length > 2 && lp[2] == "1";
             }
         }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }

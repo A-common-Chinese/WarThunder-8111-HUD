@@ -61,6 +61,19 @@ public sealed class HudOptions
     /// </summary>
     public FormationLead? Guide { get; set; }
 
+    /// <summary>
+    /// 长机模式的状态行（空 = 不画）。长机只报状态不给数字：
+    /// 主行如 FORMATION / WINGMAN LATE，副行如 TURN R / ADD POWER。
+    /// <para>长机不该看到"右转 12°"这种追人数字，那会诱导它去追僚机。</para>
+    /// </summary>
+    public string LeadStatusMain { get; set; } = "";
+
+    /// <summary>长机模式的副状态行（姿态偏差），空则不画。</summary>
+    public string LeadStatusSub { get; set; } = "";
+
+    /// <summary>主状态是否该用警告色（僚机掉队、距离过近、没设速度等）。</summary>
+    public bool LeadStatusWarn { get; set; }
+
     /// <summary>本帧的友机相对方位与距离，由宿主（Program）每帧填充。</summary>
     public List<FriendlyContact> Friendlies { get; } = new();
     public bool ShowFpm { get; set; } = true;
@@ -644,6 +657,28 @@ public sealed class HudGeometry
     private void AddFormationGuidance(List<HudPrim> prims, double cx, double cy,
                                       double pxDeg, double font, double fontSmall)
     {
+        // 长机模式：只报状态，不给任何数字。位置和僚机模式的主行对齐，切换角色时视线不用移。
+        if (_opt.LeadStatusMain.Length > 0)
+        {
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.LeadStatusMain, Align = HudAlign.Center,
+                FontSize = font * 1.45, Color = _opt.LeadStatusWarn ? _opt.WarnColor : _opt.Color,
+                Points = { (cx, cy + 5.2 * pxDeg) },
+            });
+
+            if (_opt.LeadStatusSub.Length > 0)
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text, Text = _opt.LeadStatusSub, Align = HudAlign.Center,
+                    FontSize = fontSmall * 1.3, Color = _opt.WarnColor,
+                    Points = { (cx, cy + 7.6 * pxDeg) },
+                });
+            }
+            return;
+        }
+
         if (_opt.Guide is not { } g) return;
 
         var col = _opt.Color;
@@ -733,7 +768,8 @@ public sealed class HudGeometry
             });
         }
 
-        Cell(cx - dx, ((int)Math.Round(s.IasKmh)).ToString(), "km/h");
+        // 编队用真空速：长机按马赫飞，僚机追的是相对速度，TAS 才是一致的量
+        Cell(cx - dx, ((int)Math.Round(s.TasKmh)).ToString(), "km/h");
         Cell(cx, ((int)Math.Round(s.AltM)).ToString(), "m");
         Cell(cx + dx, (((int)Math.Round(s.HeadingDeg)) % 360).ToString("000"), "deg");
     }
