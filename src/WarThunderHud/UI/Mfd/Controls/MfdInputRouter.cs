@@ -43,14 +43,23 @@ internal sealed class MfdInputRouter
         SelectedIndex = Math.Clamp(SelectedIndex + delta, 0, _buttons.Count - 1);
     }
 
+    /// <summary>按索引直接选中（主菜单按全局模块索引同步，跨页时不会与 Move 的边界钳制打架）。</summary>
+    public void Select(int index)
+    {
+        if (_buttons.Count == 0) return;
+        SelectedIndex = Math.Clamp(index, 0, _buttons.Count - 1);
+    }
+
     /// <summary>Bezel key pressed: activates the button that listens to this slot.</summary>
-    public MfdCommand? PressSlot(string slotName, InputSource source = InputSource.RealButton)
+    /// <param name="pageIndex">-1 = 不按页过滤；主菜单传当前菜单页号 —— 不同页的按钮共用同一批侧键。</param>
+    public MfdCommand? PressSlot(string slotName, InputSource source = InputSource.RealButton, int pageIndex = -1)
     {
         var real = _realButtons.FirstOrDefault(b => b.SlotName == slotName);
         if (real != null) real.Pressed = true;
 
         foreach (var b in _buttons)
         {
+            if (pageIndex >= 0 && b.PageIndex != pageIndex) continue;
             if (!b.ActivateBy.Any(x => string.Equals(x, slotName, StringComparison.OrdinalIgnoreCase))) continue;
             SelectedIndex = Math.Max(0, _buttons.IndexOf(b));
             return Emit(b, source);
@@ -79,10 +88,12 @@ internal sealed class MfdInputRouter
             : null;
 
     /// <summary>Mouse press inside the glass: select, double-click to activate.</summary>
-    public MfdCommand? MouseDown(PointF p, bool doubleClick)
+    /// <param name="pageIndex">-1 = 不按页过滤；主菜单传当前菜单页号，否则会命中另一页同位置的按钮。</param>
+    public MfdCommand? MouseDown(PointF p, bool doubleClick, int pageIndex = -1)
     {
         for (var i = 0; i < _buttons.Count; i++)
         {
+            if (pageIndex >= 0 && _buttons[i].PageIndex != pageIndex) continue;
             if (!_layout.RectFor(_buttons[i]).Contains(p)) continue;
 
             var now = DateTime.UtcNow;

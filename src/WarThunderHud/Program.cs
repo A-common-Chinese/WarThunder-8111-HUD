@@ -2622,6 +2622,10 @@ public static class Program
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
             else if (view == "display") { form.PreviewOpen(0, 0); }
             else if (view == "display2") { form.PreviewOpen(0, 0); form.PreviewItemPage(1); }
+            else if (view == "menu2") { form.PreviewMenuPage(1); }
+            else if (view == "menunext") { form.PreviewBottomKey(2); }            // 按「下页」
+            else if (view == "menuedge") { form.PreviewMenuPage(1); form.PreviewBottomKey(2); }  // 末页再按
+            else if (view == "menusingle") { form.PreviewBottomKey(2); }          // 只有一页时按
             else if (view == "diag") { form.PreviewOpen(7, 0); }
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }

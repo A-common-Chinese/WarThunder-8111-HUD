@@ -43,6 +43,7 @@ public sealed class MfdFrameForm : Form
     private int _page;
     private int _menuSel;
     private int _itemSel;
+    private int _menuPageIdx;              // 主菜单页号（每页 10 个模块，与模块内页号独立）
     private MfdItem? _pendingAction;
     private bool _dirty;
     private bool _closeConfirm;
@@ -261,8 +262,14 @@ public sealed class MfdFrameForm : Form
         }
         g.DrawString(title, meta, muted, glass.Left + glass.Width / 2 - g.MeasureString(title, meta).Width / 2,
                      glass.Top + 8 * s);
-        var pages = _mode == Mode.Items && CurrentPage != null ? (CurrentPage.Items.Count + 9) / 10 : 1;
-        var ver = (pages > 1 ? ( _itemPage + 1 ) + "/" + pages + "  " : "") + "v" + Application.ProductVersion;
+        // 页眉右上角：菜单显示菜单页号，模块内显示条目页号，其余页面不显示
+        var (pageNo, pages) = _mode switch
+        {
+            Mode.Menu => (_menuPageIdx + 1, (_pages.Count + 9) / 10),
+            Mode.Items when CurrentPage != null => (_itemPage + 1, (CurrentPage.Items.Count + 9) / 10),
+            _ => (1, 1),
+        };
+        var ver = (pages > 1 ? pageNo + "/" + pages + "  " : "") + "v" + Application.ProductVersion;
         g.DrawString(ver, meta, muted, glass.Right - pad - g.MeasureString(ver, meta).Width, glass.Top + 8 * s);
 
         switch (_mode)
@@ -308,11 +315,17 @@ public sealed class MfdFrameForm : Form
         using var name = MfdTheme.CjkAt(24f * s);
         using var hintF = MfdTheme.MonoAt(13f * s);
 
-        for (var i = 0; i < _pages.Count && i < 10; i++)
+        // 主菜单也分页：每页 10 个模块（两列五行，正好用满 10 个侧键）。
+        // 页号与模块内页号（_itemPage）互相独立，这样模块再多也不会被静默截断。
+        var first = _menuPageIdx * 10;
+        for (var cell = 0; cell < 10; cell++)
         {
-            var btn = _layout.SideButtons[(i % 2) * 5 + i / 2];
+            var i = first + cell;
+            if (i >= _pages.Count) break;
+
+            var btn = _layout.SideButtons[(cell % 2) * 5 + cell / 2];
             var cy = btn.Y + btn.Height / 2;
-            var x = i % 2 == 0 ? left : glass.Left + glass.Width / 2 + 18 * s;
+            var x = cell % 2 == 0 ? left : glass.Left + glass.Width / 2 + 18 * s;
             var y = cy - rowH / 2;
             var selected = i == _menuSel;
 
@@ -323,7 +336,7 @@ public sealed class MfdFrameForm : Form
             }
             var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
             using var fgBrush = new SolidBrush(fg);
-            if (i % 2 == 0)
+            if (cell % 2 == 0)
             {
                 using var mark = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Green);
                 g.FillRectangle(mark, x, y + rowH / 2 - 5 * s, 9 * s, 9 * s);
@@ -581,9 +594,11 @@ public sealed class MfdFrameForm : Form
             var pt = new PointF(e.X, e.Y);
 
             var hitIndex = -1;
+            var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
             for (var i = 0; i < _menuPage!.Buttons.Count; i++)
             {
-                var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
+                // 只认当前菜单页的格子：不同页的按钮矩形是重叠的（同一批侧键）
+                if (_menuPage.Buttons[i].PageIndex != _menuPageIdx) continue;
                 if (pageLayout.RectFor(_menuPage.Buttons[i]).Contains(pt))
                 {
                     hitIndex = i;
@@ -593,7 +608,7 @@ public sealed class MfdFrameForm : Form
 
             if (hitIndex >= 0)
             {
-                if (_menuRouter!.MouseDown(pt, e.Clicks >= 2) is { Id: "menu.open" } cmdM
+                if (_menuRouter!.MouseDown(pt, e.Clicks >= 2, _menuPageIdx) is { Id: "menu.open" } cmdM
                     && int.TryParse(cmdM.Arg, out var mIdx))
                 {
                     _menuSel = mIdx;
@@ -805,7 +820,7 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Menu)
         {
             EnsureMenuPage();
-            var cmd = _menuRouter!.PressSlot($"SIDE{cell}");
+            var cmd = _menuRouter!.PressSlot($"SIDE{cell}", InputSource.RealButton, _menuPageIdx);
             if (cmd is { Id: "menu.open" } && int.TryParse(cmd.Arg, out var idx))
             {
                 _menuSel = idx;
@@ -1005,8 +1020,9 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Menu)
         {
             _menuSel = (_menuSel + delta + _pages.Count) % _pages.Count;
+            _menuPageIdx = _menuSel / 10;   // 选中项跨页时，菜单跟着翻过去
             EnsureMenuPage();               // 路由器和菜单页是懒建的，必须先建好再同步
-            _menuRouter?.Move(delta);       // 否则 CONFIRM 时索引还是 0（永远打开第一项）
+            _menuRouter?.Select(_menuSel);  // 按全局索引同步，避免 Move 在边界处与选中项脱节
         }
         else
         {
@@ -1396,17 +1412,23 @@ public sealed class MfdFrameForm : Form
         for (var i = 0; i < _pages.Count; i++)
         {
             var index = i;
-            var cell = i;
+            var cell = i % 10;                        // 本页内的格子号（0-9）
+            // 与 DrawMenu 的排布一致：偶数列在左、奇数列在右，行号 = cell/2。
+            // 之前这里写死 Slot/Column = 0，所有模块的矩形都落在第一行，
+            // 鼠标点任何位置都只能选中第 0 个；侧键则是 SIDE{全局索引}，也和画面错位。
+            var column = cell % 2;
+            var row = cell / 2;
+            var slotName = "SIDE" + (column * 5 + row);
             _menuPage.Buttons.Add(new VirtualButton($"menu{i}", VirtualButtonKind.Action)
             {
                 ParentId = "menu",
                 Text = () => L10n.Get(LangScope.Screen, _pages[index].MenuKey),
-                Slot = 0,                         // 位置由 Column/PageIndex 决定
-                Column = 0,
-                PageIndex = cell / 10,
+                Slot = row,
+                Column = column,
+                PageIndex = i / 10,
                 Target = MfdCommand.Of("menu.open", index.ToString(),
                                        InputSource.Keyboard),
-                ActivateBy = new[] { $"SIDE{cell}" },
+                ActivateBy = new[] { slotName },
             });
         }
         _menuRouter.SetButtons(_menuPage.Buttons);
@@ -1416,6 +1438,7 @@ public sealed class MfdFrameForm : Form
     {
         if (_menuSel < 0 || _menuSel >= _pages.Count) return;
         _page = _menuSel;
+        _menuPageIdx = _menuSel / 10;      // 记住是从哪一页的模块进来的，返回时还回那一页
         _itemPage = 0;
         _itemSel = 0;
         _toast = null;
@@ -1507,6 +1530,7 @@ public sealed class MfdFrameForm : Form
                 break;
             case Mode.Items:
                 _menuSel = _page;
+                _menuPageIdx = _menuSel / 10;
                 _mode = Mode.Menu;
                 SyncDiagProbe();
                 _toast = null;
@@ -1572,7 +1596,16 @@ public sealed class MfdFrameForm : Form
         {
             var menuPages = (_pages.Count + 9) / 10;
             if (menuPages <= 1) { _toast = L10n.Get(LangScope.Screen, "page.single"); return; }
-            return;   // 目前模块不足 10 个，单页
+
+            var nextMenu = Math.Clamp(_menuPageIdx + delta, 0, menuPages - 1);
+            if (nextMenu == _menuPageIdx) { _toast = L10n.Get(LangScope.Screen, "page.edge"); return; }
+
+            _menuPageIdx = nextMenu;
+            _menuSel = nextMenu * 10;       // 翻页后选中该页第一个模块
+            EnsureMenuPage();
+            _menuRouter?.Select(_menuSel);
+            _toast = null;
+            return;
         }
 
         var page = CurrentPage!;
@@ -1689,6 +1722,23 @@ public sealed class MfdFrameForm : Form
         _itemPage = Math.Max(0, page);
         Invalidate();
     }
+
+    /// <summary>预览主菜单的第 N 页（用于出图核对分页排版）。</summary>
+    public void PreviewMenuPage(int page)
+    {
+        var pages = (_pages.Count + 9) / 10;
+        _menuPageIdx = Math.Clamp(page, 0, Math.Max(0, pages - 1));
+        _menuSel = _menuPageIdx * 10;
+        EnsureMenuPage();
+        _menuRouter?.Select(_menuSel);
+        Invalidate();
+    }
+
+    /// <summary>
+    /// 预览时模拟按底部的「上页/下页」（index 1 = 上页，2 = 下页）。
+    /// 走的是真实按钮路径，包括翻页、选中项重置和边界提示。
+    /// </summary>
+    public void PreviewBottomKey(int index) => PressBottom(index);
 
     /// <summary>Preview helper: opens the help structure page.</summary>
     public void PreviewHelp(int page)
