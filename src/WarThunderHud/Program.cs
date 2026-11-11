@@ -2405,7 +2405,7 @@ public static class Program
                     double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
                     // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
                     // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
-                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds, cfg.FormationRangeM);
+                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds, cfg);
 
                     if (wing.RangeM < 200)
                     {
@@ -2609,8 +2609,9 @@ public static class Program
                 // 所以保持阶段把小偏差直接归零，让界面安静下来；真偏了照样报。
                 if (formationStage == FormationStage.Maintain)
                 {
-                    if (Math.Abs(guideTurn) < 5.0) guideTurn = 0;      // 5° ≈ 400 m 上 35 m 横向
-                    if (Math.Abs(deltaKmh) < 20.0)
+                    // 死区随站位一起调：站位改大时同样的角度对应更大的横向偏差
+                    if (Math.Abs(guideTurn) < cfg.FormationSteadyDeg) guideTurn = 0;
+                    if (Math.Abs(deltaKmh) < cfg.FormationSteadyKmh)
                     {
                         deltaKmh = 0;
                         action = FormationAction.Hold;
@@ -2618,7 +2619,7 @@ public static class Program
                 }
 
                 // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
-                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds, cfg.FormationRangeM);
+                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds, cfg);
 
                 // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
                 // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
@@ -3224,17 +3225,17 @@ public static class Program
     /// <para>到位线 40 m、需持续 2 s：40 m 比 sim 里的 60 m 更严，因为「编队完成」是给长机的承诺，
     /// 一旦显示他就会开始机动。</para>
     /// </summary>
-    private static void UpdateFormationStage(double rangeM, double nowS, double targetRangeM)
+    private static void UpdateFormationStage(double rangeM, double nowS, HudConfig cfg)
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        double err = Math.Abs(rangeM - targetRangeM);
+        double err = Math.Abs(rangeM - cfg.FormationRangeM);
         if (formationStage == FormationStage.Converge)
         {
-            if (err <= 40)
+            if (err <= cfg.FormationDoneM)
             {
                 if (formationDoneSince < 0) formationDoneSince = nowS;
-                else if (nowS - formationDoneSince >= 2.0)
+                else if (nowS - formationDoneSince >= Math.Max(0.1, cfg.FormationDoneHoldS))
                 {
                     formationStage = FormationStage.Maintain;
                     formationStageSince = nowS;
@@ -3244,7 +3245,7 @@ public static class Program
             }
             else formationDoneSince = -1;
         }
-        else if (formationStage == FormationStage.Maintain && err > 120)
+        else if (formationStage == FormationStage.Maintain && err > cfg.FormationDropM)
         {
             formationStage = FormationStage.Converge;
             formationStageSince = nowS;

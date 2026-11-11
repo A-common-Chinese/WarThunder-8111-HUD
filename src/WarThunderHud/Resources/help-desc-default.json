@@ -1,5 +1,5 @@
 {
-  "_version": 15,
+  "_version": 16,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -371,5 +371,25 @@
   "row.fStationBack": {
     "zh": "侧位僚机的纵向后距。默认 370 m。它是斜距的另一半（见「侧位横偏」）。单独改动会让左右两翼离长机更远或更近，与尾随位的距离不再一致。",
     "en": "Longitudinal distance for the side slots. Default 370 m. It is the other half of the slant range; changing it alone makes the wing slots sit further or closer than the trail slot."
+  },
+  "row.fDoneM": {
+    "zh": "「编队完成」的距离误差门槛。默认 40 m。★ 这是绝对米数不是百分比：站位 400 m 时相当于 10%，站位改到 800 m 就只剩 5%、会明显变难。改大站位记得同步放宽这里。",
+    "en": "Distance band for FORMATION SET. Default 40 m. It is an absolute number, so at a 400 m slot it means 10% but at 800 m only 5% - widen it if you widen the formation."
+  },
+  "row.fDoneHold": {
+    "zh": "进入门槛需要持续多久才算完成。默认 2 s。防止只是掠过站位就报完成（长机会据此开始机动）。",
+    "en": "How long the band must be held before declaring the formation set. Default 2 s, so a fly-through does not trigger it."
+  },
+  "row.fDropM": {
+    "zh": "掉出「保持」、退回「收敛」的误差门槛。默认 120 m。必须明显大于「完成误差」，否则会在门槛附近来回切换状态（提示闪烁）。",
+    "en": "Error band that drops the formation back to converge. Default 120 m. Keep it well above the done band or the state will flip back and forth."
+  },
+  "row.fSteadyDeg": {
+    "zh": "保持阶段的转向死区：偏差小于它就显示「已对准」，指针不再动。默认 5°（400 m 上约 35 m 横向）。调大更安静但会漏掉小偏差。",
+    "en": "Turn deadband while holding. Under it the cue reads aligned and stays still. Default 5 deg (about 35 m at 400 m)."
+  },
+  "row.fSteadyKmh": {
+    "zh": "保持阶段的速度死区：Δv 小于它就显示「保持」。默认 20 km/h。调大更安静，但真正的速度漂移会更晚被发现。",
+    "en": "Speed deadband while holding. Under it the cue reads hold. Default 20 km/h; larger is quieter but hides slow drift longer."
   }
 }

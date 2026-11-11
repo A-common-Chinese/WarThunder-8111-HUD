@@ -224,6 +224,32 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationStationBackM")] public double FormationStationBackM { get; set; } = 370;
 
+    // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
+
+    /// <summary>
+    /// 「编队完成」的距离误差门槛（米）。默认 40。★ 这是**绝对米数**，不是百分比：
+    /// 站位放到 800 m 时 40 m 只相当于 5%，比 400 m 时的 10% 严一倍，改站位记得同步放宽这里。
+    /// </summary>
+    [JsonPropertyName("formationDoneM")] public double FormationDoneM { get; set; } = 40;
+
+    /// <summary>进入门槛需要持续多久才算完成（秒）。默认 2.0，防止掠过站位就报完成。</summary>
+    [JsonPropertyName("formationDoneHoldS")] public double FormationDoneHoldS { get; set; } = 2.0;
+
+    /// <summary>
+    /// 掉出「保持」的误差门槛（米）。默认 120。
+    /// <para>必须明显大于 <see cref="FormationDoneM"/>，否则会在门槛附近反复切换状态。</para>
+    /// </summary>
+    [JsonPropertyName("formationDropM")] public double FormationDropM { get; set; } = 120;
+
+    /// <summary>
+    /// 保持阶段的转向死区（度）：偏差小于它就按「已对准」显示，指针不再动。默认 5。
+    /// <para>400 m 上 5° ≈ 35 m 横向。</para>
+    /// </summary>
+    [JsonPropertyName("formationSteadyDeg")] public double FormationSteadyDeg { get; set; } = 5;
+
+    /// <summary>保持阶段的速度死区（km/h）：偏差小于它就显示「保持」。默认 20。</summary>
+    [JsonPropertyName("formationSteadyKmh")] public double FormationSteadyKmh { get; set; } = 20;
+
     /// <summary>
     /// 僚机速度前馈的上限（相对长机真空速的倍数）。外圈路径更长，按 |ω|·(r_w−ρ) 补速。
     /// <para>默认 **1.30**。2026-11-11 试过放宽到 1.60：15°/s 外圈确实从 R=730 收到 486，
