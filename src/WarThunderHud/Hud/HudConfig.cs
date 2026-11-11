@@ -161,6 +161,21 @@ public sealed class HudConfig
     /// <summary>内环比例：期望接近率与实际接近率之差放大成油门量。想更跟手就加大。</summary>
     [JsonPropertyName("formationKv")] public double FormationKv { get; set; } = 1.0;
 
+    // ---- 转弯提前量（lead pursuit）----
+    // 纯追位（指向长机"当前位置"）在转弯时注定追错：长机 10°/s 右转、间距 400 m、600 km/h，
+    // 需要的提前角是 asin(ω·R/V) ≈ 25°，而引导门槛只把 ±3° 当"对准"。
+    // 打开后转向建议指向长机的**未来位置**，队形不会在转弯中被甩到外圈。
+    // 转向率优先取数据链（长机自报，准且无滞后），没有就退化为相对方位的变化率反推。
+
+    /// <summary>转弯提前量开关。关掉就回到"指向长机当前位置"的纯追位。</summary>
+    [JsonPropertyName("formationLeadFeed")] public bool FormationLeadFeed { get; set; } = true;
+
+    /// <summary>启用提前量所需的最小转向率（°/s）。低于它提前角不到 4°，加了只会让数字乱跳。</summary>
+    [JsonPropertyName("formationLeadMinRate")] public double FormationLeadMinRate { get; set; } = 1.5;
+
+    /// <summary>提前角上限（度）。防止低速大转向率时 asin 顶到 90° 把机头指到侧面去。</summary>
+    [JsonPropertyName("formationLeadMaxDeg")] public double FormationLeadMaxDeg { get; set; } = 45;
+
     // ---- 长机 / 僚机 ----
 
     /// <summary>

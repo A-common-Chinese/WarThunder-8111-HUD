@@ -28,7 +28,9 @@ public enum FormationAction
 /// <para>高度差不在这里 —— map_obj 没有 z，单机拿不到友机高度。</para>
 /// </summary>
 public readonly record struct FormationLead(
-    double TurnDeg, double RangeM, double TargetRangeM, FormationAction Action, double DeltaKmh);
+    double TurnDeg, double RangeM, double TargetRangeM, FormationAction Action, double DeltaKmh,
+    // 长机转向率（°/s，正 = 右转）与来源。0 = 没有提前量，界面不显示这一行。
+    double LeadRateDeg = 0, bool LeadFromLink = false);
 
 public sealed class HudOptions
 {
@@ -689,6 +691,23 @@ public sealed class HudGeometry
         if (_opt.Guide is not { } g) return;
 
         var col = _opt.Color;
+
+        // ---- 0) 长机正在转弯：为什么下面的角度比目视看到的大 ----
+        // 提前量把机头指向长机的未来位置，转弯时这个数值会比"长机在哪"大十几到二十几度。
+        // 不说一句，飞行员会以为引导跳了。只在真的在转弯时出现，平飞完全不占视觉。
+        if (Math.Abs(g.LeadRateDeg) >= 1.5)
+        {
+            int rate = (int)Math.Round(Math.Abs(g.LeadRateDeg));
+            string turnTpl = L10n.Get(LangScope.Alerts, g.LeadRateDeg > 0 ? "guide.leadTurnR" : "guide.leadTurnL");
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = string.Format(turnTpl, rate), Align = HudAlign.Center,
+                FontSize = fontSmall * 1.1,
+                // 数据链来的用正常色，本地估算的淡一档 —— 数值可信度不同，别让飞行员以为是同一个精度
+                Color = Fade(col, g.LeadFromLink ? 0.85 : 0.55),
+                Points = { (cx, cy + 3.45 * pxDeg) },
+            });
+        }
 
         // ---- 1) 往哪转：TurnDeg 是相对方位，+ = 友机在右侧 = 右转 ----
         double turn = g.TurnDeg;

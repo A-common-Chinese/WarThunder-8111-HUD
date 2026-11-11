@@ -18,8 +18,8 @@ public static class Program
     /// <summary>
     /// 屏幕上显示的版本号：去掉 <c>+&lt;commit&gt;</c> 后缀。
     /// <see cref="Application.ProductVersion"/> 取的是 AssemblyInformationalVersion，SDK 会自动拼上
-    /// 40 位 commit（0.3.20+cd56ea85a768…），在 1330 宽的题头里比标题还长，两个会贴在一起。
-    /// 构建号留给日志和文件属性，题头与 DIAG 页只要 0.3.20。
+    /// 40 位 commit（0.4.0+cd56ea85a768…），在 1330 宽的题头里比标题还长，两个会贴在一起。
+    /// 构建号留给日志和文件属性，题头与 DIAG 页只要 0.4.0。
     /// </summary>
     public static string ShortVersion =>
         Application.ProductVersion.Split('+')[0];
@@ -158,6 +158,57 @@ public static class Program
         Check("killfeed ignores awards",
             !HudKillFeed.TryParse("\u22C6 DFCN^ ACCvTARDISdevice (F/A-18A) \u83B7\u200B\u5F97\u200B\u5609\u200B\u5956", out _, out _, out _));
         Check("killfeed requires name", !HudKillFeed.IsOwnKill(killLine, "", out _));
+
+        // ---- 转弯提前量：asin(ω·R/V) 与守卫 ----
+        // 400 m 间距、600 km/h、长机 10°/s 右转 → 提前 24.8°（这正是"±3° 算对准"盖不住的量）
+        double lead = LeadPursuitDeg(10, 400, 600, 45);
+        Check("lead pursuit 400m/600kmh/10degps", Math.Abs(lead - 24.77) < 0.1);
+        Check("lead pursuit left turn negative", LeadPursuitDeg(-10, 400, 600, 45) < -24);
+        Check("lead pursuit no turn", LeadPursuitDeg(0, 400, 600, 45) == 0);
+        // 上限钳制：慢速 + 大转向率时 asin 会顶到 70° 以上，必须按配置砍到 45
+        Check("lead pursuit clamped", Math.Abs(LeadPursuitDeg(30, 400, 180, 45) - 45) < 0.01);
+        // 太慢时不给提前量：50 m/s 以下这个公式会被噪声主导
+        Check("lead pursuit too slow", LeadPursuitDeg(10, 400, 170, 45) == 0);
+
+        // ---- 数据链报文：新格式回环 + 老格式兼容 ----
+        string wire = WtHud.Telemetry.DataLink.BuildPayload(123456, 1000, -2.5, 359.6, -12.34);
+        Check("datalink payload shape", wire == "WTDL2|123456|1000|-25|0|-123");
+        Check("datalink roundtrip",
+            WtHud.Telemetry.DataLink.TryParsePayload(wire, out var dlId, out var dlAlt, out var dlVy, out var dlTurn)
+            && dlId == 123456 && dlAlt == 1000
+            && Math.Abs(dlVy - (-2.5)) < 0.01
+            && dlTurn is double t && Math.Abs(t - (-12.3)) < 0.01);
+        // 老版本只发 4 段：高度照收，转向率给 null（上层退化为本地估算）
+        Check("datalink legacy 4 fields",
+            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|999999|5000|-10", out _, out var oldAlt, out _, out var oldTurn)
+            && oldAlt == 5000 && oldTurn == null);
+        Check("datalink rejects wrong magic",
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL3|1|2|3", out _, out _, out _, out _));
+        Check("datalink rejects garbage",
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|abc|1|2", out _, out _, out _, out _));
+
+        // ---- 转向率估计器：窗口首尾差 ----
+        // 每 250 ms 涨 5° = 20°/s；窗口 1.0 s，所以稳态应读出 20
+        ownHeadingHistory.Clear();
+        double rateSeen = 0;
+        for (int i = 0; i <= 5; i++) rateSeen = UpdateOwnTurnRate(true, i * 5.0, i * 0.25);
+        Check("own turn rate 20degps", Math.Abs(rateSeen - 20) < 0.5);
+        Check("own turn rate needs heading", UpdateOwnTurnRate(false, 0, 2.0) == 0);
+        // 切图/重生：航向从 10 跳到 200，历史作废，这一帧不能算出 760°/s 那种鬼值
+        ownHeadingHistory.Clear();
+        UpdateOwnTurnRate(true, 10, 0);
+        UpdateOwnTurnRate(true, 10, 0.25);
+        Check("own turn rate ignores compass jump", Math.Abs(UpdateOwnTurnRate(true, 200, 0.5)) < 1e-9);
+
+        // 无数据链时的反推：长机 10°/s、我不转 → 相对方位每秒涨 10° → 估出 10°/s
+        leadRelHistory.Clear();
+        double estRate = 0;
+        for (int i = 0; i <= 4; i++) estRate = EstimateLeadTurnRate(i * 2.5, 0, i * 0.25);
+        Check("lead turn rate from bearing", Math.Abs(estRate - 10) < 0.5);
+        // 我也在同样右转 10°/s 时相对方位不变，靠 ownTurnRate 补回来，结果仍是 10
+        leadRelHistory.Clear();
+        for (int i = 0; i <= 4; i++) estRate = EstimateLeadTurnRate(0, 10, i * 0.25);
+        Check("lead turn rate adds own rate", Math.Abs(estRate - 10) < 0.5);
 
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
@@ -1173,7 +1224,17 @@ public static class Program
             bool showRadarAlt = cfg.TapeRadarAltitude && hasRadioAlt;
             opt.AltTapeIsRadar = showRadarAlt;
             opt.AltTapeM = showRadarAlt ? snap.RadioAltM!.Value : snap.AltM;
-            dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs);
+            // 自己的转向率每帧更新：有数据链要广播给僚机，没数据链时"反推长机转向率"也要用它。
+            // 没有罗盘就用航迹角兜底，和 UpdateNavigation 里的 navHeading 同一套规则。
+            double ownHdg = snap.HasHeading ? snap.HeadingDeg : 0;
+            bool ownHdgValid = snap.HasHeading;
+            if (!ownHdgValid && mapData.CourseDeg is double cog)
+            {
+                ownHdg = cog;
+                ownHdgValid = true;
+            }
+            UpdateOwnTurnRate(ownHdgValid, ownHdg, snap.ElapsedSeconds);
+            dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg);
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -1612,6 +1673,7 @@ public static class Program
     private static void ResetGuideState()
     {
         closingHistory.Clear();
+        leadRelHistory.Clear();
         guideDeltaSmooth = 0;
         guideDeltaLastT = 0;
         guideDeltaValid = false;
@@ -1748,6 +1810,11 @@ public static class Program
                         subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, tasErr > 0 ? "guide.lead.add" : "guide.lead.reduce"));
                 }
 
+                // 链路状态：只在**没有**伙伴时提示 —— 有链路是常态，平时不该占视觉。
+                // 僚机的转弯提前量靠这条链路，长机得知道自己的状态有没有送出去。
+                if (dataLink == null || dataLink.NodeCount == 0)
+                    subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.nolink"));
+
                 opt.LeadStatusMain = main;
                 opt.LeadStatusSub = string.Join("  ·  ", subs);
                 opt.LeadStatusWarn = warn;
@@ -1835,8 +1902,42 @@ public static class Program
                 // 滞回状态每帧都更新（偏角大到没给建议时也要清掉，否则残留到下一段）
                 guideActionPrev = action;
 
-                opt.Guide = new FormationLead(lead.RelBearingDeg, lead.RangeM,
-                                             FormationTargetRangeM, action, deltaKmh);
+                // ---- 转弯提前量：把机头指向长机的未来位置 ----
+                // 优先用数据链里长机自报的转向率（准、无滞后）；没有就退化为相对方位变化率反推。
+                // 油门那一侧不动：提前量只改"往哪转"，距离仍由 PID 管。
+                double leadRate = 0;
+                bool leadFromLink = false;
+                if (cfg.FormationLeadFeed)
+                {
+                    // 只在**链路里只有一个伙伴**时才信它的转向率：报文里没有位置，多伙伴时
+                    // 无法确认这个值来自编队长机还是战场上的其它队友，宁可退回本地估算。
+                    if (dataLink != null && dataLink.NodeCount == 1
+                        && dataLink.TryGetPartnerTurnRate(out double linkedRate))
+                    {
+                        leadRate = linkedRate;
+                        leadFromLink = true;
+                    }
+                    else
+                    {
+                        leadRate = EstimateLeadTurnRate(lead.RelBearingDeg, ownTurnRateDeg, snap.ElapsedSeconds);
+                    }
+                }
+
+                double guideTurn = lead.RelBearingDeg;
+                if (cfg.FormationLeadFeed && Math.Abs(leadRate) >= Math.Max(0.2, cfg.FormationLeadMinRate))
+                {
+                    guideTurn += LeadPursuitDeg(leadRate, lead.RangeM, snap.TasKmh,
+                                                Math.Max(5, cfg.FormationLeadMaxDeg));
+                    guideTurn = NormalizeDeg(guideTurn);
+                }
+                else
+                {
+                    leadRate = 0;      // 没到门槛就不报转向率，免得提示行一直挂着
+                }
+
+                opt.Guide = new FormationLead(guideTurn, lead.RangeM,
+                                             FormationTargetRangeM, action, deltaKmh,
+                                             leadRate, leadFromLink);
             }
             else
             {
@@ -2318,7 +2419,100 @@ public static class Program
     private static double leadHeadingLocked;
     private static bool leadHeadingLockValid;
 
-    // 数据链（只交换高度）。null = 没开。
+    // ---- 转弯提前量（lead pursuit）----
+    // 转向率是角度的一阶导数，只能用窗口内的首尾差估：单帧差分在 4 Hz 上全是噪声。
+    // 1.0 秒窗口 = 罗盘 ±0.5° 抖动折成 ±0.5°/s，而转弯信号是 5~15°/s，够用且不迟钝。
+    private const double TurnRateWindowS = 1.0;
+    private const double TurnRateMinSpanS = 0.4;
+
+    /// <summary>自己航向的历史（算自己的转向率，用于广播和「相对方位变化率」的反推）。</summary>
+    private static readonly System.Collections.Generic.List<(double T, double Hdg)> ownHeadingHistory = new();
+
+    /// <summary>最近一次算出的自己的转向率（°/s，正 = 右转）。</summary>
+    private static double ownTurnRateDeg;
+
+    /// <summary>友机相对方位的历史（没有数据链时用它反推长机转向率）。</summary>
+    private static readonly System.Collections.Generic.List<(double T, double Rel)> leadRelHistory = new();
+
+    /// <summary>把角度归一化到 -180..180（罗盘差、相对方位差都要过一遍）。</summary>
+    private static double NormalizeDeg(double deg)
+    {
+        while (deg > 180) deg -= 360;
+        while (deg < -180) deg += 360;
+        return deg;
+    }
+
+    /// <summary>
+    /// 窗口内首尾差算自己的转向率（°/s）。没有航向时清空历史并返回 0 ——
+    /// 不能拿 0 当航向喂进来，否则转弯一开始会先算出一次巨大的假跳变。
+    /// </summary>
+    private static double UpdateOwnTurnRate(bool hasHeading, double hdgDeg, double nowS)
+    {
+        if (!hasHeading)
+        {
+            ownHeadingHistory.Clear();
+            ownTurnRateDeg = 0;
+            return 0;
+        }
+
+        // 切图/重生/罗盘重同步会让航向瞬间跳到别处，历史必须作废
+        if (ownHeadingHistory.Count > 0
+            && Math.Abs(NormalizeDeg(hdgDeg - ownHeadingHistory[^1].Hdg)) > 60)
+            ownHeadingHistory.Clear();
+
+        ownHeadingHistory.Add((nowS, hdgDeg));
+        while (ownHeadingHistory.Count > 2 && nowS - ownHeadingHistory[0].T > TurnRateWindowS)
+            ownHeadingHistory.RemoveAt(0);
+
+        if (ownHeadingHistory.Count < 2) { ownTurnRateDeg = 0; return 0; }
+
+        double span = ownHeadingHistory[^1].T - ownHeadingHistory[0].T;
+        if (span < TurnRateMinSpanS) { ownTurnRateDeg = 0; return 0; }
+
+        ownTurnRateDeg = NormalizeDeg(ownHeadingHistory[^1].Hdg - ownHeadingHistory[0].Hdg) / span;
+        return ownTurnRateDeg;
+    }
+
+    /// <summary>
+    /// 没有数据链时从「相对方位的变化率」反推长机的转向率。
+    /// <para>距离稳定时有 <c>d(rel)/dt = ω_长机 − ω_我</c>，所以把测到的变化率加回自己的转向率
+    /// 就是长机的。比拿位置序列算航迹角简单，也正好复用同一个窗口。</para>
+    /// </summary>
+    private static double EstimateLeadTurnRate(double relDeg, double ownTurnRate, double nowS)
+    {
+        if (leadRelHistory.Count > 0
+            && Math.Abs(NormalizeDeg(relDeg - leadRelHistory[^1].Rel)) > 60)
+            leadRelHistory.Clear();      // 换目标了
+
+        leadRelHistory.Add((nowS, relDeg));
+        while (leadRelHistory.Count > 2 && nowS - leadRelHistory[0].T > TurnRateWindowS)
+            leadRelHistory.RemoveAt(0);
+
+        if (leadRelHistory.Count < 2) return 0;
+
+        double span = leadRelHistory[^1].T - leadRelHistory[0].T;
+        if (span < TurnRateMinSpanS) return 0;
+
+        double dRel = NormalizeDeg(leadRelHistory[^1].Rel - leadRelHistory[0].Rel) / span;
+        return dRel + ownTurnRate;
+    }
+
+    /// <summary>
+    /// 转弯提前角：<c>asin(ω·R/V)</c> —— 指向长机的未来位置，而不是它现在的位置。
+    /// <para>物理含义：以 V 飞行时，要跟上以 ω 绕自己转、距离 R 的长机，机头必须多压这么多度。
+    /// 400 m / 600 km/h / 10°/s 时约 25°，而引导把 ±3° 就当"对准"了 —— 这就是转弯时队形被甩的原因。</para>
+    /// </summary>
+    private static double LeadPursuitDeg(double turnRateDeg, double rangeM, double tasKmh, double maxDeg)
+    {
+        double vMs = tasKmh / 3.6;
+        if (vMs < 50 || rangeM < 30) return 0;
+
+        double omega = turnRateDeg * Math.PI / 180.0;             // rad/s
+        double s = Math.Clamp(omega * rangeM / vMs, -0.98, 0.98);  // asin 的定义域
+        return Math.Clamp(Math.Asin(s) * 180.0 / Math.PI, -maxDeg, maxDeg);
+    }
+
+    // 数据链（交换高度 + 航向/转向率）。null = 没开。
     private static WtHud.Telemetry.DataLink? dataLink;
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
@@ -2455,7 +2649,7 @@ public static class Program
                 opt.Friendlies.Add(new FriendlyContact(-38, 1800, "Fighter"));
                 opt.Friendlies.Add(new FriendlyContact(150, 5200, "Bomber"));
             }
-            // 引导样张：WT_PREVIEW_GUIDE="转角,距离,目标距离,动作(0=无 1=加速 2=减速 3=保持),油门km/h"
+            // 引导样张：WT_PREVIEW_GUIDE="转角,距离,目标距离,动作(0=无 1=加速 2=减速 3=保持),油门km/h[,转向率°/s[,1=来自数据链]]"
             var guideSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_GUIDE");
             if (!string.IsNullOrWhiteSpace(guideSpec))
             {
@@ -2469,7 +2663,10 @@ public static class Program
                         ? (FormationAction)ai : FormationAction.None;
                     double gDelta = g.Length >= 5
                         && double.TryParse(g[4], NumberStyles.Any, CultureInfo.InvariantCulture, out double gd) ? gd : 0;
-                    opt.Guide = new FormationLead(gTurn, gRange, gTarget, gAct, gDelta);
+                    double gLeadRate = g.Length >= 6
+                        && double.TryParse(g[5], NumberStyles.Any, CultureInfo.InvariantCulture, out double glr) ? glr : 0;
+                    bool gFromLink = g.Length >= 7 && g[6].Trim() == "1";
+                    opt.Guide = new FormationLead(gTurn, gRange, gTarget, gAct, gDelta, gLeadRate, gFromLink);
                 }
             }
             else

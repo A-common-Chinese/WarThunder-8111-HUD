@@ -174,6 +174,7 @@ public static class L10n
         ["row.fpm"] = ("速度矢量", "FLIGHT MARKER"),
         ["row.formation"] = ("编队辅助", "FORMATION"),
         ["row.formationOnly"] = ("编队模式", "FORMATION ONLY"),
+        ["row.formationLeadFeed"] = ("转弯提前量", "TURN LEAD"),
         ["row.leadMode"] = ("长机模式", "LEAD MODE"),
         ["row.leadHeading"] = ("长机航向", "LEAD HDG"),
         ["row.leadMach"] = ("长机马赫", "LEAD MACH"),
@@ -338,6 +339,10 @@ public static class L10n
         ["guide.lead.turnR"] = ("右转", "TURN R"),
         ["guide.lead.add"] = ("加速", "ADD POWER"),
         ["guide.lead.reduce"] = ("减速", "REDUCE POWER"),
+        // 转弯提前量：长机正在以多少度/秒转弯，僚机的转向建议已按这个值前移
+        ["guide.leadTurnR"] = ("长机右转 {0}°/s", "LEAD TURN R {0}°/s"),
+        ["guide.leadTurnL"] = ("长机左转 {0}°/s", "LEAD TURN L {0}°/s"),
+        ["guide.lead.nolink"] = ("无数据链", "NO LINK"),
         ["splash"] = ("击落", "SPLASH"),
         ["sinkrate"] = ("下降率", "SINK RATE"),
         ["reducespeed"] = ("减速", "REDUCE SPEED"),

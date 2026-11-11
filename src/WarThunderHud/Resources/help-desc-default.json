@@ -1,5 +1,5 @@
 {
-  "_version": 6,
+  "_version": 7,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -79,6 +79,10 @@
   "row.formationOnly": {
     "zh": "编队模式：隐藏俯仰梯、数据带、数值区、导航与构型提示，只留友机方位和速度/高度/航向三个读数；此时编队辅助自动开启，并在准星下方给出编队引导（往哪转、当前距目标 400 m 还差多少、油门加减多少）。地形、失速、超速告警仍然保留。",
     "en": "Formation only: hides the ladder, tapes, data block, navigation and configuration hints, leaving friendly bearings plus three readouts (speed, altitude, heading). Formation assist is implied, and guidance appears under the reticle (which way to turn, current versus target 400 m, how much throttle). Terrain, stall and overspeed alerts are kept."
+  },
+  "row.formationLeadFeed": {
+    "zh": "转弯提前量：长机转弯时，僚机的转向建议指向长机的「未来位置」而不是它现在的位置。纯追位会让僚机一直追着长机走过的轨迹，转弯时被甩到外圈；加上提前量（asin(ω·R/V)，400 m / 600 km/h / 10°/s 时约 25°）队形就能保持住。转向率优先取数据链里长机自报的值，没开数据链就退化为相对方位的变化率反推，此时提示行颜色会淡一档。平飞时不显示任何多余文字。",
+    "en": "Turn lead: while the leader turns, the wingman's steering solution points at where the leader will be, not where it is. Pure pursuit chases the leader's past track and gets thrown to the outside of the turn; the lead angle (asin(w*R/V), about 25 deg at 400 m / 600 km/h / 10 deg/s) holds the formation. Turn rate comes from the data link when the leader broadcasts it, otherwise it is inferred from the bearing rate and drawn one shade dimmer. Nothing extra is drawn in level flight."
   },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",

@@ -202,6 +202,7 @@ internal static class MfdPages
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
             Toggle("row.formation", c => c.FormationAssist, (c, v) => c.FormationAssist = v),
             Toggle("row.formationOnly", c => c.FormationOnly, (c, v) => c.FormationOnly = v),
+            Toggle("row.formationLeadFeed", c => c.FormationLeadFeed, (c, v) => c.FormationLeadFeed = v),
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),

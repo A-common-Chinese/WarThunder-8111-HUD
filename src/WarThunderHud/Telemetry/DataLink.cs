@@ -9,12 +9,16 @@ using System.Text;
 namespace WtHud.Telemetry;
 
 /// <summary>
-/// 极简数据链：**只广播自己的气压高度**。
+/// 极简数据链：广播自己的气压高度，外加编队辅助需要的航向与转向率。
 /// <para>
-/// 位置不需要共享 —— 单机拿到的友机位置与对方自报值一致到 1–2 m（实测 27 m–31 km 全段），
+/// 位置不共享 —— 单机拿到的友机位置与对方自报值一致到 1–2 m（实测 27 m–31 km 全段），
 /// 而高度在 <c>map_obj</c> 里根本没有 z，单机无论如何拿不到。高度又恰好是慢变量
-/// （Vy 通常 0–5 m/s），100 ms 延迟只差半米，所以它对时间同步几乎没有要求，
-/// 是整个数据链里性价比最高的一项。
+/// （Vy 通常 0–5 m/s），100 ms 延迟只差半米，所以它对时间同步几乎没有要求。
+/// </para>
+/// <para>
+/// **转向率是第二个值得共享的量**：它决定转弯时僚机要给多少提前量
+/// （<c>asin(ω·R/V)</c>）。从位置差分也能估，但 4 Hz 的位置加上噪声会滞后一秒以上，
+/// 而长机自己知道得最准 —— 1.5 s 窗口的首尾差就是干净的 °/s。
 /// </para>
 /// <para>
 /// **配对方式是全自动的**：每台机器首次启用时生成一个 6 位节点 ID 存进配置，此后一直沿用；
@@ -23,7 +27,8 @@ namespace WtHud.Telemetry;
 /// </para>
 /// <para>
 /// 协议刻意做成一行文本，方便用任何工具手工调试：
-/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;</c>
+/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;|&lt;航向 度&gt;|&lt;转向率 0.1 °/s&gt;</c>
+/// 后两段是后加的：老版本只发 4 段、也只读 4 段，双方仍能互通（只是没有转向率可用）。
 /// </para>
 /// </summary>
 internal sealed class DataLink : IDisposable
@@ -42,6 +47,8 @@ internal sealed class DataLink : IDisposable
     {
         public int AltM;
         public double VyMs;
+        /// <summary>对方自报的转向率（°/s，正 = 右转）。老版本不发这一段 → null。</summary>
+        public double? TurnRateDeg;
         public long TickAt;
     }
 
@@ -93,6 +100,32 @@ internal sealed class DataLink : IDisposable
         }
     }
 
+    /// <summary>
+    /// 取最近最活跃的那个伙伴的转向率。返回 false 表示没有可用数据
+    /// （链路没开、对方没发、对方是老版本只发 4 段、或全超时了）。
+    /// <para>转向率每 250 ms 才更新一次，调用方不要拿它做逐帧积分 —— 它是给前馈用的稳态量。</para>
+    /// </summary>
+    public bool TryGetPartnerTurnRate(out double degPerSec)
+    {
+        long now = Environment.TickCount64;
+        degPerSec = 0;
+
+        lock (_lock)
+        {
+            Remote? best = null;
+            foreach (var node in _nodes.Values)
+            {
+                if (now - node.TickAt >= StaleMs) continue;
+                if (node.TurnRateDeg == null) continue;
+                if (best == null || node.TickAt > best.TickAt) best = node;
+            }
+            if (best?.TurnRateDeg is not double rate) return false;
+
+            degPerSec = rate;
+            return true;
+        }
+    }
+
     public void Start()
     {
         if (_running) return;
@@ -118,8 +151,48 @@ internal sealed class DataLink : IDisposable
         }
     }
 
+    /// <summary>
+    /// 组一行报文。抽成静态纯函数是为了能在 <c>selftest</c> 里断言格式与回环，
+    /// 不用真的开 UDP。
+    /// </summary>
+    internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg)
+    {
+        int hdg = (int)Math.Round(headingDeg) % 360;
+        if (hdg < 0) hdg += 360;
+        int turn = (int)Math.Round(Math.Clamp(turnRateDeg, -300, 300) * 10.0);   // 0.1 °/s
+        return $"WTDL2|{selfId}|{altM}|{(int)Math.Round(vyMs * 10.0)}|{hdg}|{turn}";
+    }
+
+    /// <summary>
+    /// 解析一行报文。<paramref name="turnRateDeg"/> 为 null 表示对方是老版本（只发 4 段），
+    /// 上层会自动退化为本地估算转向率。
+    /// </summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg)
+    {
+        selfId = 0;
+        altM = 0;
+        vyMs = 0;
+        turnRateDeg = null;
+
+        var parts = text.Split('|');
+        if (parts.Length < 4 || parts[0] != "WTDL2") return false;
+        if (!int.TryParse(parts[1], out selfId)) return false;
+        if (!int.TryParse(parts[2], out altM)) return false;
+        if (!int.TryParse(parts[3], out int vyTenths)) return false;
+        vyMs = vyTenths / 10.0;
+
+        // 航向段存在但转向率解析失败 → 当作没有，不要因此丢掉整包高度
+        if (parts.Length >= 6 && int.TryParse(parts[5], out int turnTenths))
+            turnRateDeg = turnTenths / 10.0;
+
+        return true;
+    }
+
     /// <summary>由渲染循环每帧调用，内部按 4 Hz 限频真正发包。</summary>
-    public void Send(double nowS, int altM, double vyMs)
+    /// <param name="headingDeg">自己的航向（0..359）；无罗盘时上层用航迹角兜底。</param>
+    /// <param name="turnRateDeg">自己当前的转向率（°/s，正 = 右转）。僚机拿它算转弯提前量。</param>
+    public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -127,7 +200,7 @@ internal sealed class DataLink : IDisposable
 
         try
         {
-            var payload = $"WTDL2|{_selfId}|{altM}|{(int)Math.Round(vyMs * 10.0)}";
+            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg);
             var bytes = Encoding.ASCII.GetBytes(payload);
             _socket.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, Port));
         }
@@ -161,11 +234,7 @@ internal sealed class DataLink : IDisposable
         try { text = Encoding.ASCII.GetString(data); }
         catch { return; }
 
-        var parts = text.Split('|');
-        if (parts.Length < 4 || parts[0] != "WTDL2") return;
-        if (!int.TryParse(parts[1], out int id)) return;
-        if (!int.TryParse(parts[2], out int alt)) return;
-        if (!int.TryParse(parts[3], out int vyTenths)) return;
+        if (!TryParsePayload(text, out int id, out int alt, out double vyMs, out double? turnRate)) return;
 
         if (id == _selfId)
         {
@@ -183,7 +252,9 @@ internal sealed class DataLink : IDisposable
                 _nodes[id] = node;
             }
             node.AltM = alt;
-            node.VyMs = vyTenths / 10.0;
+            node.VyMs = vyMs;
+            // 航向/转向率是后加的两段：老版本不发，就保持 null，上层自动退化为本地估算
+            node.TurnRateDeg = turnRate;
             node.TickAt = Environment.TickCount64;
         }
     }
