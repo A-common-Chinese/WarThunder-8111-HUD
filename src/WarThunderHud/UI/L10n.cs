@@ -283,6 +283,7 @@ public static class L10n
         ["row.inkColor"] = ("文本颜色", "TEXT COLOR"),
         ["row.accentColor"] = ("高亮颜色", "ACCENT COLOR"),
         ["row.realisticKeys"] = ("拟真按键操作", "KEY-ONLY MODE"),
+        ["preset.title"] = ("面板配色", "PANEL COLOURS"),
         ["selectPreset"] = ("选择颜色 · 确认 应用 · 返回 取消", "PICK COLOR · CONFIRM APPLY · BACK CANCEL"),
         ["color.white"] = ("白色", "WHITE"),
         ["color.green"] = ("绿色", "GREEN"),

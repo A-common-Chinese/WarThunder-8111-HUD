@@ -272,14 +272,12 @@ public sealed class MfdFrameForm : Form
         using var muted = new SolidBrush(MfdTheme.Muted);
 
         g.DrawString(L10n.Get(LangScope.Panel, "brand"), brand, green, left, glass.Top + 6 * s, StringFormat.GenericTypographic);
+        // 标题由页面自己给（MfdPageBase.TitleKey）；表单只知道没有页面类的那几种。
         var titleKey = _mode switch
         {
             Mode.Menu => "menu",
-            Mode.Confirm => "confirm.title",
-            Mode.EditNumber => "edit.title",
-            Mode.TextEdit => "tedit.title",
-            Mode.CaptureKey => "capture.title",
-            _ => CurrentPage?.TitleKey ?? "menu",
+            Mode.CaptureKey => "capture.title",              // 捕获页还没有页面类
+            _ => ActivePage?.TitleKey ?? CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
         if (_mode is Mode.EditNumber)      // 只有编辑页需要说明正在改哪一层
@@ -323,18 +321,13 @@ public sealed class MfdFrameForm : Form
         }
 
         using var hint = MfdTheme.MonoAt(14f * s);
+        // 页脚提示同理：二级页面自带 HintKey，表单只处理菜单/模块/捕获这三种没有页面的情况。
         var hintKey = _mode switch
         {
             Mode.Menu => "hint.menu",
-            Mode.Confirm => "hint.confirm",
-            Mode.Preset => "selectPreset",
-            Mode.Help => "help.pagerHint",
-            Mode.PickVehicle => "pick.hint",
-            Mode.Snapshots => "snap.hint",
-            Mode.EditNumber => "edit.prompt",
-            Mode.TextEdit => "tedit.hint",
+            Mode.Items => "hint.item",
             Mode.CaptureKey => "capture.hint",
-            _ => "hint.item",
+            _ => ActivePage?.HintKey ?? "hint.item",
         };
         var hintText = _toast ?? L10n.Get(LangScope.Screen, hintKey);
         g.DrawString(hintText, hint, muted,

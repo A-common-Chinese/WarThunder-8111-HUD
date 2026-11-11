@@ -2685,7 +2685,9 @@ public static class Program
             {
                 form.RenderTo(g);
             }
-            var path = Path.IsPathRooted(outPath) ? outPath : Path.Combine(Path.GetTempPath(), outPath);
+            // 相对路径按当前目录解析：以前回退到 %TEMP%，写出来的图不在身边，
+            // 而且旧文件不会被覆盖 —— 出图核对时会一直看到上一张（踩过一次）。
+            var path = Path.IsPathRooted(outPath) ? outPath : Path.Combine(Environment.CurrentDirectory, outPath);
             bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
             Console.WriteLine("mfd preview -> " + path);
             form.Close();
