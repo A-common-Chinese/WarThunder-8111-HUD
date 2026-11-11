@@ -101,32 +101,38 @@ internal sealed class TextEditPage : MfdPageBase
 
         using var title = MfdTheme.CjkAt(26f * s);
         using var mono = MfdTheme.MonoBoldAt(48f * s);
-        using var hintFont = MfdTheme.CjkAt(17f * s);
         using var green = new SolidBrush(MfdTheme.Green);
-        using var text = new SolidBrush(MfdTheme.Text);
         using var muted = new SolidBrush(MfdTheme.Muted);
 
         var cx = glass.Left + glass.Width / 2;
         g.DrawString(_label(), title, muted, cx - g.MeasureString(_label(), title).Width / 2,
                      glass.Top + 60 * s, StringFormat.GenericTypographic);
 
-        var shown = Buffer.Length == 0 ? "_" : Buffer + "_";
-        var w = g.MeasureString(shown, mono).Width;
-        var boxW = Math.Max(w + 80 * s, 520 * s);
+        // 框宽固定，不再随文本长度增长：40 字符的长昵称曾把框撑到玻璃外面（压住侧键和边框）。
+        // 超宽时只保留尾部（光标所在端），前面补省略号 —— 正在输入的那一段永远看得见。
+        var boxW = Math.Min(760 * s, glass.Width - pad * 2 - 40 * s);
         var boxH = 84 * s;
         var bx = cx - boxW / 2;
         var by = glass.Top + glass.Height * 0.30f;
+
+        var shown = Buffer.Length == 0 ? "_" : Buffer + "_";
+        var maxTextW = boxW - 48 * s;
+        if (g.MeasureString(shown, mono).Width > maxTextW)
+        {
+            var keep = shown.Length;
+            while (keep > 1 && g.MeasureString("…" + shown[^keep..], mono).Width > maxTextW) keep--;
+            shown = "…" + shown[^keep..];
+        }
 
         using (var boxBg = new SolidBrush(Color.FromArgb(210, 6, 16, 10)))
             g.FillRectangle(boxBg, bx, by, boxW, boxH);
         using (var pen = new Pen(MfdTheme.Green, 2.5f * s))
             g.DrawRectangle(pen, bx, by, boxW, boxH);
-        g.DrawString(shown, mono, green, cx - w / 2, by + 10 * s, StringFormat.GenericTypographic);
+        g.DrawString(shown, mono, green, cx - g.MeasureString(shown, mono).Width / 2, by + 10 * s,
+                     StringFormat.GenericTypographic);
 
-        var hint = L10n.Get(LangScope.Screen, "tedit.hint");
-        g.DrawString(hint, hintFont, muted, cx - g.MeasureString(hint, hintFont).Width / 2,
-                     by + boxH + 26 * s, StringFormat.GenericTypographic);
-
+        // 这里不再自绘提示行：页脚已经按 HintKey 统一画了一遍（同一句 tedit.hint），
+        // 页面自己再画一次会正好落在「确认」行上，把那一行的左半截盖掉。
         DrawChoice(g, s, pad, 2, L10n.Get(LangScope.Screen, "confirm.ok"));
         DrawChoice(g, s, pad, 3, L10n.Get(LangScope.Screen, "confirm.cancel"));
     }

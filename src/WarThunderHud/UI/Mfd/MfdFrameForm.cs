@@ -1892,6 +1892,13 @@ public sealed class MfdFrameForm : Form
     /// <summary>Preview helper: presses a physical side key by index (0-9), exactly like clicking it.</summary>
     public void PreviewSideKey(int index) => SidePressed(Math.Clamp(index, 0, 9));
 
+    /// <summary>预览用：往文本输入页灌入内容（核对长昵称排版）。</summary>
+    public void PreviewTextBuffer(string text)
+    {
+        _textPage?.AppendText(text);
+        Invalidate();
+    }
+
     /// <summary>Preview helper: clicks a row of the current confirm sheet (0 = 确认, 1 = 取消).</summary>
     public void PreviewConfirmRowClick(int option, int clicks = 1)
     {

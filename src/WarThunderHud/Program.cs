@@ -2619,6 +2619,14 @@ public static class Program
             else if (view == "presetkey0") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(0); }
             else if (view == "presetkey1") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(1); }
             else if (view == "presetkey5") { form.PreviewOpen(4, 0); form.PreviewPreset(); form.PreviewSideKey(5); }
+            // 文本输入页：只打开、不按键（用于核对输入框/提示/确认行的排版）。
+            // textedifull 额外灌满 40 字符，用来核对长昵称会不会顶出玻璃。
+            else if (view == "textedit") { form.PreviewOpenItem(0, 22); form.PreviewPreset(); }
+            else if (view == "textedifull")
+            {
+                form.PreviewOpenItem(0, 22); form.PreviewPreset();
+                form.PreviewTextBuffer("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+=~");
+            }
             else if (view.StartsWith("sidekey:"))
             {
                 // 形如 sidekey:edit:3 / sidekey:preset:2 / sidekey:confirm:3
