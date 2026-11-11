@@ -223,11 +223,13 @@ WtHud.exe mfdpreview out.png display2       # 面板预览（display/alerts/keys
 
 ## 11. 下一步待办（按优先级）
 
-0. **等真机验证 0.3.11 的编队引导手感**（当前版本 0.3.12，引导逻辑同 0.3.11）：飞一次看四点 ——
+0. **等真机验证编队引导（当前 0.3.13，级联 PID）**：飞一次看四点 ——
    ①「往哪转」的左右是否和实际一致（`rel` 正 = 友机在右 = 右转）；②油门数值偏大还是偏小
-   （调 `wantClosing` 的斜率 0.035）；③数字是否还在跳（调 `SmoothGuideDelta` 的 τ=1.2 s）；
-   ④「保持」是不是在该出现的时候出现（400 m ±100 且接近率 <8 m/s）。
-   全部参数集中在 `Program.cs` 的 `UpdateNavigation` 编队段，改完只需重新 publish。
+   （调 `formationKp`，默认 0.07，越大越急）；③数字是否还在跳（调 `SmoothGuideDelta` 的 τ=1.2 s
+   + `formationKv`）；④「保持」是不是在该出现时出现（400 m ±100 且接近率 <8 m/s）。
+   三个增益在 `hud-config.json`：`formationKp` / `formationKi` / `formationKv`，改完重启生效，
+   日志 `cfg:` 行会打印当前值。★ 外环的「期望接近率限幅 −20…+30 m/s」不要放开 ——
+   仿真显示放开后 1.5 km 外会索要 120 m/s，按 4 m/s² 减速需要 10 km 才停得下来。
 1. ~~help-desc.json 版本升级机制~~ **已完成（0.3.12）**：模板带 `"_version": 2`，外部文件版本更低
    就备份成 `help-desc.json.v<旧>.bak` 再重写，损坏则 `.broken.bak` 后重写，版本相同不动。
    检查在 overlay 启动时做。**以后改模板文案必须把 `_version` 加一**，否则到不了老用户。
