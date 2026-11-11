@@ -435,6 +435,10 @@ public static class Program
 
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+        // 帮助文案的版本检查放在启动时做，而不是等用户按 HELP 才触发：
+        // 否则老用户目录里那份旧 help-desc.json 会一直是旧的，出了问题看文件也会误判。
+        try { WtHud.UI.Mfd.HelpDescriptions.EnsureLoaded(); } catch { }
+
         // 跟随游戏客户区：窗口化 / 副屏 / 非 100% 缩放都能对上；找不到窗口时回退主屏
         // 覆盖层只覆盖游戏所在的那块显示器：不会挡住其它屏幕的点击
         int monX = 0, monY = 0, monW = 0, monH = 0;
