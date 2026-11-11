@@ -1,5 +1,5 @@
 {
-  "_version": 4,
+  "_version": 6,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -300,8 +300,12 @@
     "zh": "长机马赫：目标马赫数（默认 0.70）。偏差超过 0.02 马赫时提示加速/减速。用马赫而不是空速，是因为它不随高度变化；实际比较时按当前音速换算成真空速。",
     "en": "Lead Mach: target Mach number (default 0.70). A deviation beyond 0.02 triggers a power call. Mach is used instead of airspeed because it does not vary with altitude; the comparison converts it to true airspeed using the current speed of sound."
   },
-  "row.dataLink": {
-    "zh": "数据链高度：打开后与同网段的另一位玩家交换各自的气压高度（UDP 广播，4 Hz，只传高度不传位置）。首次启用会自动生成一个节点 ID 存进配置文件，之后一直沿用，不需要人工配对。收到数据后编队模式的距离行下方会多一行：↑ 表示对方比你高、↓ 表示比你低、15 m 内显示「高度一致」。注意：Windows 防火墙首次可能弹窗，需要放行；广播只在同一网段有效。",
-    "en": "Data link: exchanges barometric altitude with another player on the same subnet (UDP broadcast, 4 Hz, altitude only - positions are not shared). A node id is generated on first use and saved to the config, so no manual pairing is needed. Once data arrives, a line appears under the range line in formation mode: up arrow means the partner is above you, down arrow below, and within 15 m it reads level. Windows Firewall may prompt the first time; broadcast only works on the same subnet."
+  "row.dataLinkOn": {
+    "zh": "使用数据互联：打开后与同网段另一位玩家交换气压高度（UDP 广播 4 Hz，只传高度不传位置）。关掉就只用平面数据。Windows 防火墙首次可能弹窗，需要放行。",
+    "en": "Use data link: exchanges barometric altitude with another player on the same subnet (UDP broadcast at 4 Hz, altitude only, no positions). Off means planar data only. Windows Firewall may prompt once."
+  },
+  "page.datalink": {
+    "zh": "数据链设置（独立模块）：开关「使用数据互联」、查看节点 ID / 链路状态 / 端口。关掉就回到只看平面的旧逻辑（水平距离与方位，无高度差）。",
+    "en": "Data link (own module): toggle the link, inspect the node id, link state and port. When off, the HUD falls back to planar data only (horizontal range and bearing, no altitude)."
   }
 }

@@ -2333,6 +2333,16 @@ public static class Program
     private static long lastAirbrakeChangeTicks;
     private static volatile bool scoreboardHeld;
 
+    /// <summary>数据链状态（面板"数据链设置"页显示）：off / 无伙伴 / 已连接 N 个。</summary>
+    public static string DataLinkStatusText()
+    {
+        var link = dataLink;
+        if (link == null) return "off";
+        if (!link.TryGetPartnerAltitude(out _, out _)) return "no partner";
+        int n = link.NodeCount;
+        return n > 1 ? $"linked x{n}" : "linked";
+    }
+
     private static string ViewName(int state) => state switch { 0 => "third person", 1 => "cockpit", 2 => "nose", _ => "?" };
     private static TelemetrySnapshot? prevSnapshot;
     private static AttitudeSolution prevAttitude;

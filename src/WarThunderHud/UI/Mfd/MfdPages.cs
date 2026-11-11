@@ -126,7 +126,7 @@ internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), Airframes(), Diag(), Snapshots(),
+        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), DataLink(), Airframes(), Diag(), Snapshots(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set) =>
@@ -142,10 +142,6 @@ internal static class MfdPages
 
     private static MfdItem Action(string label, Action<HudConfig> run) =>
         new() { LabelKey = label, Kind = ItemKind.Action, Run = run };
-
-    /// <summary>Action that goes straight to its own page (no "are you sure" sheet).</summary>
-    private static MfdItem ActionDirect(string label, Action<HudConfig> run) =>
-        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true };
 
     /// <summary>直接执行的动作，并在执行后显示一条提示（例如导入结果）。</summary>
     private static MfdItem ActionDirectMsg(string label, Action<HudConfig> run, Func<HudConfig, string?> toast) =>
@@ -209,7 +205,6 @@ internal static class MfdPages
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
-            Toggle("row.dataLink", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),
@@ -372,6 +367,38 @@ internal static class MfdPages
     };
 
     /// <summary>回归快照：没有固定行，列表由 <c>SnapshotsPage</c> 直接绘制，这里只占首页一个模块位。</summary>
+    /// <summary>数据链设置：所有连接相关的开关与状态集中在这一页。</summary>
+    private static MfdPage DataLink() => new()
+    {
+        TitleKey = "page.datalink",
+        MenuKey = "page.datalink",
+        MenuHintKey = "menu.hint.datalink",
+        Items =
+        {
+            Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
+            new MfdItem
+            {
+                LabelKey = "row.dataLinkId", Kind = ItemKind.ReadOnly,
+                GetText = c => c.DataLinkId == 0 ? "-" : c.DataLinkId.ToString(),
+            },
+            new MfdItem
+            {
+                LabelKey = "row.dataLinkState", Kind = ItemKind.ReadOnly,
+                GetText = _ => WtHud.Program.DataLinkStatusText(),
+            },
+            new MfdItem
+            {
+                LabelKey = "row.dataLinkPort", Kind = ItemKind.ReadOnly,
+                GetText = _ => "48017 / UDP",
+            },
+            new MfdItem
+            {
+                LabelKey = "row.dataLinkDesc", Kind = ItemKind.ReadOnly,
+                GetText = _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc"),
+            },
+        },
+    };
+
     private static MfdPage Snapshots() => new()
     {
         TitleKey = "page.snapshots",
