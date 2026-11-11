@@ -8,7 +8,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.3.7** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.3.20** · [更新日志](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -31,8 +31,9 @@ no packet interception, no automation.
 ### MFD 设置面板（F1）
 
 - 机框与 25 个实体按键为 Blender 建模渲染，按键与屏幕 10 行一一对应：**侧键 = 选择，CONFIRM = 执行**
-- 主菜单 → 模块页（显示 / 视角与姿态 / 告警 / 按键 / 面板 / 语言 / 机型 / 诊断 / 回归快照）→
+- 主菜单 → 模块页（显示 / 视角与姿态 / 告警 / 按键 / 面板 / 语言 / 数据链 / 机型 / 诊断 / 回归快照）→
   二级页（数值输入 / 键位捕获 / 文本输入 / 二次确认）
+- 模块超过 10 个时主菜单自动分页：页眉显示 `1/2`，底部 `PAGE +/–` 翻页（单页不显示页码）
 - 数值可直接键入；键位**按住组合键实时显示**（Ctrl → `CTRL`，再按 Q → `CTRL+Q`）
 - 外板 / 屏幕 / 告警可分别设中英文；告警框宽度按当前语言的文本实测宽度自动重算
 - 诊断页显示 `/state`、`/indicators`、`/map_obj`、`/map_info` 的实时延迟与状态，并可检查 GitHub 最新版本
@@ -85,6 +86,34 @@ no packet interception, no automation.
 - 数据来自 8111 `/hudmsg`（4 Hz 增量轮询、按 id 去重、解析失败完全静默）
 - **只认「击落了」**：AI / 地面目标的「击毁了」、自己被击落、其它玩家的击杀都不播报
 - 用法：`F1` → 显示页第 2 页 → `玩家昵称`（与游戏内一致；ASCII 直接打字、中文用 `Ctrl+V` 粘贴）→ 打开 `击落播报`
+
+### 编队辅助（双机编队）
+
+- **编队辅助**：在航向带上标出友机方位与距离（1 km 内用米，超出用公里）；超出航向带范围时
+  退化成端头箭头，提示往哪边转。**只画友军**——按 8111 给出的颜色白名单过滤（蓝 = 友、红 = 敌），
+  红系永远进不来；关掉开关时连地图数据都不解析
+- **编队模式**：隐藏俯仰梯、数据带、数值区与导航提示，只留友机方位 + 速度/高度/航向三个读数
+- **准星下方的直接引导**，三行，按「先方向、再距离、最后动作」排：
+
+  | 行 | 内容 | 说明 |
+  |---|---|---|
+  | 大字号 | `右转 12° ▶` | 相对方位；±3° 内显示「对准」 |
+  | 中字号 | `820m → 400m` | 现在多远、要追到多远 |
+  | 中字号 | `加速 +80 km/h` | 需要时出现；稳住时显示「保持」 |
+
+- 距离**闭环到 400 m**：级联 PID（外环 PI 把距离误差换成期望接近率，内环 P 换成油门），
+  1.6 km 追尾约 40 秒到位；增益按距离分段（远端 0.04，逼近 400 m 切到 0.20），
+  外环输出夹在 −20…+30 m/s 是安全底线
+- **长机模式**：长机不追人，只保持设定航向（留空 = 锁存进入时的航向）与设定马赫（默认 0.7）；
+  主行只报「编队完整 / 僚机掉队 / 距离过近 / 无僚机」，副行只给方向（`TURN L/R`、`ADD POWER`），
+  不给任何数字
+- **转弯提前量**：长机转弯时，僚机的转向建议指向它的**未来位置**而非当前位置
+  （前置角 `asin(ω·R/V)`，400 m / 600 km/h / 长机 10°/s 时约 25°），队形不会被甩到弯道外圈；
+  主行上方会显示「长机右转 10°/s」说明为什么数值比目视更大
+- **数据链**（独立模块，两台机器都要开）：交换气压高度，引导里多一行
+  `↑ 120 m` / `↓ 85 m` / `高度一致`。首次启用自动分配 6 位节点 ID，无需手工配对；
+  UDP 48017 广播，4 Hz，约 50 B/s，**两端都要放行防火墙**。
+  只传高度不传位置——8111 给出的友机位置本身就有 1–2 m 精度，缺的只是高度
 
 ### 按机型参数（作用域）
 
@@ -209,6 +238,12 @@ no packet interception, no automation.
 | `sinkRateMs` | 下降率告警阈值（m/s） | 40 |
 | `pullUpTtiS` | PULL UP 提前量（秒，距撞地时间小于它即告警） | 5.0 |
 | `splashEnabled` / `playerName` | 击杀播报开关 / 自己游戏昵称（用于判断「自己击落」） | true / `""` |
+| `formationAssist` / `formationOnly` | 编队辅助 / 编队模式（只留三个读数） | false / false |
+| `leadMode` / `leadHeadingDeg` / `leadMach` | 长机模式 / 设定航向（-1 = 锁存进入时的航向）/ 设定马赫 | false / -1 / 0.7 |
+| `formationKp` / `formationKpNear` / `formationBlendM` | 编队外环增益（远景 / 近景）/ 增益过渡距离（m） | 0.04 / 0.20 / 800 |
+| `formationKi` / `formationKv` | 外环积分 / 内环增益（期望与实际接近率之差 → 油门） | 0.006 / 1.0 |
+| `formationLeadFeed` / `formationLeadMinRate` / `formationLeadMaxDeg` | 转弯提前量开关 / 启用门槛（°/s）/ 前置角上限（°） | true / 1.5 / 45 |
+| `dataLinkEnabled` / `dataLinkId` | 数据链开关 / 节点 ID（首次启用自动生成 6 位） | false / 0 |
 | `perVehicleOverrides` | 按机型覆盖表（机型 → 参数），10 项可覆盖 | `{}` |
 | `stallKey` / `stallAoaDeg` / `stallAoaByVehicle` | 失速校准键 / 通用阈值 / 每机型校准表 | CTRL+ALT+S / 22 / {} |
 | `enemyAirfieldAlertKm` | 敌机场告警距离（km，0=关闭） | 12 |
@@ -248,7 +283,9 @@ dotnet publish src/WarThunderHud/WarThunderHud.csproj -c Release -r win-x64 `
 |---|---|---|
 | 速度/高度/马赫/G/AoA/AoS/升降率/油量/襟翼/起落架/减速板 | `/state` | 所有机型都有 |
 | 航向/原生姿态/弹药 | `/indicators` | 仅部分机型有 |
-| 地图/聊天/击杀日志 | `/map_obj.json` 等 | 本 HUD **不使用**（见合规说明） |
+| 地图网格 / 友机方位与距离 / 机场 | `/map_obj.json` | **只取友军与自身**，敌方单位在解析前按颜色过滤掉 |
+| 击杀播报 | `/hudmsg` | 只匹配「自己击落了玩家」这一种事件 |
+| 编队高度差 | 数据链（局域网 UDP 48017） | 可选；两端都开 WtHud 并打开数据链才有 |
 
 已知限制：
 
@@ -263,7 +300,10 @@ dotnet publish src/WarThunderHud/WarThunderHud.csproj -c Release -r win-x64 `
 ## 合规说明（重要）
 
 - 本工具**只读取**游戏自带的本地 HTTP 接口，不修改客户端、不注入进程、不读取内存、不修改游戏画面渲染
-- **不显示敌人位置、不做 ESP**。不使用 `/map_obj.json` 绘制敌情
+- **不显示敌人位置、不做 ESP**。`/map_obj.json` 只用于友军与自身，敌情在解析前就按颜色过滤掉了
+- **数据链是本机局域网广播，完全不碰游戏流量**：它只向 `255.255.255.255:48017` 发一行自己的
+  气压高度（可选带航向与转向率），并接收同样运行 WtHud 的队友发来的同类包；
+  不监听、不解析、不转发任何游戏数据，关掉开关就既不收也不发
 - 官方论坛口径：使用 localhost 数据做 overlay 一般允许，但官方不对第三方工具作任何保证，**使用风险自负**
 - 请遵守 Gaijin 用户协议与各服务器规则；因使用本工具产生的任何后果由使用者承担
 
@@ -271,7 +311,7 @@ dotnet publish src/WarThunderHud/WarThunderHud.csproj -c Release -r win-x64 `
 
 ```
 src/WarThunderHud/
-  Telemetry/   8111 客户端、解析、能力探测、姿态融合
+  Telemetry/   8111 客户端、解析、能力探测、姿态融合、数据链（局域网 UDP）
   Hud/         符号基元、几何布局、标定、配置
   Graphics/    D3D11/D2D 画布、绘制器、PNG 输出
   Overlay/     Win32 窗口、DirectComposition、光标洞、热键
@@ -307,7 +347,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 **Read-only by design**: no injection, no memory reads, no file modification, no packet
 interception, no automation. It never draws enemy positions (no ESP).
 
-Current version **v0.3.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
+Current version **v0.3.20** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 
 ## Screenshots
 
@@ -324,8 +364,10 @@ Current version **v0.3.7** · [Changelog](CHANGELOG.md) · [AGPL-3.0](LICENSE)
 - Bezel and 25 physical buttons rendered from a **Blender model**, mapped 1:1 to the ten screen
   rows: **side key = select, CONFIRM = apply**
 - Three levels: main menu → module page (Display / Camera / Alerts / Keys / Panel / Language /
-  Airframes / DIAG / Snapshots) → second-level page (numeric entry / key capture / text entry /
-  confirmation)
+  Data link / Airframes / DIAG / Snapshots) → second-level page (numeric entry / key capture /
+  text entry / confirmation)
+- The main menu pages itself once there are more than ten modules: `1/2` in the header and
+  `PAGE +/–` at the bottom (a single page shows no counter)
 - Numbers can be typed directly; key bindings are captured **live while the combo is held**
   (hold `Ctrl` → `CTRL`, then press `Q` → `CTRL+Q`, release to freeze, press again to restart)
 - Bezel text, screen text and HUD alerts each have their own Chinese/English setting;
@@ -379,6 +421,40 @@ airbrake indication is driven by the key instead of the noisy telemetry value.
   players' kills are ignored
 - Setup: `F1` → Display page 2 → `Player name` (must match the in-game name; type ASCII or paste
   with `Ctrl+V`) → enable `Splash alerts`
+
+### Formation assist (two-ship)
+
+- **Formation assist**: friendly bearings and ranges on the heading tape (metres under 1 km,
+  kilometres above); contacts outside the tape collapse into an end arrow showing which way to
+  turn. **Friendly aircraft only** — filtered by the colour whitelist from the 8111 feed
+  (blue = friendly, red = hostile); the red family can never be drawn, and turning the switch off
+  skips parsing entirely
+- **Formation only**: hides the ladder, tapes, data block and navigation hints, leaving friendly
+  bearings plus three readouts (speed / altitude / heading)
+- **Direct guidance under the reticle**, three lines ordered direction → range → throttle:
+
+  | Line | Content | Notes |
+  |---|---|---|
+  | large | `TURN R 12 ▶` | relative bearing; "ON" within ±3° |
+  | medium | `820m → 400m` | current distance and the 400 m target |
+  | medium | `SPEED UP +80 km/h` | only while needed; "HOLD" when settled |
+
+- Distance is **closed to 400 m** with a cascaded PID (outer PI turns range error into a desired
+  closure rate, inner P turns that into throttle): 1.6 km closure in ~40 s. Gains are scheduled by
+  range (0.04 far out, 0.20 near the target) and the outer loop is clamped to −20…+30 m/s as a
+  safety floor
+- **Lead mode**: the leader never chases — it holds a heading (blank = latch the heading at entry)
+  and a Mach (default 0.7). The main line only reads FORMATION / WINGMAN LATE / TOO CLOSE /
+  NO CONTACT; the sub line only gives a direction (`TURN L/R`, `ADD POWER`), never a number
+- **Turn lead**: while the leader turns, the wingman's steering points at where it *will* be
+  instead of where it is (lead angle `asin(ω·R/V)`, about 25° at 400 m / 600 km/h / 10°/s), so the
+  formation is not thrown to the outside of the turn. A small line above the main cue reads
+  `LEAD TURN R 10°/s` so the larger number does not look wrong
+- **Data link** (standalone module, both machines must enable it): shares barometric altitude and
+  adds one guidance line — `↑ 120 m` / `↓ 85 m` / level. Each machine generates a 6-digit node id
+  on first enable, no manual pairing; UDP 48017 broadcast, 4 Hz, about 50 B/s, **firewall must
+  allow it on both ends**. Altitude only — the 8111 feed already reports friendly positions to
+  1–2 m, altitude is the missing piece
 
 ### Per-airframe settings
 
@@ -482,6 +558,14 @@ executable and can also be edited from the MFD panel. Notables added in v0.3.x:
 - `sinkRateMs` — sink-rate alert threshold (m/s, default 40)
 - `pullUpTtiS` — PULL UP lead time in seconds (default 5.0)
 - `splashEnabled` / `playerName` — kill banner toggle / your in-game name
+- `formationAssist` / `formationOnly` — formation assist / formation-only display
+- `leadMode` / `leadHeadingDeg` / `leadMach` — lead mode / target heading (-1 = latch on entry) /
+  target Mach
+- `formationKp` / `formationKpNear` / `formationBlendM` / `formationKi` / `formationKv` — formation
+  guidance cascade (outer gains far/near, blend distance, integral, inner gain)
+- `formationLeadFeed` / `formationLeadMinRate` / `formationLeadMaxDeg` — turn lead on/off, minimum
+  turn rate to engage (°/s), lead angle cap (°)
+- `dataLinkEnabled` / `dataLinkId` — data link toggle / node id (generated on first enable)
 - `perVehicleOverrides` — per-airframe overrides (ten parameters; airframe > profile > global)
 - `overspeedKmh` / `overspeedMach` — both limits are checked simultaneously
 
@@ -513,7 +597,9 @@ Other CLI modes: `overlay`, `probe`, `selftest`, `fusiontest`, `preview out.png`
 |---|---|---|
 | Speed / altitude / Mach / G / AoA / AoS / V-S / fuel / flaps / gear / airbrake | `/state` | Available on all aircraft |
 | Heading / native attitude / ammo | `/indicators` | Only on some aircraft |
-| Map objects, chat, kill log | `/map_obj.json` etc. | **Not used** (see compliance) |
+| Map grid / friendly bearings and ranges / airfields | `/map_obj.json` | **Friendlies and your own aircraft only**; hostile contacts are colour-filtered out before parsing |
+| Kill banner | `/hudmsg` | Only matches "you shot down a player" |
+| Formation altitude difference | Data link (LAN UDP 48017) | Optional; needs WtHud running with the link enabled on both ends |
 
 Known limitations:
 
@@ -532,7 +618,12 @@ Known limitations:
 
 - The tool **only reads** the game's own local HTTP API. It does not modify the client, inject
   into the process, read memory or alter rendering
-- **No enemy positions, no ESP.** `/map_obj.json` is never used to draw enemy units
+- **No enemy positions, no ESP.** `/map_obj.json` is used for friendlies and your own aircraft
+  only; hostile contacts are colour-filtered out before they are parsed
+- **The data link is a plain LAN broadcast and never touches game traffic**: it sends one line of
+  barometric altitude (optionally with heading and turn rate) to `255.255.255.255:48017` and
+  receives the same kind of packet from a wingman also running WtHud. It does not sniff, parse or
+  relay any game data, and with the switch off it neither sends nor receives
 - Gaijin's forum position is that localhost-driven overlays are generally tolerated, but no
   third-party tool is officially supported — **use at your own risk**
 - Follow the Gaijin Terms of Service and each server's rules; you are responsible for the
