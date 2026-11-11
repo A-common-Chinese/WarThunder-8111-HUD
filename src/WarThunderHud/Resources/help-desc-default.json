@@ -1,5 +1,5 @@
 {
-  "_version": 12,
+  "_version": 13,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -73,8 +73,8 @@
     "en": "Show HUD: master switch for the overlay; it keeps running but draws nothing when off."
   },
   "row.formation": {
-    "zh": "编队辅助：在航向带上标出友机方位与距离（近距离用米，超过 1 km 用公里）；超出航向带范围时退化成端头箭头，提示往哪边转。只显示友军 —— 游戏地图里的敌人会被颜色过滤掉，永远不会画出来。关掉时连数据都不解析。",
-    "en": "Formation: draws friendly bearings and ranges above the heading tape (metres under 1 km, otherwise km); contacts outside the tape collapse into an end arrow showing which way to turn. Friendly aircraft only - contacts coloured as enemies are filtered out and never drawn. When off, not even the data is parsed."
+    "zh": "编队辅助：打开后开始显示编队引导（引导圈、速度条、油门条），并**同时切到精简界面** —— 只留航向带、编队引导和三个读数，其余 HUD 元素暂时隐去，把视野让给长机。关掉则两者一起恢复。飞密集编队时留着满屏俯仰梯反而挡视线，所以这一版把它们绑在一个开关上。",
+    "en": "Formation assist: turns on the guidance (ring, speed bar, throttle bar) and switches to the minimal layout at the same time - only the heading tape, the guidance and three readouts remain, everything else is hidden so you can keep the lead in sight. Turning it off restores both. They are bound to one switch because a full pitch ladder only gets in the way in close formation."
   },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",

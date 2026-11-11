@@ -203,7 +203,11 @@ internal static class MfdPages
             // 编队（0.4.6 极速测试版精简为 4 行：功能开关 / 角色 / 马赫 / 全向跟随）
             // 砍掉的 formationOnly、formationLeadFeed、leadHeading 默认值恰好都是正常行为，
             // 砍面板行不影响它们继续生效，只是不能调。
-            Toggle("row.formation", c => c.FormationAssist, (c, v) => c.FormationAssist = v),
+            // 编队辅助连带精简界面：这两件事在实际使用里是同一个动作 ——
+            // 飞密集编队时视野必须让给长机，留着一屏俯仰梯/数据块反而挡视线。
+            // 两个开关都开或都关，所以只保留这一行入口。
+            Toggle("row.formation", c => c.FormationAssist,
+                   (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
             Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
             // 僚机侧位：三架僚机必须各选一边，否则全挤在长机正后方。
