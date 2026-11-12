@@ -180,7 +180,79 @@ data link: sending to 100.66.9.170:48017
 
 ---
 
-## 八、脚本参数
+## 八、用组网软件（推荐，不直连）
+
+跨 WiFi + 运营商级 NAT 时，直连没有可行路径。组网软件会在两台机器上各装一块虚拟网卡，
+给它们一个**互相可达的虚拟 IP**，数据链走这个 IP 就行 —— 协议、脚本、代码全都不用改，
+只是 `-Target` 和 `dataLinkPeers` 里那个地址换了。
+
+### 步骤
+
+**① 两台机器装同一个组网软件，登录同一账号，加入同一个网络**
+
+免费额度：蒲公英 3 台、ZeroTier 25 台，都够两台笔记本用。
+
+**② 在接收端 B 上找虚拟 IP**
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object IPAddress, InterfaceAlias
+```
+
+组网软件的网卡名通常带 `Pgy` / `Oray` / `ZeroTier` / `Tailscale`。
+蒲公英常见段是 `172.16.x.x`，ZeroTier 是 `10.x` 或 `172.x`。
+
+**③ 在发送端 A 上 ping 这个虚拟 IP**
+
+```powershell
+ping <B的虚拟IP>
+```
+
+通了才往下走。这一步是整个方案的关键验证 —— 组网软件自己会显示「已连接」，
+但那只代表它连上了服务器，**不代表两台机器之间能通**。
+
+**④ 剩下和第一节完全一样**
+
+```powershell
+# B（管理员）
+New-NetFirewallRule -DisplayName "WtHud DataLink" -Direction Inbound -Protocol UDP -LocalPort 48017 -Action Allow -Profile Any
+
+# B
+.\WtHud.exe dlprobe 120
+
+# A
+powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <B的虚拟IP>:48017
+```
+
+### 两个坑（务必先看）
+
+> ★ **蒲公英的 VGC 驱动在 ROBOT-04 上有 `0x133 DPC_WATCHDOG_VIOLATION` 蓝屏史。**
+> 装之前先看驱动版本；如果又蓝，换成 ZeroTier —— 同样是虚拟网卡 + 单播，配置和命令一个字都不用改。
+
+> ★ **不要用 Tailscale。** 它分配的地址在 `100.64.0.0/10` 段，而本机物理网卡现在就是
+> `100.66.9.170`，同一段。两者会抢路由，表现为「组网显示已连接，但包不知道往哪走」，
+> 而且这种故障很难从现象上看出来是地址冲突。
+
+### 免费额度对比
+
+| 方案 | 免费设备数 | 虚拟网段 | 备注 |
+|---|---|---|---|
+| 蒲公英 | 3 | `172.16.x` | 有蓝屏史，装前先看驱动 |
+| ZeroTier | 25 | `10.x` / `172.x` | 需要在管理台手动批准设备 |
+| Tailscale | 100 | `100.64/10` | **和本机现有网段冲突，本次不用** |
+
+### 组网通了之后
+
+在接收端 `hud-config.json` 里填**虚拟 IP**，不要填物理 IP：
+
+```json
+"dataLinkPeers": ["172.16.5.23:48017"]
+```
+
+因为物理 IP 换 WiFi 就变，虚拟 IP 相对稳定。
+
+---
+
+## 九、脚本参数
 
 ```
 -Target   必填，ip:port 或 ip（端口默认 48017）
