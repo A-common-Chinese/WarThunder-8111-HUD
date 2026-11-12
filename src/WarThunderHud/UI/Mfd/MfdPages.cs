@@ -587,6 +587,8 @@ internal static class MfdPages
                    1, 0, 999999, ""),
             Info("row.apiHealth", _ => WtHud.Program.ApiHealthZh(WtHud.Program.ApiHealthNow)),
             Info("row.dataLinkNodes", _ => WtHud.Program.DataLinkNodeText(), c => c.DataLinkEnabled),
+            // 僚机自报的站位：谁掉队、掉多少。长机 HUD 也有同一份，这行用于复盘
+            Info("row.dataLinkWings", _ => WtHud.Program.DataLinkWingText(), c => c.DataLinkEnabled),
             Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkPort", _ => "48017 / UDP"),
             Info("row.dataLinkDesc", _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc")),

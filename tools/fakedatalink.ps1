@@ -23,6 +23,10 @@ param(
     [double]$Seconds = 0,
     # 编队角色：0 = 不发（旧格式 8 段），1 = 长机，2 = 僚机（第 10 段）
     [ValidateRange(0, 2)][int]$Role = 0,
+    # 站位自报（第 11 段）：-1 = 不发，0 = 在槽位，1 = 掉队，2 = 冲出，3 = 偏离站位
+    [ValidateRange(-1, 3)][int]$Wing = -1,
+    [ValidateRange(0, 8)][int]$Slot = 0,
+    [int]$ErrM = 0,
     [switch]$Quiet
 )
 
@@ -44,7 +48,7 @@ $udp.EnableBroadcast = $true
 
 if (-not $Quiet) {
     Write-Host "fakedatalink: id=$Id  -> $ipText`:$port  mode=$Mode  rate=${RateHz}Hz " -NoNewline
-    Write-Host " role=$Role"
+    Write-Host " role=$Role wing=$Wing"
     if ($Seconds -gt 0) { Write-Host "  for ${Seconds}s" } else { Write-Host "  (Ctrl+C to stop)" }
 }
 
@@ -95,6 +99,10 @@ while ($true) {
     if ($Role -gt 0) {
         # 第 9 段（坡度）留空占位，角色必须落在第 10 段 —— 和 HUD 的拼法保持一致
         $payload += "||$Role"
+        if ($Wing -ge 0) {
+            # 第 11 段：槽位,状态,误差米。用来单人验证长机那一侧的「谁掉队了」
+            $payload += "|$Slot,$Wing,$ErrM"
+        }
     }
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
 

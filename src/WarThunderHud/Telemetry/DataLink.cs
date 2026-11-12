@@ -53,6 +53,25 @@ internal sealed class DataLink : IDisposable
     /// <summary>本机在编队里的角色。写到报文的第 10 段，僚机端靠它认出谁是长机。</summary>
     public enum LinkRole { Unknown = 0, Lead = 1, Wing = 2 }
 
+    /// <summary>
+    /// 僚机自报的站位状态（报文第 11 段）。
+    /// <para>★ 由僚机自己判定：它知道自己的槽位和误差，长机不知道。长机只负责把结果列出来，
+    /// 不参与判定 —— 否则两边阈值不一致时，僚机会看到「我在编队里」而长机显示「掉队」。</para>
+    /// </summary>
+    public enum WingState
+    {
+        /// <summary>老版本，或这台没开编队辅助 —— 没有可用的站位信息。</summary>
+        Unknown = -1,
+        /// <summary>在槽位上。</summary>
+        InPosition = 0,
+        /// <summary>比槽位更远（掉队）。</summary>
+        Behind = 1,
+        /// <summary>比槽位更近（冲到前面）。</summary>
+        Ahead = 2,
+        /// <summary>距离差不多但方位偏了，没站在槽位方向上。</summary>
+        OffStation = 3,
+    }
+
     private readonly int _selfId;
     private UdpClient? _socket;
     private Thread? _rx;
@@ -78,6 +97,15 @@ internal sealed class DataLink : IDisposable
 
         /// <summary>对方自报的编队角色。老版本不发第 10 段 → Unknown，选择逻辑退回「最近活跃」。</summary>
         public LinkRole Role = LinkRole.Unknown;
+
+        /// <summary>对方自报的站位状态（第 11 段）。老版本/未开编队 → Unknown。</summary>
+        public WingState Wing = WingState.Unknown;
+
+        /// <summary>对方自报的槽位序号（第 11 段第 1 子段），-1 = 未知。</summary>
+        public int Slot = -1;
+
+        /// <summary>对方自报的站位距离误差（米，正 = 比槽位远）。</summary>
+        public int ErrM;
 
         /// <summary>
         /// 这一包是从哪个地址来的。<see cref="Send"/> 用它回包 —— 长机不必把每个僚机的
@@ -129,7 +157,10 @@ internal sealed class DataLink : IDisposable
                                            double? Xn, double? Yn, int AgeMs,
                                            double? TargetBankDeg = null,
                                            LinkRole Role = LinkRole.Unknown,
-                                           int Packets = 0);
+                                           int Packets = 0,
+                                           WingState Wing = WingState.Unknown,
+                                           int Slot = -1,
+                                           int ErrM = 0);
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -147,7 +178,7 @@ internal sealed class DataLink : IDisposable
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
                                       n.Xn, n.Yn, (int)(now - n.TickAt), n.TargetBankDeg,
-                                      n.Role, n.Packets));
+                                      n.Role, n.Packets, n.Wing, n.Slot, n.ErrM));
             }
             return list.ToArray();
         }
@@ -299,7 +330,7 @@ internal sealed class DataLink : IDisposable
             ambiguous = amb;
             lead = new LinkNode(entries[idx].Id, r.AltM, r.VyMs, r.HeadingDeg, r.TurnRateDeg,
                                 r.Xn, r.Yn, (int)(now - r.TickAt), r.TargetBankDeg,
-                                r.Role, r.Packets);
+                                r.Role, r.Packets, r.Wing, r.Slot, r.ErrM);
             return true;
         }
     }
@@ -476,7 +507,8 @@ internal sealed class DataLink : IDisposable
     /// </summary>
     internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
                                         double? xn, double? yn, double? targetBankDeg,
-                                        LinkRole role = LinkRole.Unknown)
+                                        LinkRole role = LinkRole.Unknown,
+                                        int slot = -1, WingState wing = WingState.Unknown, int errM = 0)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         if (xn is not double x || yn is not double y) return head;   // 坐标未知 → 仍是 6 段
@@ -494,6 +526,13 @@ internal sealed class DataLink : IDisposable
             // 坡度段缺失时用空段占位，保证 role 永远落在第 10 段 —— 解析端按位置取值
             if (targetBankDeg is not double) tail += "|";
             tail += "|" + (int)role;
+
+            // 第 11 段：僚机自报站位 `槽位,状态,误差m`。
+            // ★ 三个数挤在一段里用逗号分开，而不是再占三段：段位越往后越容易和别处的
+            //   解析约定打架，聚成一段之后老读端忽略整段就行，报文也还看得懂。
+            //   只有开了编队辅助、认得出自己槽位的僚机才发 —— 长机发这个没有意义。
+            if (wing != WingState.Unknown && slot >= 0)
+                tail += $"|{slot},{(int)wing},{Math.Clamp(errM, -9999, 9999)}";
         }
         return tail;
     }
@@ -537,9 +576,25 @@ internal sealed class DataLink : IDisposable
                                          out double? turnRateDeg, out double? headingDeg,
                                          out double? xn, out double? yn, out double? targetBankDeg,
                                          out LinkRole role)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out xn, out yn, out targetBankDeg, out role,
+                           out _, out _, out _);
+
+    /// <summary>
+    /// 解析一行报文（含角色段与僚机站位段）。
+    /// <para><paramref name="wing"/> 为 Unknown 表示对方没发第 11 段（老版本，或它没开编队辅助）；
+    /// 此时 <paramref name="slot"/> = -1、<paramref name="errM"/> = 0。</para>
+    /// </summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn, out double? targetBankDeg,
+                                         out LinkRole role, out int slot, out WingState wing, out int errM)
     {
         targetBankDeg = null;
         role = LinkRole.Unknown;
+        slot = -1;
+        wing = WingState.Unknown;
+        errM = 0;
         selfId = 0;
         altM = 0;
         vyMs = 0;
@@ -587,6 +642,22 @@ internal sealed class DataLink : IDisposable
             && roleVal >= 0 && roleVal <= 2)
             role = (LinkRole)roleVal;
 
+        // 站位（第 11 段）：`槽位,状态,误差m`。任何一段不合法就整段当未知 ——
+        // 但**不因此丢掉整包**：高度和角色仍然有效，长机不该因为一个脏子段就看不见这架飞机。
+        if (parts.Length >= 11)
+        {
+            var st = parts[10].Split(',');
+            if (st.Length == 3
+                && int.TryParse(st[0], out int slotVal) && slotVal >= 0 && slotVal <= 8
+                && int.TryParse(st[1], out int wingVal) && wingVal >= 0 && wingVal <= 3
+                && int.TryParse(st[2], out int errVal) && errVal >= -9999 && errVal <= 9999)
+            {
+                slot = slotVal;
+                wing = (WingState)wingVal;
+                errM = errVal;
+            }
+        }
+
         return true;
     }
 
@@ -597,7 +668,8 @@ internal sealed class DataLink : IDisposable
     /// <param name="yn">同上，y 轴。</param>
     public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg,
                      double? xn = null, double? yn = null, double? targetBankDeg = null,
-                     LinkRole role = LinkRole.Unknown)
+                     LinkRole role = LinkRole.Unknown,
+                     int slot = -1, WingState wing = WingState.Unknown, int errM = 0)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -617,7 +689,8 @@ internal sealed class DataLink : IDisposable
 
         try
         {
-            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg, role);
+            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg,
+                                       role, slot, wing, errM);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
@@ -713,7 +786,7 @@ internal sealed class DataLink : IDisposable
         if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
                              out double? turnRate, out double? heading,
                              out double? xn, out double? yn, out double? targetBank,
-                             out LinkRole role))
+                             out LinkRole role, out int slot, out WingState wing, out int errM))
         {
             Interlocked.Increment(ref _rxBad);
             return;
@@ -744,6 +817,9 @@ internal sealed class DataLink : IDisposable
             node.Yn = yn;
             node.TargetBankDeg = targetBank;
             node.Role = role;
+            node.Wing = wing;
+            node.Slot = slot;
+            node.ErrM = errM;
             // 记住来源，回包时能直接发回去（长机靠这个自动覆盖所有僚机）
             node.LastFrom = from;
             node.TickAt = Environment.TickCount64;
@@ -752,7 +828,8 @@ internal sealed class DataLink : IDisposable
 
         if (PacketCallback is { } cb)
         {
-            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank, role), Unmap(from).ToString()); }
+            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank, role,
+                                 0, wing, slot, errM), Unmap(from).ToString()); }
             catch { /* 调试回调不能影响接收 */ }
         }
     }

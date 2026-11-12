@@ -189,6 +189,7 @@ public static class L10n
         ["row.dataLinkLeadId"] = ("长机节点 ID", "LEAD NODE ID"),
         ["row.apiHealth"] = ("接口状态", "API STATE"),
         ["row.dataLinkNodes"] = ("在线节点", "NODES"),
+        ["row.dataLinkWings"] = ("僚机站位", "WING POS"),
         ["row.dataLinkState"] = ("链路状态", "LINK STATE"),
         ["row.dataLinkPort"] = ("端口", "PORT"),
         ["row.dataLinkDesc"] = ("说明", "INFO"),
@@ -414,6 +415,10 @@ public static class L10n
         ["guide.altMatch"] = ("高度一致", "LEVEL"),
         ["guide.lead.formation"] = ("编队完整", "FORMATION"),
         ["guide.lead.late"] = ("僚机掉队", "WINGMAN LATE"),
+        // 长机看僚机自报（数据链第 11 段）：带槽位号，三人编队能直接点名
+        ["guide.lead.wingBehind"] = ("{0} 掉队 {1}m", "{0} BEHIND {1}m"),
+        ["guide.lead.wingAhead"] = ("{0} 冲出 {1}m", "{0} AHEAD {1}m"),
+        ["guide.lead.wingOff"] = ("{0} 偏离站位", "{0} OFF STATION"),
         ["guide.lead.close"] = ("距离过近", "TOO CLOSE"),
         ["guide.lead.none"] = ("无僚机", "NO CONTACT"),
         ["guide.lead.setMach"] = ("设定马赫", "SET MACH"),
