@@ -490,17 +490,28 @@ public sealed class HudConfig
 
     public static HudConfig Load()
     {
+        var path = PathFor();
+        if (!File.Exists(path)) return new HudConfig();   // 首次运行：没有文件就是默认，正常
+
         try
         {
-            var path = PathFor();
-            if (File.Exists(path))
-            {
-                var cfg = JsonSerializer.Deserialize<HudConfig>(File.ReadAllText(path));
-                if (cfg != null) return cfg;
-            }
+            var cfg = JsonSerializer.Deserialize<HudConfig>(File.ReadAllText(path));
+            if (cfg != null) return cfg;
+            // 解出 null 不等于「没有配置」，是文件本身有问题，不能当成默认继续跑
+            throw new System.IO.InvalidDataException("deserialised to null");
         }
-        catch { }
-        return new HudConfig();
+        catch (Exception ex)
+        {
+            // ★ 这里原来是 catch { }：解析失败就静默返回默认值。上层紧接着会因为
+            //   DataLinkId == 0 去分配节点 ID 并 Save()，于是**把用户整份配置写回默认** ——
+            //   现象就是「重启之后设置全变回去了」，而且没有任何提示，查都没法查。
+            //   现在：原文件先留一份 .bad，再把失败原因喊出来。
+            try { File.Copy(path, path + ".bad", overwrite: true); } catch { }
+            Console.WriteLine($"config load FAILED ({ex.GetType().Name}: {ex.Message})");
+            Console.WriteLine("  original kept as hud-config.json.bad; this session runs on DEFAULTS");
+            Console.WriteLine("  -> saving from the panel will overwrite hud-config.json");
+            return new HudConfig();
+        }
     }
 
     public void Save() => SaveTo(PathFor());
