@@ -1014,21 +1014,8 @@ public sealed class HudGeometry
             string act = L10n.Get(LangScope.Alerts, hold ? "guide.hold"
                 : g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
 
-            // 数值单独定位，放在高度带左侧（本机高度那个框的左边）：
-            // 拼进上面那句在渲染里连续空格会被压掉，两块分开画才排得开。
-            // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。
-            int dvShow = (int)(Math.Round(g.DeltaKmh / 10.0) * 10);
-            if (!hold && dvShow != 0)
-            {
-                prims.Add(new HudPrim
-                {
-                    Kind = HudPrimKind.Text,
-                    Text = (dvShow > 0 ? "+" : "-") + Math.Abs(dvShow).ToString() + " km/h",
-                    Align = HudAlign.Left, FontSize = fontSmall * 1.05,
-                    Color = Fade(_opt.WarnColor, 0.9),
-                    Points = { (cx + 4.4 * pxDeg, cy + 9.6 * pxDeg) },
-                });
-            }
+            // 差值数字不在这里画了：它跟着本机速度框走（在 AddSpeedTape 里），
+            // 「我现在多少、还差多少」必须挨着同一个框，放到下方那一行又变成两处对数字。
 
             prims.Add(new HudPrim
             {
@@ -1322,6 +1309,24 @@ public sealed class HudGeometry
         bool overspeed = _opt.OverspeedAlert;
         AddBoxedText(prims, x - 0.6 * pxDeg, cy, shownKmh.ToString("0"), font, HudAlign.Right,
             overspeed ? _opt.DangerColor : col, line, pxDeg);
+
+        // 差值贴在**本机速度框**正下方：框里是「现在多少」，紧挨着的这行是「还差多少」。
+        // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。
+        if (targetKmh is double tgt2 && tgt2 > 1)
+        {
+            int dvShow = (int)(Math.Round((tgt2 - shownKmh) / 10.0) * 10);
+            if (dvShow != 0)
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text,
+                    Text = (dvShow > 0 ? "+" : "-") + Math.Abs(dvShow).ToString(),
+                    Align = HudAlign.Right, FontSize = fontSmall * 0.95,
+                    Color = Fade(_opt.WarnColor, 0.9),
+                    Points = { (x - 0.6 * pxDeg, cy + 1.55 * pxDeg) },
+                });
+            }
+        }
 
         // 目标速度：带子左侧一个朝右的琥珀三角，尖端贴在带上。
         // 左边离刻度数字（-2.6°）还有余量，右边要让给加速度条。
