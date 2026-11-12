@@ -259,6 +259,25 @@ public static class Program
                                                      out _, out _, out double? bankBad)
             && bankBad is null);
 
+        // ---- 垂直引导：增益、限幅、槽位高度的符号 ----
+        Check("vert rate clamps at max", Math.Abs(VerticalRateCmd(300, 10) - 10) < 1e-9);
+        Check("vert rate proportional", Math.Abs(VerticalRateCmd(20, 10) - 3.0) < 1e-9);
+        Check("vert rate symmetric", Math.Abs(VerticalRateCmd(-20, 10) + 3.0) < 1e-9);
+        Check("vert rate zero at target", VerticalRateCmd(0, 10) == 0);
+        var vShape = new HudConfig { FormationShape = WtHud.Hud.FormationGeometry.ShapeEchelon };
+        Check("echelon slot1 is 25 m up",
+            WtHud.Hud.FormationGeometry.Current(vShape).UpM == 25
+            && WtHud.Hud.FormationGeometry.Current(vShape).TargetDeltaHM == -25);
+        vShape.FormationShape = WtHud.Hud.FormationGeometry.ShapeDiamond;
+        vShape.FormationSlot = 2;
+        Check("diamond rear slot is 30 m up",
+            WtHud.Hud.FormationGeometry.Current(vShape).UpM == 30);
+        vShape.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+        vShape.FormationUpM = -40;
+        Check("custom vertical offset flows into slot",
+            WtHud.Hud.FormationGeometry.Current(vShape).UpM == -40
+            && WtHud.Hud.FormationGeometry.Current(vShape).TargetDeltaHM == 40);
+
         // ---- 到位判定改百分比：同一套门限在 400 m 与 1545 m 的槽位上都成立 ----
         Check("range error pct at 10 percent", Math.Abs(FormationRangeErrorPct(440, 400) - 10.0) < 1e-9);
         Check("range error pct symmetric", Math.Abs(FormationRangeErrorPct(360, 400) - 10.0) < 1e-9);
@@ -600,6 +619,18 @@ public static class Program
         var cfg = new HudConfig();
         // 遍历哪些站位：自定义队形 = 原来三个（尾随/左/右），具名队形 = 它的槽位表。
         // 这样 1G/2G 的历史数据和以前逐字可比，同时新队形也能跑同一套仿真。
+        // 垂直通道：WT_SIM_VERT=0 关掉；WT_SIM_VYMAX 升降率限幅（默认 10 m/s）；
+        // WT_SIM_ALT0 僚机起始高度差（默认 −120 m，即偏低 120 m）
+        bool altLoop = Environment.GetEnvironmentVariable("WT_SIM_VERT") != "0";
+        double vyMaxMs = 10;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_VYMAX"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double vmaxEnv))
+            vyMaxMs = Math.Abs(vmaxEnv);
+        double altStartM = -120;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_ALT0"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double alt0Env))
+            altStartM = alt0Env;
+
         // WT_SIM_SHAPE=echelon|column|diamond 让仿真跑具名队形（默认仍是自定义三站位）
         if (Environment.GetEnvironmentVariable("WT_SIM_SHAPE") is { Length: > 0 } simShape)
             cfg.FormationShape = simShape;
@@ -690,6 +721,13 @@ public static class Program
                 }
                 double psiW = psiW0;
                 double omegaSmooth = 0;                // staged 模式的角速度指令（一阶低通后的状态）
+                // ---- 独立高度通道（2026-11-12）----
+                // 横向环已经调了很久，垂直环完全独立：一个标量误差、一个限幅的升降率、一阶滞后。
+                // 爬升会掉速度，这一层先不耦合 —— 先把「能不能稳定停在目标高度」这件事测出来。
+                double leadAltM = 3000;
+                double wingAltM = leadAltM + altStartM;      // 起始高度差（负 = 僚机偏低）
+                double vySmooth = 0;
+                double maxAltErr = 0, finalAltErr = 0, altSettledAt = -1;
                 double vW = vW0Kmh / 3.6;              // 僚机当前地速（矢量模式用它算速度误差）
                 double maxAlong = double.MinValue;
                 double ahead0 = 0, finalRel = 0, finalR = 0, finalAlong = 0, finalCross = 0;
@@ -923,6 +961,18 @@ public static class Program
                             : NormalizeDeg(psiW + Math.Clamp(guide * 0.25,
                                 -maxTurnDegPerS * dt, maxTurnDegPerS * dt));
                     }
+                    // 垂直环：目标 = 长机高度 + 槽位高度（UpM 正 = 站位更高）
+                    if (altLoop)
+                    {
+                        double altErr = (leadAltM + geo.UpM) - wingAltM;
+                        maxAltErr = Math.Max(maxAltErr, Math.Abs(altErr));
+                        double vyCmd = Math.Clamp(altErr * VerticalGain, -vyMaxMs, vyMaxMs);
+                        vySmooth += (vyCmd - vySmooth) * Math.Min(1.0, dt / 0.5);
+                        wingAltM += vySmooth * dt;
+                        finalAltErr = (leadAltM + geo.UpM) - wingAltM;
+                        if (altSettledAt < 0 && Math.Abs(finalAltErr) < 10) altSettledAt = nowS;
+                    }
+
                     psiL = NormalizeDeg(psiL + omegaNow * dt);
                     lx += vMs * Math.Sin(psiL * Math.PI / 180.0) * dt;
                     ly += vMs * Math.Cos(psiL * Math.PI / 180.0) * dt;
@@ -938,6 +988,9 @@ public static class Program
                     + $"along={finalAlong:F0} cross={finalCross:F0} crossed={(maxAlong > 0 ? "YES" : "no")}"
                     + (stagedMode
                         ? $" stage={(inMaintain ? "MAINTAIN" : "CONVERGE")} sw={stageSwitches} swAt={firstSwitchAt:F1}"
+                        : "")
+                    + (altLoop
+                        ? $" | dH={finalAltErr:F0}m up={geo.UpM:F0} maxErr={maxAltErr:F0} settle={(altSettledAt < 0 ? "no" : altSettledAt.ToString("F1"))}s"
                         : ""));
             }
         }
@@ -2776,10 +2829,29 @@ public static class Program
 
             // 高度差：map_obj 没有 z，这一项只能来自数据链。正 = 对方比我高（我该爬）。
             opt.AltDiffM = null;
-            if (dataLink != null && snap.AltM > 0
-                && dataLink.TryGetPartnerAltitude(out int partnerAlt, out _))
+            opt.Vertical = null;
+            opt.AltDiffStale = false;
+            if (dataLink != null && snap.AltM > 0)
             {
-                opt.AltDiffM = partnerAlt - snap.AltM;
+                if (dataLink.TryGetPartnerAltitude(out int partnerAlt, out _, out double altAge)
+                    && altAge < 3.0)
+                {
+                    lastAltDiffM = partnerAlt - snap.AltM;
+                    lastAltDiffAtMs = Environment.TickCount64;
+                    hasLastAltDiff = true;
+                }
+
+                double sinceS = (Environment.TickCount64 - lastAltDiffAtMs) / 1000.0;
+                if (hasLastAltDiff && sinceS <= AltHoldStaleS)
+                {
+                    opt.AltDiffM = lastAltDiffM;
+                    // 还没到 3 s 的超时线就是新鲜值；超过就标「旧」（最多再显示 2 s）
+                    opt.AltDiffStale = sinceS > 3.0;
+                }
+                else if (!hasLastAltDiff)
+                {
+                    opt.AltDiffM = null;
+                }
             }
 
             // --- 直接引导：只针对最近那一架（"往哪转、加减速"） ---
@@ -2818,6 +2890,23 @@ public static class Program
                 // 本机要飞的站位（形状 + 槽位）。后面所有站位几何、到位判定、速度前馈都读它，
                 // 避免出现「引导按新队形算、油门还按旧距离算」的分叉。
                 var slot = WtHud.Hud.FormationGeometry.Current(cfg);
+
+                // ---- 垂直引导 ----
+                // 目标高度差 = 长机高度 + 槽位高度（UpM 正 = 站位比长机高），所以目标 ΔH = −UpM。
+                // 误差 = 当前 ΔH − 目标 ΔH，正 = 我偏低、要爬。
+                if (opt.AltDiffM is double currentDiff)
+                {
+                    double altErr = currentDiff - slot.TargetDeltaHM;
+                    // 编队未完成 + 高度差超门槛 → 高度优先：这条提到上面并加大，油门建议让位
+                    bool altFirst = formationStage == FormationStage.Converge
+                                    && Math.Abs(altErr) > Math.Max(5, cfg.FormationVertGateM);
+                    opt.Vertical = new VerticalCue(
+                        altErr,
+                        VerticalRateCmd(altErr, cfg.FormationVertMaxMs),
+                        opt.AltDiffStale,
+                        altFirst,
+                        Math.Abs(altErr) <= Math.Max(5, cfg.FormationVertGateM));
+                }
 
                 FormationAction action = FormationAction.None;
                 double deltaKmh = 0;
@@ -2929,6 +3018,11 @@ public static class Program
                         action = FormationAction.Hold;
                     }
                 }
+
+                // 高度优先：编队还没编好、高度又差得远时，先不给油门建议。
+                // 爬升本身要功率，这时候再喊「加速」会把人推去做一个做不到的组合动作。
+                if (opt.Vertical is { Priority: true })
+                    action = FormationAction.None;
 
                 // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
                 UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds, cfg);
@@ -3462,6 +3556,27 @@ public static class Program
 
     /// <summary>最近一次算出的目标坡度（带符号）。数据链按它广播，每帧发出的是上一帧的值，100 ms 误差可忽略。</summary>
     private static double turnAssistBankDeg;
+
+    // ---- 垂直引导（2026-11-12）----
+    // 链路 3 s 无包时 TryGetPartnerAltitude 会失败。直接把高度差清空会让「高度一致」那行凭空消失，
+    // 飞行员会以为自己掉高度了。所以缓存**差值**（不是对方绝对高度：保留绝对高度、自己一爬就错），
+    // 过期后继续显示最多 AltHoldStaleS 秒并标注旧数据。
+    private const double AltHoldStaleS = 5.0;
+    private static double lastAltDiffM;
+    private static long lastAltDiffAtMs;
+    private static bool hasLastAltDiff;
+
+    /// <summary>垂直环增益（1/s）。0.15 对应约 6.7 s 时间常数：120 m 用 18 s 左右收掉。</summary>
+    internal const double VerticalGain = 0.15;
+
+    /// <summary>
+    /// 垂直引导的升降率建议：误差 × 增益，再按机型限幅。
+    /// <para>不限幅的话差 300 m 会给出 45 m/s，飞机做不到，指令等于永远失败。
+    /// 增益也别再往上抬：仿真里 0.05 时 120 m 走 60 s 还剩 26 m（时间常数 20 s），
+    /// 0.15 时 18 s 收敛到 10 m 内且没有过冲。</para>
+    /// </summary>
+    internal static double VerticalRateCmd(double errorM, double maxMs)
+        => Math.Clamp(errorM * VerticalGain, -Math.Abs(maxMs), Math.Abs(maxMs));
 
     /// <summary>状态机位置：Off / 等方向（Arming）/ 已锁方向（Active）。</summary>
     internal enum TurnAssistStage { Off, Arming, Active }
@@ -4069,7 +4184,20 @@ public static class Program
             var altSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_ALTD");
             if (!string.IsNullOrWhiteSpace(altSpec)
                 && double.TryParse(altSpec, NumberStyles.Any, CultureInfo.InvariantCulture, out double pAlt))
+            {
                 opt.AltDiffM = pAlt;
+                opt.Vertical = new VerticalCue(pAlt, VerticalRateCmd(pAlt, 10), false, false, Math.Abs(pAlt) <= 30);
+            }
+
+            // 垂直引导样张：WT_PREVIEW_VERT="误差m,升降率,过期(0/1),优先(0/1)"
+            var vertSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_VERT");
+            if (!string.IsNullOrWhiteSpace(vertSpec))
+            {
+                var vp = vertSpec.Split(',');
+                double V(int i, double dflt) => vp.Length > i
+                    && double.TryParse(vp[i], NumberStyles.Any, CultureInfo.InvariantCulture, out double x) ? x : dflt;
+                opt.Vertical = new VerticalCue(V(0, 120), V(1, 4.5), V(2, 0) > 0.5, V(3, 0) > 0.5, V(0, 120) == 0);
+            }
 
             // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)[|当前速度,目标速度]"
             var leadSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_LEAD");

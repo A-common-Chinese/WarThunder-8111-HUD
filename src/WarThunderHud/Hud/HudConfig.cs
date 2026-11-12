@@ -237,6 +237,23 @@ public sealed class HudConfig
     /// <summary>槽位序号（0 起）。超出该队形槽位数时按最后一个算。</summary>
     [JsonPropertyName("formationSlot")] public int FormationSlot { get; set; } = 0;
 
+    /// <summary>
+    /// 自定义队形的**高度偏移**（米，正 = 站位比长机高）。默认 0。
+    /// <para>具名队形的高度由槽位表给（梯队逐级抬高、菱形后位略高），这一项只对自定义生效。</para>
+    /// </summary>
+    [JsonPropertyName("formationUpM")] public double FormationUpM { get; set; }
+
+    /// <summary>
+    /// 垂直引导的「算到位」门槛（米）。默认 30：不到这个误差就按「高度一致」显示，不再给升降建议。
+    /// </summary>
+    [JsonPropertyName("formationVertGateM")] public double FormationVertGateM { get; set; } = 30;
+
+    /// <summary>
+    /// 垂直引导的升降率上限（m/s）。默认 10。
+    /// <para>不限幅的话，差 300 m 时会给出飞机做不到的爬升率，指令永远「做不到」。</para>
+    /// </summary>
+    [JsonPropertyName("formationVertMaxMs")] public double FormationVertMaxMs { get; set; } = 10;
+
     // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
 
     /// <summary>

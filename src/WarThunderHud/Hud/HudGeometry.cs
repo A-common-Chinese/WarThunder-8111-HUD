@@ -41,6 +41,13 @@ public readonly record struct FormationLead(
 public enum TurnAssistAction { BankMore, BankLess, Hold }
 
 /// <summary>
+/// 垂直引导。正 <paramref name="ErrorM"/> = 本机比该在的位置低，需要爬。
+/// <para><paramref name="Priority"/> 在「编队未完成且高度差超门槛」时为真：
+/// 这条会提到速度条下面、加大字号，同时油门建议让位（先爬到位再修速度）。</para>
+/// </summary>
+public readonly record struct VerticalCue(double ErrorM, double RateMs, bool Stale, bool Priority, bool AtTarget);
+
+/// <summary>
 /// 长机转向辅助的显示数据。
 /// <para>横带两端固定 ±60°，绿标是当前坡度、琥珀标是目标坡度 ——
 /// 和僚机那套「圈=该飞的方向」不同，长机这边两个标都是**坡度**，所以要放在单独的带上，
@@ -141,6 +148,12 @@ public sealed class HudOptions
 
     /// <summary>数据链收到的长机目标坡度（僚机侧）。有值就在航向带下面报一行「长机 R54°」。</summary>
     public double? LeadTargetBankDeg { get; set; }
+
+    /// <summary>高度差是否为「保留的旧值」（链路断了但还没超过保留期）。</summary>
+    public bool AltDiffStale { get; set; }
+
+    /// <summary>垂直引导：误差（米，正 = 我偏低要爬）+ 建议升降率 + 数据是否过期。</summary>
+    public VerticalCue? Vertical { get; set; }
 
     /// <summary>
     /// 编队引导的提示行：找不到长机时说明原因是哪一种。空 = 不画。
@@ -922,20 +935,31 @@ public sealed class HudGeometry
             Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 12.2 * pxDeg) },
         });
 
-        // ---- 2.5) 高度差：只有数据链送来时才画 ----
+        // ---- 2.5) 垂直引导：米数 + 建议升降率 ----
         // 挂在距离行下面而不是右上角：编队时"水平多远"和"垂直差多少"是一起读的。
-        if (_opt.AltDiffM is double altDiff)
+        // ★ 高度优先（编队未完成且差得远）时提到速度条下面并加大字号 —— 那时候该做的是先爬到位，
+        //   不是修速度；油门建议在这一阶段已经让位（Program 里把 action 压成 None）。
+        if (_opt.Vertical is { } v)
         {
-            int altAbs = (int)Math.Round(Math.Abs(altDiff) / 5.0) * 5;   // 取整到 5 m，别给假精度
-            string altText = altAbs < 15
+            int altAbs = (int)Math.Round(Math.Abs(v.ErrorM) / 5.0) * 5;   // 取整到 5 m，别给假精度
+            string text = v.AtTarget
                 ? L10n.Get(LangScope.Alerts, "guide.altMatch")
-                : (altDiff > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m";
+                : (v.ErrorM > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m   "
+                  + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
+            if (v.Stale) text += "   " + L10n.Get(LangScope.Alerts, "guide.vertStale");
+
+            var vertColor = v.AtTarget ? Fade(col, 0.7)
+                : v.Priority ? _opt.WarnColor : _opt.FriendlyColor;
+            if (v.Stale) vertColor = Fade(vertColor, 0.55);
 
             prims.Add(new HudPrim
             {
-                Kind = HudPrimKind.Text, Text = altText, Align = HudAlign.Center,
-                FontSize = fontSmall * 1.1,
-                Color = altAbs < 15 ? Fade(col, 0.7) : _opt.FriendlyColor,
+                Kind = HudPrimKind.Text, Text = text, Align = HudAlign.Center,
+                FontSize = v.Priority ? fontSmall * 1.5 : fontSmall * 1.1,
+                Color = vertColor,
+                // ★ 位置不动，靠字号和颜色突出。试过提到上面：5.4° 正好是 FPM 圈的位置
+                // （圈画在 cy + 迎角，巡航迎角 3–6°），10.4°/11.4° 又会压加速度条和距离行。
+                // 「优先」的实质是油门建议让位（Program 里把 action 压成 None），不是这一行搬家。
                 Points = { (cx, cy + 13.0 * pxDeg) },
             });
         }

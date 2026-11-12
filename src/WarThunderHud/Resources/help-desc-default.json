@@ -1,5 +1,5 @@
 {
-  "_version": 23,
+  "_version": 24,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -497,8 +497,8 @@
     "en": "Snapshots: saves the current config as a named record so changes can be compared before and after. Select one and CONFIRM to restore, with a second confirmation. The list is drawn by the page itself, not the usual two-column layout."
   },
   "row.formationShapeMenu": {
-    "zh": "队形：进下一级页选形状（自定义 / 梯队 / 纵队 / 菱形）与槽位。值列显示当前队形和位置，例如「梯队 · 2」。编队共 30 项，其中 8 项在这一页下面。",
-    "en": "Formation shape: opens the sub-page for shape (custom / echelon / column / diamond) and slot. The value column shows the current pair, e.g. \"ECHELON · 2\". Eight of the formation's thirty rows live below this line."
+    "zh": "队形：进下一级页选形状（自定义 / 梯队 / 纵队 / 菱形）、槽位与高度偏移。值列显示当前队形和位置，例如「梯队 · 2」。",
+    "en": "Formation shape: opens the sub-page for shape (custom / echelon / column / diamond), slot and vertical offset. The value column shows the current pair, e.g. \"ECHELON · 2\"."
   },
   "row.fShape": {
     "zh": "队形形状。自定义 = 用下面的尾随距离 / 侧位横偏 / 侧位后距手工描述站位；梯队 = 每架再靠后 450 m、再偏左 250 m；纵队 = 正后方每架间隔 400 m；菱形 = 左后 / 右后 / 正后三个位置。★ 换形状会把槽位重置到第 1 个。",
@@ -521,8 +521,8 @@
     "en": "Longitudinal position of the slot (negative means behind the lead). Read-only, derived from shape and slot."
   },
   "page.formationShape": {
-    "zh": "队形几何：选形状与槽位，下面三行只读值告诉你这个位置到底在哪（斜距 / 横向 / 纵向）。三个手工距离只在「自定义」时可改。",
-    "en": "Formation geometry: pick a shape and slot; the three read-only rows below show exactly where that slot sits (slant / lateral / longitudinal). The three manual distances are editable only under CUSTOM."
+    "zh": "队形几何：选形状与槽位，下面四行只读值告诉你这个位置到底在哪（斜距 / 横向 / 纵向 / 高度）。三个手工距离和自定义高度只在「自定义」时可改。",
+    "en": "Formation geometry: pick a shape and slot; the four read-only rows show exactly where that slot sits (slant / lateral / longitudinal / altitude). The manual distances and custom altitude are editable only under CUSTOM."
   },
   "row.turnAssistMenu": {
     "zh": "长机转向辅助：按一下开关按键，HUD 在屏幕下方画一条坡度横带 —— 绿标是当前坡度、琥珀标是按「目标过载」算出的目标坡度，下面一句告诉你多压一点还是回一点杆。再按一下关掉。方向不用选：第一次真实转向（转向率超过 1.5°/s）自动锁定左右。",
@@ -567,5 +567,21 @@
   "row.fDropPct": {
     "zh": "掉出「保持」、退回「收敛」的误差门槛，同样是槽位斜距的百分比，默认 30%。必须明显大于「完成误差 %」，否则会在门槛附近来回切换状态（提示闪烁）。",
     "en": "Error band that drops the formation back to converge, also a percentage of slot range. Default 30%. Keep it well above DONE BAND % or the state will flip back and forth."
+  },
+  "row.fUpM": {
+    "zh": "这个槽位相对长机的**目标高度**（正 = 站位比长机高）。具名队形由槽位表给：梯队逐级抬高 25 m、菱形后位高 30 m、纵队等高。垂直引导瞄准的就是它。",
+    "en": "Target altitude for this slot relative to the lead (positive = the slot sits above the lead). Named shapes supply it: echelon steps up 25 m per slot, diamond puts the rear slot 30 m high, column is level. Vertical guidance aims at this."
+  },
+  "row.fUpOffset": {
+    "zh": "自定义队形的高度偏移（米，正 = 比长机高），默认 0。只对「自定义」生效 —— 具名队形的高度由槽位表决定，手改没有意义，所以这一行在具名队形下变灰。",
+    "en": "Vertical offset for the CUSTOM shape in metres (positive = above the lead), default 0. Only applies to CUSTOM; named shapes take their altitude from the slot table, so this row greys out."
+  },
+  "row.fVertGate": {
+    "zh": "垂直引导的「算到位」门槛（米），默认 30。误差小于它就显示「高度一致」且不再给升降建议；同时它也是「高度优先」的触发线 —— 编队未完成时误差超过它，垂直那行会提到速度条下面并加大，油门建议在这一阶段让位。",
+    "en": "Altitude band for vertical guidance, default 30 m. Inside it the cue reads LEVEL and stops asking; it is also the trigger for altitude priority - during convergence, an error beyond it promotes the vertical line above the speed cues and the throttle advice stands down."
+  },
+  "row.fVertMax": {
+    "zh": "升降率建议的上限（m/s），默认 10。不限幅的话差 300 m 会算出 45 m/s，飞机做不到，指令等于永远失败。仿真里 120 m 起始偏差在 10 m/s 限幅下 17.5 s 收敛到 1 m。",
+    "en": "Cap on the suggested vertical rate, default 10 m/s. Uncapped, a 300 m error asks for 45 m/s which no aircraft can hold. In simulation a 120 m initial error converges to 1 m in 17.5 s at this cap."
   }
 }

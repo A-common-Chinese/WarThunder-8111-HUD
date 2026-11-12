@@ -9,7 +9,8 @@ namespace WtHud.Hud;
 /// <para>★ 斜距必须逐个站位算：自定义队形三个站位的斜距都等于尾随距离（150²+370²≈400²），
 /// 但梯队/纵队/菱形的槽位斜距各不相同，速度前馈与到位判定都读这个值。</para>
 /// </summary>
-public readonly record struct FormationSlotSpec(double SideM, double BackM, double? RangeOverrideM = null)
+public readonly record struct FormationSlotSpec(double SideM, double BackM, double? RangeOverrideM = null,
+                                                double UpM = 0)
 {
     /// <summary>
     /// 斜距。具名队形按真实几何算；自定义队形沿用历史口径 —— 三个站位**共用**
@@ -20,6 +21,9 @@ public readonly record struct FormationSlotSpec(double SideM, double BackM, doub
 
     /// <summary>内圈/外圈的判据：右侧 +1、左侧 −1、正后 0。原来直接用 FormationWingSide 的符号。</summary>
     public int SideSign => Math.Sign(SideM);
+
+    /// <summary>站位相对长机的目标高度差（正 = 站位更高）。垂直引导的目标就是这个值。</summary>
+    public double TargetDeltaHM => -UpM;
 }
 
 /// <summary>
@@ -59,14 +63,16 @@ public static class FormationGeometry
         {
             case ShapeEchelon:
                 // 逐架累加：第 2 架 (500, 900)，第 3 架 (750, 1350)，斜距 1030 / 1545
-                return new FormationSlotSpec(-250.0 * (i + 1), -450.0 * (i + 1));
+                // 高度也逐级抬高 25 m：真实梯队常带阶梯，且能把视觉上的重叠分开
+                return new FormationSlotSpec(-250.0 * (i + 1), -450.0 * (i + 1), null, 25.0 * (i + 1));
             case ShapeColumn:
                 return new FormationSlotSpec(0, -400.0 * (i + 1));
             case ShapeDiamond:
+                // 后位抬高 30 m：三机同高时后位正好被前两架的尾流叠在一起
                 return i switch
                 {
                     1 => new FormationSlotSpec(300, -400),
-                    2 => new FormationSlotSpec(0, -600),
+                    2 => new FormationSlotSpec(0, -600, null, 30.0),
                     _ => new FormationSlotSpec(-300, -400),
                 };
             default:
@@ -86,9 +92,9 @@ public static class FormationGeometry
     /// </summary>
     public static FormationSlotSpec LegacySlot(int wingSide, HudConfig cfg) =>
         wingSide == 0
-            ? new FormationSlotSpec(0, -cfg.FormationRangeM, cfg.FormationRangeM)
+            ? new FormationSlotSpec(0, -cfg.FormationRangeM, cfg.FormationRangeM, cfg.FormationUpM)
             : new FormationSlotSpec(wingSide * cfg.FormationWingOffsetM, -cfg.FormationStationBackM,
-                                    cfg.FormationRangeM);
+                                    cfg.FormationRangeM, cfg.FormationUpM);
 
     /// <summary>
     /// 仿真要遍历的站位表。自定义队形仍是原来三个（尾随、左、右），保持 1G/2G 历史数据可比；

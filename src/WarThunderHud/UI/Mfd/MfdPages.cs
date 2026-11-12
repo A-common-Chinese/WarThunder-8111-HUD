@@ -455,6 +455,10 @@ internal static class MfdPages
             Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Current(c).RangeM:0} m"),
             Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Current(c).SideM:0} m"),
             Info("row.fBackM", c => $"{WtHud.Hud.FormationGeometry.Current(c).BackM:0} m"),
+            // 高度：具名队形由槽位表给，自定义用下面那一项手填
+            Info("row.fUpM", c => $"{WtHud.Hud.FormationGeometry.Current(c).UpM:0} m"),
+            Number("row.fUpOffset", c => c.FormationUpM, (c, v) => c.FormationUpM = v, 5, -200, 200, "m",
+                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
             // 自定义队形的三块砖（原样保留，默认形状就是自定义，行为不变）
             Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m",
                    c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
@@ -529,6 +533,9 @@ internal static class MfdPages
             Number("row.fDropPct", c => c.FormationDropPct, (c, v) => c.FormationDropPct = v, 5, 5, 100, "%"),
             Number("row.fSteadyDeg", c => c.FormationSteadyDeg, (c, v) => c.FormationSteadyDeg = v, 0.5, 0, 20, "°"),
             Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h"),
+            // 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」
+            Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
+            Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头
             Number("row.fKp", c => c.FormationKp, (c, v) => c.FormationKp = v, 0.01, 0.01, 0.50, ""),
             // 近距离比例：进入 blend 距离后从 Kp 渐变到 KpNear，调大刹车更早

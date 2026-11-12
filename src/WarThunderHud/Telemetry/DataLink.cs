@@ -211,7 +211,12 @@ internal sealed class DataLink : IDisposable
     }
 
     public bool TryGetPartnerAltitude(out int altM, out double vyMs)
+        => TryGetPartnerAltitude(out altM, out vyMs, out _);
+
+    /// <summary>取最新在线节点的高度，并给出这个包的年龄（秒）。上层用它判断「新鲜」还是「保留值」。</summary>
+    public bool TryGetPartnerAltitude(out int altM, out double vyMs, out double ageS)
     {
+        ageS = 0;
         long now = Environment.TickCount64;
         altM = 0;
         vyMs = 0;
@@ -228,6 +233,7 @@ internal sealed class DataLink : IDisposable
 
             altM = best.AltM;
             vyMs = best.VyMs;
+            ageS = (now - best.TickAt) / 1000.0;
             return true;
         }
     }
