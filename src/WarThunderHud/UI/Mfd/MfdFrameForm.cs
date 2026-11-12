@@ -65,7 +65,9 @@ public sealed class MfdFrameForm : Form
     // 这里只负责换绑，不再由表单硬编码 index→选项。
     private MfdInputRouter? _pageRouter;
     private List<RealButton>? _realButtons;
-    private int _lastHitCell = -1;
+    // 双击判定：区域名 + 索引一起比。以前所有点击共用一个 _lastHitCell，
+    // 「确认页第 3 项」和「模块页第 3 行」索引相同就会互相误判成双击。
+    private (string Zone, int Index) _lastHitKey = ("", int.MinValue);
     private DateTime _lastHitUtc = DateTime.MinValue;
 
     public bool Saved { get; private set; }
@@ -177,6 +179,28 @@ public sealed class MfdFrameForm : Form
 
     /// <summary>选中项由当前模块页面持有（表单不再存一份副本）。</summary>
     private MfdItem? SelectedItem => ItemsPage?.SelectedItem;
+
+    /// <summary>
+    /// 双击判定。区域名把不同类型的点击隔开：共用一个字段时，「确认页第 3 项」和
+    /// 「模块页第 3 行」在 400 ms 内会互相触发，等于点一下就执行。
+    /// </summary>
+    /// <summary>双击判定的纯逻辑：区域不同、索引不同、或已超时，都不算重复。</summary>
+    internal static bool IsRepeat((string Zone, int Index) previous, string zone, int index,
+                                  double elapsedMs, double windowMs)
+        => previous.Zone == zone && previous.Index == index && elapsedMs < windowMs;
+
+    private bool IsRepeatClick(string zone, int index, double windowMs)
+    {
+        var now = DateTime.UtcNow;
+        bool again = IsRepeat(_lastHitKey, zone, index,
+                              (now - _lastHitUtc).TotalMilliseconds, windowMs);
+        _lastHitKey = (zone, index);
+        _lastHitUtc = now;
+        return again;
+    }
+
+    /// <summary>点了空白格：清掉上次点击，避免下次点击被当成连击。</summary>
+    private void ClearRepeatClick() => _lastHitKey = ("", int.MinValue);
 
     private static RectangleF InsetRect(RectangleF r, float d) =>
         new(r.X + d, r.Y + d, Math.Max(2, r.Width - d * 2), Math.Max(2, r.Height - d * 2));
@@ -504,10 +528,7 @@ public sealed class MfdFrameForm : Form
                 if (e.X < x - 6 * sScale || e.X > x + colW + 6 * sScale) continue;
                 if (e.Y < y || e.Y > y + rowH) continue;
 
-                var nowC = DateTime.UtcNow;
-                var againC = choice == _lastHitCell && (nowC - _lastHitUtc).TotalMilliseconds < 500;
-                _lastHitCell = choice;
-                _lastHitUtc = nowC;
+                var againC = IsRepeatClick("number", choice, 500);
                 _editPage?.Select(choice);
                 if (againC || e.Clicks >= 2) Confirm();
                 Invalidate();
@@ -536,10 +557,7 @@ public sealed class MfdFrameForm : Form
                 if (e.X < x0 - 6 * sScale || e.X > x0 + colW + 6 * sScale) continue;
                 if (e.Y < y0 || e.Y > y0 + rowH) continue;
 
-                var now = DateTime.UtcNow;
-                var again = item == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
-                _lastHitCell = item;
-                _lastHitUtc = now;
+                var again = IsRepeatClick("pick", item, 400);
                 _pickPageUI?.SelectCell(i);
                 if (again || e.Clicks >= 2) _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
                 Invalidate();
@@ -551,10 +569,7 @@ public sealed class MfdFrameForm : Form
         if (!_work.Mfd.RealisticKeys && _mode == Mode.Snapshots &&
             RowHitTest(new PointF(e.X, e.Y), out var snapCell))
         {
-            var nowS = DateTime.UtcNow;
-            var againS = snapCell == _lastHitCell && (nowS - _lastHitUtc).TotalMilliseconds < 400;
-            _lastHitCell = snapCell;
-            _lastHitUtc = nowS;
+            var againS = IsRepeatClick("snapshot", snapCell, 400);
             _snapPageUI?.SelectCell(snapCell);
             if (againS || e.Clicks >= 2) _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
             Invalidate();
@@ -620,12 +635,9 @@ public sealed class MfdFrameForm : Form
         {
             // 复刻历史判断：拿「格号」和模块项数比较（不是绝对索引），所以最后一页不满时
             // 点空格仍会高亮一行 "—"、按确认没反应。要改这条得单独提，别混在重构里。
-            if (hitCell >= (CurrentPage?.Items.Count ?? 0)) { _lastHitCell = -1; return; }
+            if (hitCell >= (CurrentPage?.Items.Count ?? 0)) { ClearRepeatClick(); return; }
 
-            var nowI = DateTime.UtcNow;
-            var repeatedI = hitCell == _lastHitCell && (nowI - _lastHitUtc).TotalMilliseconds < 400;
-            _lastHitCell = hitCell;
-            _lastHitUtc = nowI;
+            var repeatedI = IsRepeatClick("items", hitCell, 400);
 
             itemsPage.SelectRaw(itemsPage.PageIndex * 10 + hitCell);
             if (repeatedI || e.Clicks >= 2) Confirm();
@@ -641,11 +653,7 @@ public sealed class MfdFrameForm : Form
             {
                 if (rowCell < MfdTheme.Presets.Length)
                 {
-                    var nowP = DateTime.UtcNow;
-                    var againP = rowCell == _lastHitCell &&
-                                 (nowP - _lastHitUtc).TotalMilliseconds < 400;
-                    _lastHitCell = rowCell;
-                    _lastHitUtc = nowP;
+                    var againP = IsRepeatClick("preset", rowCell, 400);
                     _presetPage?.Select(rowCell);
                     if (againP || e.Clicks >= 2) _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
                     Invalidate();
@@ -653,13 +661,9 @@ public sealed class MfdFrameForm : Form
                 return;
             }
 
-            if (rowCell >= _pages.Count) { _lastHitCell = -1; return; }     // 空单元格：不选也不确认
+            if (rowCell >= _pages.Count) { ClearRepeatClick(); return; }     // 空单元格：不选也不确认
 
-            var now = DateTime.UtcNow;
-            var repeated = rowCell == _lastHitCell &&
-                           (now - _lastHitUtc).TotalMilliseconds < 400;
-            _lastHitCell = rowCell;
-            _lastHitUtc = now;
+            var repeated = IsRepeatClick("menu", rowCell, 400);
 
             if (_mode == Mode.Menu)
             {
@@ -735,10 +739,7 @@ public sealed class MfdFrameForm : Form
     {
         if (!ConfirmRowHitTest(point, out var option)) return false;
 
-        var now = DateTime.UtcNow;
-        var repeated = option == _lastHitCell && (now - _lastHitUtc).TotalMilliseconds < 400;
-        _lastHitCell = option;
-        _lastHitUtc = now;
+        var repeated = IsRepeatClick("confirm", option, 400);
 
         _confirmPage?.Select(option);
 
@@ -1244,6 +1245,13 @@ public sealed class MfdFrameForm : Form
                 layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
             _nav.Push(_detailPageUI);
         }
+        else if (_nav.Current is not Pages.DetailPage)
+        {
+            // 从确认页返回：栈顶还压着 ConfirmPage。弹掉它，否则 _nav 的栈顶不再代表
+            // 当前页（绘制看 _mode 所以画面是对的，栈本身却说了假话）。
+            // 不重建页面，详情页的选中位置因此保留。
+            _nav.Pop();
+        }
         _mode = Mode.Detail;
     }
 
@@ -1374,7 +1382,7 @@ public sealed class MfdFrameForm : Form
         _toast = null;
 
         // 快照模块没有行列表：直接进入快照页（页面自己负责列表与选中）
-        if (_pages[_page].TitleKey == "page.snapshots")
+        if (CurrentPage?.TitleKey == "page.snapshots")
         {
             EnterSnapshots();
             return;
@@ -1932,6 +1940,13 @@ public sealed class MfdFrameForm : Form
         _dirty = false;
         _forceClose = true;   // 已保存：关闭时不要再弹放弃确认
         Close();
+    }
+
+    /// <summary>F1 反复开关时不让贝塞尔底图堆在 GC 队列里。</summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _bezel.Dispose();
+        base.Dispose(disposing);
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

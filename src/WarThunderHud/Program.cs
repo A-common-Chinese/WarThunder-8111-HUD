@@ -316,6 +316,27 @@ public static class Program
             refProps.Length > 0
             && refProps.All(p => !ReferenceEquals(p.GetValue(cloneSrc), p.GetValue(cloneCopy))));
 
+        // ---- 双击判定：区域 + 索引一起比，跨区域不算连击 ----
+        var hitMenu3 = ("menu", 3);
+        Check("repeat ignores other zone",
+            !WtHud.UI.Mfd.MfdFrameForm.IsRepeat(hitMenu3, "confirm", 3, 100, 400));
+        Check("repeat needs same index",
+            !WtHud.UI.Mfd.MfdFrameForm.IsRepeat(hitMenu3, "menu", 4, 100, 400));
+        Check("repeat inside window",
+            WtHud.UI.Mfd.MfdFrameForm.IsRepeat(hitMenu3, "menu", 3, 100, 400));
+        Check("repeat outside window",
+            !WtHud.UI.Mfd.MfdFrameForm.IsRepeat(hitMenu3, "menu", 3, 500, 400));
+
+        // ---- 侧键槽位名：只认 SIDE0..SIDE9（以前会抛异常） ----
+        Check("side slot parses SIDE0",
+            WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDE0", out var slot0) && slot0 == 0);
+        Check("side slot parses SIDE9",
+            WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDE9", out var slot9) && slot9 == 9);
+        Check("side slot rejects SIDE", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDE", out _));
+        Check("side slot rejects SIDE10", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDE10", out _));
+        Check("side slot rejects SIDEX", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDEX", out _));
+        Check("side slot rejects null", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot(null, out _));
+
         // ---- 节点 ↔ 地图友机配对：给每架友机各自的高度 ----
         var twoNodes = new[]
         {

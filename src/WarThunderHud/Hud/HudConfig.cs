@@ -469,7 +469,10 @@ public sealed class HudConfig
         foreach (var p in typeof(HudConfig).GetProperties())
         {
             if (!p.CanRead || !p.CanWrite) continue;
-            p.SetValue(this, p.GetValue(other));
+            // 单个属性赋值失败不该让整次 CANCEL 停在半路：那种情况下 _work 会变成
+            // 一半新一半旧的配置，比恢复失败更难查。
+            try { p.SetValue(this, p.GetValue(other)); }
+            catch { }
         }
         // 反射只搬引用，集合要单独深拷贝，否则源和目的从此共用一份数据
         CopyReferenceTypesFrom(other);

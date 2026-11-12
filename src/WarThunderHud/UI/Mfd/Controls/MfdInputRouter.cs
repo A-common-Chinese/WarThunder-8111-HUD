@@ -14,7 +14,7 @@ internal sealed class MfdInputRouter
     private readonly List<VirtualButton> _buttons = new();
     private readonly List<RealButton> _realButtons;
 
-    private int _lastHit = -1;
+    private VirtualButton? _lastHitButton;
     private DateTime _lastHitUtc = DateTime.MinValue;
     private string? _lastCommand;
     private DateTime _lastCommandUtc = DateTime.MinValue;
@@ -66,13 +66,25 @@ internal sealed class MfdInputRouter
         }
 
         // 没有按钮监听该键：当作“选择”使用（侧键）
-        if (slotName.StartsWith("SIDE", StringComparison.OrdinalIgnoreCase))
+        // 槽位名只有 SIDE0..SIDE9 一种形状；以前直接取第 5 个字符再 int.Parse，
+        // 传进来 "SIDE" 或 "SIDE10" 会抛 IndexOutOfRange / FormatException。
+        if (TryParseSideSlot(slotName, out int cell))
         {
-            var cell = int.Parse(slotName[4].ToString());
             var idx = _buttons.FindIndex(b => b.Kind != VirtualButtonKind.Action && b.Slot == cell);
             if (idx >= 0) SelectedIndex = idx;
         }
         return null;
+    }
+
+    /// <summary>解析侧键槽位名，只接受 SIDE0..SIDE9。抽成纯函数是为了能断言边界。</summary>
+    internal static bool TryParseSideSlot(string? slotName, out int cell)
+    {
+        cell = -1;
+        if (slotName is null || slotName.Length != 5) return false;
+        if (!slotName.StartsWith("SIDE", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!char.IsAsciiDigit(slotName[4])) return false;
+        cell = slotName[4] - '0';
+        return true;
     }
 
     public void ReleaseSlot(string slotName)
@@ -97,8 +109,11 @@ internal sealed class MfdInputRouter
             if (!_layout.RectFor(_buttons[i]).Contains(p)) continue;
 
             var now = DateTime.UtcNow;
-            var again = i == _lastHit && (now - _lastHitUtc).TotalMilliseconds < 500;
-            _lastHit = i;
+            // 比按钮**引用**而不是索引：换页/重建后按钮对象是新的，用索引会把
+            // 「翻页后点同一位置」当成双击，直接执行一个用户只想选中的动作。
+            var again = ReferenceEquals(_buttons[i], _lastHitButton)
+                        && (now - _lastHitUtc).TotalMilliseconds < 500;
+            _lastHitButton = _buttons[i];
             _lastHitUtc = now;
             SelectedIndex = i;
 
