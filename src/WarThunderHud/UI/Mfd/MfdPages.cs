@@ -142,8 +142,8 @@ internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        Display(), Camera(), Alerts(), Keys(), Panel(), Language(), DataLink(), FormationTune(),
-        Airframes(), Diag(), Snapshots(),
+        HudDisplay(), Formation(), Attitude(), Alerts(), Keys(),
+        Panel(), Airframes(), Snapshots(), Diag(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set,
@@ -213,7 +213,11 @@ internal static class MfdPages
             GetChoice = get, SetChoice = set, EnabledWhen = enabledWhen,
         };
 
-    private static MfdPage Display() => new()
+    /// <summary>
+    /// HUD 显示：画什么、多大、在哪、什么时候自动隐藏。
+    /// <para>编队的 8 项已搬到「编队」页 —— 一个主题只留一个入口。</para>
+    /// </summary>
+    private static MfdPage HudDisplay() => new()
     {
         TitleKey = "page.display",
         MenuKey = "page.display",
@@ -234,26 +238,6 @@ internal static class MfdPages
             Number("row.hole", c => c.CursorHoleHalfPx, (c, v) => c.CursorHoleHalfPx = (int)v, 2, 0, 200, "px"),
             Toggle("row.ladder", c => c.ShowPitchLadder, (c, v) => c.ShowPitchLadder = v),
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
-            // 编队（0.4.6 极速测试版精简为 4 行：功能开关 / 角色 / 马赫 / 全向跟随）
-            // 砍掉的 formationOnly、formationLeadFeed、leadHeading 默认值恰好都是正常行为，
-            // 砍面板行不影响它们继续生效，只是不能调。
-            // 编队辅助连带精简界面：这两件事在实际使用里是同一个动作 ——
-            // 飞密集编队时视野必须让给长机，留着一屏俯仰梯/数据块反而挡视线。
-            // 两个开关都开或都关，所以只保留这一行入口。
-            Toggle("row.formation", c => c.FormationAssist,
-                   (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
-            Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
-            Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
-            // 僚机侧位：三架僚机必须各选一边，否则全挤在长机正后方。
-            // 存的是 -1/0/+1，面板索引 0/1/2，所以两头各偏 1。
-            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
-                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1),
-            // 设定航向：长机靠它知道自己该往哪飞；-1 = 留空（锁存进入时的航向）
-            Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
-            Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
-            Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
-            // 超包线告警阈值：长机转弯过载超过它就说「转弯过急」，0.5–5 G
-            Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),
@@ -262,7 +246,11 @@ internal static class MfdPages
         },
     };
 
-    private static MfdPage Camera() => new()
+    /// <summary>
+    /// 姿态与校准：HUD 准不准。原先叫「相机」，但里面装的是俯仰零点、坡度耦合、
+    /// 符号源这些解算参数，没有一项和相机有关；校准动作的触发键也一并收在这。
+    /// </summary>
+    private static MfdPage Attitude() => new()
     {
         TitleKey = "page.camera",
         MenuKey = "page.camera",
@@ -294,6 +282,12 @@ internal static class MfdPages
             Toggle("row.tapeRadar", c => c.TapeRadarAltitude, (c, v) => c.TapeRadarAltitude = v),
             Toggle("row.aimRmb", c => c.AimOnRightMouse, (c, v) => c.AimOnRightMouse = v),
             Info("row.source", c => c.PitchSign == 0 ? "AUTO" : (c.PitchSign > 0 ? "+1" : "-1")),
+            // ---- 校准动作的触发键：校准时人就在这一页，键位跟着放这里比放「按键」页顺手 ----
+            Key("row.keyPitchZero", c => c.PitchZeroKey, (c, v) => c.PitchZeroKey = v),
+            Key("row.keyBankFlip", c => c.BankFlipKey, (c, v) => c.BankFlipKey = v),
+            Key("row.keyBodyFixed", c => c.BodyFixedKey, (c, v) => c.BodyFixedKey = v),
+            Key("row.keyReset", c => c.ResetKey, (c, v) => c.ResetKey = v),
+            Key("row.keyStall", c => c.StallKey, (c, v) => c.StallKey = v),
         },
     };
 
@@ -352,12 +346,7 @@ internal static class MfdPages
             Key("row.keyHole", c => c.CursorHoleKey, (c, v) => c.CursorHoleKey = v),
             Key("row.keySettings", c => c.SettingsKey, (c, v) => c.SettingsKey = v),
             Key("row.keyExit", c => c.ExitKey, (c, v) => c.ExitKey = v),
-            Key("row.keyPitchZero", c => c.PitchZeroKey, (c, v) => c.PitchZeroKey = v),
-            Key("row.keyBankFlip", c => c.BankFlipKey, (c, v) => c.BankFlipKey = v),
-            Key("row.keyBodyFixed", c => c.BodyFixedKey, (c, v) => c.BodyFixedKey = v),
-            Key("row.keyReset", c => c.ResetKey, (c, v) => c.ResetKey = v),
             Key("row.keyHoldHide", c => c.HoldHideKey, (c, v) => c.HoldHideKey = v),
-            Key("row.keyStall", c => c.StallKey, (c, v) => c.StallKey = v),
             // 固定组合键（不可改，只读展示）
             Info("row.keyFix1", _ => "CTRL+ALT+\u2191/\u2193"),
             Info("row.keyFix2", _ => "CTRL+ALT+PgUp/PgDn"),
@@ -379,16 +368,7 @@ internal static class MfdPages
             Preset("row.inkColor", c => c.Mfd.InkColor, (c, v) => c.Mfd.InkColor = v),
             Preset("row.accentColor", c => c.Mfd.AccentColor, (c, v) => c.Mfd.AccentColor = v),
             Toggle("row.realisticKeys", c => c.Mfd.RealisticKeys, (c, v) => c.Mfd.RealisticKeys = v),
-        },
-    };
-
-    private static MfdPage Language() => new()
-    {
-        TitleKey = "page.language",
-        MenuKey = "page.language",
-        MenuHintKey = "menu.hint.language",
-        Items =
-        {
+            // ---- 语言：原先独立一个模块；3 + 5 项合并后一屏装得下 ----
             Enum("lang.panel", new[] { "opt.en", "opt.zh" },
                 _ => L10n.Panel == Lang.Zh ? 1 : 0, (_, i) => L10n.Panel = i == 1 ? Lang.Zh : Lang.En),
             Enum("lang.screen", new[] { "opt.en", "opt.zh" },
@@ -411,13 +391,24 @@ internal static class MfdPages
     /// <para>这些数**不该经常动**，所以单独一页、不混在常用设置里。改动前先看面板 HELP
     /// （每行都有实测依据）；改坏了想回默认，把数字改成帮助里写的默认值即可。</para>
     /// </summary>
-    private static MfdPage FormationTune() => new()
+    private static MfdPage Formation() => new()
     {
         TitleKey = "page.formationTune",
         MenuKey = "page.formationTune",
         MenuHintKey = "menu.hint.formationTune",
         Items =
         {
+            // ---- 开关与角色：原先散在「显示」页第 2 屏，找编队要跳两个模块 ----
+            Toggle("row.formation", c => c.FormationAssist,
+                   (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
+            Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
+            Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
+            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
+                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1),
+            Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
+            Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
+            Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
+            Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
             // ---- 站位间距（改这三个要在一起看：150² + 370² ≈ 400² 是刻意凑的） ----
             Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m"),
             Number("row.fWingOffset", c => c.FormationWingOffsetM, (c, v) => c.FormationWingOffsetM = v, 10, 0, 600, "m"),
@@ -450,27 +441,7 @@ internal static class MfdPages
             // 速度前馈上下限（相对长机真空速的倍数）
             Number("row.fMaxRatio", c => c.FormationWingMaxRatio, (c, v) => c.FormationWingMaxRatio = v, 0.05, 1.00, 2.00, "×"),
             Number("row.fMinRatio", c => c.FormationWingMinRatio, (c, v) => c.FormationWingMinRatio = v, 0.05, 0.50, 1.00, "×"),
-        },
-    };
-
-    private static MfdPage Airframes() => new()
-    {
-        TitleKey = "page.airframe",
-        MenuKey = "page.airframe",
-        MenuHintKey = "menu.hint.airframe",
-        Items = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
-            .Select(Airframe).Cast<MfdItem>().ToList(),
-    };
-
-    /// <summary>回归快照：没有固定行，列表由 <c>SnapshotsPage</c> 直接绘制，这里只占首页一个模块位。</summary>
-    /// <summary>数据链设置：所有连接相关的开关与状态集中在这一页。</summary>
-    private static MfdPage DataLink() => new()
-    {
-        TitleKey = "page.datalink",
-        MenuKey = "page.datalink",
-        MenuHintKey = "menu.hint.datalink",
-        Items =
-        {
+            // ---- 数据链：编队的高度差靠它，所以放在同一页而不是单独一个模块 ----
             Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
             // 对端地址：留空 = 广播（只能同一局域网）；填 ip:port = 单播，跨网段/组网必须填。
             // 改完立即生效 —— 联调时 IP 会变好几次，重启 HUD 太慢。
@@ -490,6 +461,16 @@ internal static class MfdPages
         },
     };
 
+    private static MfdPage Airframes() => new()
+    {
+        TitleKey = "page.airframe",
+        MenuKey = "page.airframe",
+        MenuHintKey = "menu.hint.airframe",
+        Items = WtHud.Hud.AirframeDb.All.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .Select(Airframe).Cast<MfdItem>().ToList(),
+    };
+
+    /// <summary>回归快照：没有固定行，列表由 <c>SnapshotsPage</c> 直接绘制，这里只占首页一个模块位。</summary>
     private static MfdPage Snapshots() => new()
     {
         TitleKey = "page.snapshots",

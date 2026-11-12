@@ -134,7 +134,7 @@ public static class L10n
         ["menu"] = ("主菜单", "MAIN MENU"),
         ["page.display"] = ("显示", "DISPLAY"),
         ["page.datalink"] = ("数据链", "DATA LINK"),
-        ["page.camera"] = ("视角与姿态", "CAMERA"),
+        ["page.camera"] = ("姿态与校准", "ATTITUDE"),
         ["page.alerts"] = ("告警", "ALERTS"),
         ["page.keys"] = ("按键", "KEYS"),
         ["page.language"] = ("语言", "LANGUAGE"),
@@ -155,7 +155,7 @@ public static class L10n
         // 菜单提示
         ["menu.hint.display"] = ("显示 / 缩放 / 光标洞", "DISPLAY · SCALE · CURSOR HOLE"),
         ["menu.hint.datalink"] = ("连接", "LINK"),
-        ["menu.hint.camera"] = ("视角与姿态", "CAMERA · ATTITUDE"),
+        ["menu.hint.camera"] = ("零点 / 符号源 / 校准键", "ZERO · SOURCE · CAL KEYS"),
         ["menu.hint.alerts"] = ("各类告警阈值", "ALERT THRESHOLDS"),
         ["menu.hint.keys"] = ("热键一览", "KEY BINDINGS"),
         ["menu.hint.language"] = ("外板 / 屏幕 / 告警", "PANEL · SCREEN · ALERTS"),
@@ -267,8 +267,8 @@ public static class L10n
         ["row.wingSide"] = ("僚机侧位", "WING POSITION"),
 
         // ---- 编队调参页（僚机制导增益，平时不用动） ----
-        ["page.formationTune"] = ("编队调参", "FORMATION TUNE"),
-        ["menu.hint.formationTune"] = ("僚机制导增益与包线", "WINGMAN GAINS"),
+        ["page.formationTune"] = ("编队", "FORMATION"),
+        ["menu.hint.formationTune"] = ("开关 / 站位 / 增益 / 数据链", "SWITCH · SLOTS · GAINS · LINK"),
         ["row.fRange"] = ("尾随距离", "TRAIL RANGE"),
         ["row.fWingOffset"] = ("侧位横偏", "WING OFFSET"),
         ["row.fStationBack"] = ("侧位后距", "STATION BACK"),
@@ -314,7 +314,7 @@ public static class L10n
         ["airframe.aoa"] = ("迎角告警", "AOA WARN"),
         ["airframe.sink"] = ("下降率告警", "SINK RATE"),
         ["airframe.note"] = ("备注", "NOTE"),
-        ["page.panel"] = ("面板", "PANEL"),
+        ["page.panel"] = ("面板 / 语言", "PANEL · LANGUAGE"),
         ["menu.panel"] = ("面板", "PANEL"),
         ["menu.panel.hint"] = ("配色 / 操作方式", "COLORS / INPUT"),
         ["row.inkColor"] = ("文本颜色", "TEXT COLOR"),
