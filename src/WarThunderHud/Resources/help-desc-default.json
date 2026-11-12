@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 29,
+  "_version": 30,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -293,8 +293,8 @@
     "en": "Omni follow (lead only): off = hold the latched heading and get a turn-back call when drifting; on = no heading lock, maneuver freely and the wingman follows your live heading. Recommended on for the test build."
   },
   "row.leadIcon": {
-    "zh": "长机机型（图标类别）：僚机默认认「离我最近的友军」当长机，战场上多一架友军就会被带偏。填上长机的图标类别（例如 Fighter / Bomber / Assault）就只认这一类。★ 这是类别不是具体机型 —— 两架都填 Fighter 区分不了，请让长机换个大类。留空则回到「最近友军」。",
-    "en": "Lead icon (category): the wingman takes the nearest friendly as its lead by default, so one extra friendly in the area pulls the guidance away. Fill in the lead's icon category (Fighter / Bomber / Assault) to only accept that class. This is a category, not an exact type - two Fighters cannot be told apart; have the lead fly a different class. Blank falls back to nearest-friendly."
+    "zh": "长机机型（图标类别）：★ 只在数据链没生效（未启用或一个节点都收不到）时才用得上；数据链收到节点后改由位置配对认长机，这一项自动不参与。僚机默认认「离我最近的友军」当长机，战场上多一架友军就会被带偏。填上长机的图标类别（例如 Fighter / Bomber / Assault）就只认这一类。★ 这是类别不是具体机型 —— 两架都填 Fighter 区分不了，请让长机换个大类。留空则回到「最近友军」。",
+    "en": "Lead icon (category): only used when the data link is not working (off, or no node heard yet); once nodes arrive, position matching decides the lead and this field is ignored. The wingman takes the nearest friendly as its lead by default, so one extra friendly in the area pulls the guidance away. Fill in the lead's icon category (Fighter / Bomber / Assault) to only accept that class. This is a category, not an exact type - two Fighters cannot be told apart; have the lead fly a different class. Blank falls back to nearest-friendly."
   },
   "row.leadMach": {
     "zh": "长机马赫：目标马赫数（默认 0.70）。偏差超过 0.02 马赫时提示加速/减速。用马赫而不是空速，是因为它不随高度变化；实际比较时按当前音速换算成真空速。",
@@ -385,8 +385,8 @@
     "en": "Speed deadband while holding. Under it the cue reads hold. Default 20 km/h; larger is quieter but hides slow drift longer."
   },
   "row.dataLinkPeer": {
-    "zh": "对端地址。留空 = 广播，只能同一局域网；填 ip:port 走单播，跨网段 / VPN / 组网软件必须填。多个用逗号分隔，改完立即生效不用重启。★ 广播地址 255.255.255.255 出不了路由器。★ 支持 IPv6：写成 [2001:db8::1]:48017，裸地址也可以（端口取默认）；链路是双栈的，同一个端口同时收 v4 和 v6。★ 地址格式不对的项会被跳过，看下一行「发送目标」确认实际发了几个。",
-    "en": "Peer address. Empty = broadcast, same subnet only. ip:port sends unicast, which is required across subnets, VPNs and overlay networks. Separate several with commas; changes take effect immediately. Broadcast 255.255.255.255 never crosses a router. IPv6 works too: [2001:db8::1]:48017, or a bare address (default port); the link is dual-stack, so one port carries both v4 and v6. Malformed entries are skipped - check the TARGETS row to see how many are actually in use."
+    "zh": "对端地址。留空 = 广播，只能同一局域网；填 ip:port 走单播，跨网段 / VPN / 组网软件必须填。多个用逗号分隔，改完立即生效不用重启。★ 收到的节点会被自动加进发送目标（谁发给我就回给谁），所以长机不必把每个僚机地址都填一遍。★ 广播地址 255.255.255.255 出不了路由器。★ 支持 IPv6：写成 [2001:db8::1]:48017，裸地址也可以（端口取默认）；链路是双栈的，同一个端口同时收 v4 和 v6。★ 地址格式不对的项会被跳过，看下一行「发送目标」确认实际发了几个。",
+    "en": "Peer address. Empty = broadcast, same subnet only. ip:port sends unicast, which is required across subnets, VPNs and overlay networks. Separate several with commas; changes take effect immediately. Nodes that send to us are added to the target list automatically, so a lead does not have to type every wingman address. Broadcast 255.255.255.255 never crosses a router. IPv6 works too: [2001:db8::1]:48017, or a bare address (default port); the link is dual-stack, so one port carries both v4 and v6. Malformed entries are skipped - check the TARGETS row to see how many are actually in use."
   },
   "row.dataLinkPeerNow": {
     "zh": "实际生效的发送目标。broadcast = 广播；n target(s) = n 个单播目标；出现 bad 说明有地址格式不对（要 ip:port），那几项已被跳过。这一行读的是链路当前状态，不是配置里的文本。",
@@ -481,8 +481,8 @@
     "en": "This machine's role in the formation, derived from LEAD MODE: on = lead, off = wing. The value rides in the 10th field of every packet so wingmen can identify the lead instead of guessing \"the most recently active node\". Two machines both in lead mode is a misconfiguration: the receiver sees two role=1 nodes and flags it as ambiguous."
   },
   "row.dataLinkLeadId": {
-    "zh": "手动指定长机：填对方的节点 ID，0 = 自动。自动顺序是「手填 ID → 唯一自称长机的节点 → 场上只有一个节点 → 最近活跃」。三方以上编队、或两台都开了长机模式时自动会分不清，这一行就是强制手段。★ 填了就必须真能收到这个 ID，否则僚机侧会一直显示认不出长机——这是有意的，宁可明说，也不拿别人的高度顶替。",
-    "en": "Manual lead selection: the peer's node id, 0 = automatic. Auto order is: configured id -> the only node claiming lead -> the only node present -> most recently active. With three or more aircraft, or when both ends run lead mode, auto cannot decide and this row is the override. It must actually be heard, or the wingman keeps saying it cannot identify the lead - deliberately, rather than substituting someone else's altitude."
+    "zh": "手动指定长机：填对方的节点 ID，0 = 自动。★ 本机「长机模式」开着时这一项被强制忽略并显示 0 —— 自己就是长机，再认一个长机会让僚机端看到两个自称长机的节点。自动顺序是「手填 ID → 唯一自称长机的节点 → 场上只有一个节点 → 最近活跃」。三方以上编队、或两台都开了长机模式时自动会分不清，这一行就是强制手段。★ 填了就必须真能收到这个 ID，否则僚机侧会一直显示认不出长机——这是有意的，宁可明说，也不拿别人的高度顶替。",
+    "en": "Manual lead selection: the peer's node id, 0 = automatic. Ignored (and shown as 0) while LEAD MODE is on this machine - you are the lead, and naming another one makes wingmen see two nodes claiming lead. Auto order is: configured id -> the only node claiming lead -> the only node present -> most recently active. With three or more aircraft, or when both ends run lead mode, auto cannot decide and this row is the override. It must actually be heard, or the wingman keeps saying it cannot identify the lead - deliberately, rather than substituting someone else's altitude."
   },
   "row.apiHealth": {
     "zh": "8111 本地服务的健康度，只在飞行中判断。「正常」= 仪表和地图对象都有。「未就绪·请重启游戏」= 游戏启动时 8111 只起来一半：/state 有数据，但 /indicators 和 /map_obj.json 同时返回空，此时姿态会全部变成估算、编队也没有自机坐标，只有重启客户端能恢复（端口是通的，所以从外面看不出错）。「本机型无仪表」= 地图正常但没有航空电子数据，2.59 的部分新机型如此，属正常。「无地图对象」= 姿态正常但看不到友机位置。「不在对局」= 机库或主菜单，这一行不判断。",

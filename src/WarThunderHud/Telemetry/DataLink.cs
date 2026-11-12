@@ -79,6 +79,12 @@ internal sealed class DataLink : IDisposable
         /// <summary>对方自报的编队角色。老版本不发第 10 段 → Unknown，选择逻辑退回「最近活跃」。</summary>
         public LinkRole Role = LinkRole.Unknown;
 
+        /// <summary>
+        /// 这一包是从哪个地址来的。<see cref="Send"/> 用它回包 —— 长机不必把每个僚机的
+        /// IP 都手填一遍，谁发过来就回给谁。
+        /// </summary>
+        public IPEndPoint? LastFrom;
+
         public long TickAt;
         public int Packets;
     }
@@ -108,6 +114,14 @@ internal sealed class DataLink : IDisposable
 
     /// <summary>单播目标。为空时退回子网广播 —— 跨网段必须填，广播出不了路由器。</summary>
     private readonly List<IPEndPoint> _peers = new();
+
+    private int _lastTargetCount;
+
+    /// <summary>
+    /// 上一包的**实际**发送目标数 = 手填的地址 + 在线节点的来源地址。
+    /// <para>面板上的「发送目标」读这个：三人编队时它应该等于 2，而不是手填的 1。</para>
+    /// </summary>
+    public int TargetCount => _lastTargetCount;
 
     /// <summary>收到的一个数据链节点。位置可能为 null（对方版本不带坐标）。</summary>
     public readonly record struct LinkNode(int Id, int AltM, double VyMs,
@@ -591,9 +605,15 @@ internal sealed class DataLink : IDisposable
 
         IPEndPoint[] targets;
         lock (_lock)
-            targets = _peers.Count == 0
-                ? new[] { new IPEndPoint(IPAddress.Broadcast, Port) }
-                : _peers.ToArray();
+        {
+            long now = Environment.TickCount64;
+            var sources = new List<IPEndPoint?>(_nodes.Count);
+            foreach (var kv in _nodes)
+                sources.Add(now - kv.Value.TickAt < StaleMs ? kv.Value.LastFrom : null);
+
+            targets = MergeTargets(_peers, sources);
+            _lastTargetCount = targets.Length;
+        }
 
         try
         {
@@ -616,6 +636,32 @@ internal sealed class DataLink : IDisposable
         {
             // 单次发送失败无所谓，下一帧会重试
         }
+    }
+
+    /// <summary>
+    /// 合并本包要发给谁：手填的对端地址 + 最近 3 秒内给我们发过包的节点来源。
+    /// <para>★ 回包是三人编队的关键：长机只填一个僚机地址时，另一个僚机本来永远收不到；
+    /// 现在只要它给长机发过一包，长机就会把它加进目标表。</para>
+    /// <para>抽成纯函数是为了能在 selftest 里断言去重和广播回退，不必真开两台机器。</para>
+    /// </summary>
+    internal static IPEndPoint[] MergeTargets(IReadOnlyList<IPEndPoint> peers,
+                                              IReadOnlyList<IPEndPoint?> nodeSources)
+    {
+        var list = new List<IPEndPoint>(peers.Count + nodeSources.Count + 1);
+        list.AddRange(peers);
+
+        foreach (var ep in nodeSources)
+        {
+            if (ep is null) continue;
+            bool dup = false;
+            for (int i = 0; i < list.Count; i++)
+                if (list[i].Equals(ep)) { dup = true; break; }
+            if (!dup) list.Add(ep);
+        }
+
+        // 一个目标都没有时退回广播（同一局域网、没填地址的默认行为）
+        if (list.Count == 0) list.Add(new IPEndPoint(IPAddress.Broadcast, Port));
+        return list.ToArray();
     }
 
     /// <summary>v4 端点要映射成 v4-mapped v6，双栈套接字才肯发；v6 端点原样。</summary>
@@ -698,6 +744,8 @@ internal sealed class DataLink : IDisposable
             node.Yn = yn;
             node.TargetBankDeg = targetBank;
             node.Role = role;
+            // 记住来源，回包时能直接发回去（长机靠这个自动覆盖所有僚机）
+            node.LastFrom = from;
             node.TickAt = Environment.TickCount64;
             node.Packets++;
         }

@@ -729,6 +729,31 @@ public static class Program
         Check("api zh is readable",
             ApiHealthZh(ApiHealth.HalfReady).Contains("重启"));
 
+        // ---- 回包：手填目标 + 来包来源合并（三人编队里长机只填一个地址也不会漏人） ----
+        var rtA = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("26.1.1.1"), 48017);
+        var rtB = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("26.1.1.2"), 48017);
+        var rtC = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("26.1.1.3"), 48017);
+        var rtNone = new List<System.Net.IPEndPoint?>();
+        var rtStale = new List<System.Net.IPEndPoint?> { null, null };
+        Check("reply adds unknown source",
+            WtHud.Telemetry.DataLink.MergeTargets(new[] { rtA }, new List<System.Net.IPEndPoint?> { rtB }).Length == 2);
+        Check("reply dedupes a known peer",
+            WtHud.Telemetry.DataLink.MergeTargets(new[] { rtA }, new List<System.Net.IPEndPoint?> { rtA }).Length == 1);
+        Check("reply keeps configured order and appends sources",
+            WtHud.Telemetry.DataLink.MergeTargets(new[] { rtA, rtB }, new List<System.Net.IPEndPoint?> { rtC }).Length == 3);
+        Check("reply skips stale (null) sources",
+            WtHud.Telemetry.DataLink.MergeTargets(new[] { rtA }, rtStale).Length == 1);
+        var rtFallback = WtHud.Telemetry.DataLink.MergeTargets(Array.Empty<System.Net.IPEndPoint>(), rtNone);
+        Check("reply falls back to broadcast with nothing at all",
+            rtFallback.Length == 1 && rtFallback[0].Address.Equals(System.Net.IPAddress.Broadcast));
+
+        // ---- 长机专用项在长机模式 / 数据链生效时必须自动让位 ----
+        Check("lead id forced to auto under lead mode", EffectiveLeadId(true, 872768) == 0);
+        Check("lead id honoured for a wingman", EffectiveLeadId(false, 872768) == 872768);
+        Check("lead icon dropped once the link is up", EffectiveLeadIcon(true, "Fighter").Length == 0);
+        Check("lead icon kept without a link", EffectiveLeadIcon(false, "Fighter") == "Fighter");
+        Check("lead icon null safe", EffectiveLeadIcon(false, null).Length == 0);
+
         // ---- 长机航向来源：有链路用自报值，没有用本机航向近似 ----
         Check("lead heading prefers link", ResolveLeadHeading(275, 10) == 275);
         Check("lead heading falls back to own", ResolveLeadHeading(null, 10) == 10);
@@ -2913,7 +2938,11 @@ public static class Program
         // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
         bool formationOn = cfg.FormationAssist || cfg.FormationOnly;
         map.CollectFriendlies = formationOn;
-        map.LeadIconFilter = cfg.LeadIcon ?? "";   // 指定长机图标时只收匹配的友机
+        // 「长机机型」只在数据链不生效时用来筛友机：
+        //   数据链能收到节点 → 靠位置配对认长机（同机型多机也分得开）；
+        //   纯 8111 单机 → 只能按机型过滤，否则最近的友机会被当成长机。
+        bool linkUsable = cfg.DataLinkEnabled && dataLink != null && dataLink.NodeCount > 0;
+        map.LeadIconFilter = EffectiveLeadIcon(linkUsable, cfg.LeadIcon);
         opt.FormationAssist = formationOn;
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
@@ -4394,6 +4423,18 @@ public static class Program
         _ => "-",
     };
 
+    /// <summary>
+    /// 「长机节点 ID」的生效值。长机模式下强制 0（自动）—— 自己就是长机，
+    /// 再去认别人当长机会让僚机端看到两个 role=1，谁都分不清。
+    /// </summary>
+    internal static int EffectiveLeadId(bool leadMode, int configured) => leadMode ? 0 : configured;
+
+    /// <summary>
+    /// 「长机机型」的生效值。数据链能收到节点时一律留空：位置配对比机型精确，
+    /// 而且同机型多机时机型过滤帮不上忙。只有纯 8111 单机才需要按机型筛友机。
+    /// </summary>
+    internal static string EffectiveLeadIcon(bool linkUsable, string? icon) => linkUsable ? "" : (icon ?? "");
+
     private static ApiHealth lastApiHealth = ApiHealth.Unknown;
 
     /// <summary>面板读这个，不用自己再算一遍。</summary>
@@ -4484,12 +4525,22 @@ public static class Program
 
     /// <summary>对端地址的现状（面板上单独一行显示）：broadcast / 2 target(s) / 1 ok / 1 bad。</summary>
     private static string dataLinkPeerNote = "";
+    private static int dataLinkPeersConfigured;
 
     /// <summary>给面板用的对端现状文本。</summary>
     public static string DataLinkPeerText()
     {
-        if (dataLinkPeerNote.Length > 0) return dataLinkPeerNote;
-        return dataLink == null ? "off" : "-";
+        var link = dataLink;
+        if (link == null) return "off";
+        // 配置本身有问题时先报配置，别让用户以为自己填的对了
+        if (dataLinkPeerNote.Contains("bad")) return dataLinkPeerNote;
+        if (dataLinkPeerNote == "broadcast") return "broadcast";
+
+        int actual = link.TargetCount;
+        int reply = Math.Max(0, actual - dataLinkPeersConfigured);
+        // 「N+M reply」= 手填 N 个 + 收到的 N 个节点自动回包。
+        // 三人编队里长机只填一个地址也会显示 1+1，一眼看得出另一个是自动补上的。
+        return reply > 0 ? $"{dataLinkPeersConfigured}+{reply} reply" : $"{actual} target(s)";
     }
 
     /// <summary>
@@ -4516,9 +4567,12 @@ public static class Program
         if (link == null) { dataLinkPeerNote = "off"; return; }
 
         var bad = link.SetPeers(cfg.DataLinkPeers);
+        dataLinkPeersConfigured = cfg.DataLinkPeers.Count;
         dataLinkPeerNote = PeerNote(cfg.DataLinkPeers.Count, bad.Count);
         // 手填的长机 ID 也在这里落地：面板改完立即生效，不用重开 HUD。
-        link.LeadId = cfg.DataLinkLeadId;
+        // ★ 长机模式下强制回到自动（0）：自己就是长机，再去认一个「长机 ID」只会
+        //   造成「本机角色=长机、长机节点=别人」的矛盾配置，僚机端看到两个 role=1 也分不清。
+        link.LeadId = EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId);
 
         foreach (var b in bad)
             Console.WriteLine($"data link: bad peer \"{b}\" ignored (want ip:port)");

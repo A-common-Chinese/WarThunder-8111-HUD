@@ -578,7 +578,9 @@ internal static class MfdPages
             Info("row.dataLinkRole", c => WtHud.UI.L10n.Get(LangScope.Panel,
                      c.LeadMode ? "val.roleLead" : "val.roleWing"), c => c.DataLinkEnabled),
             // 长机节点 ID：0 = 自动（唯一 role=1 → 单节点 → 最近活跃）
-            Number("row.dataLinkLeadId", c => c.DataLinkLeadId,
+            // 长机模式下强制显示 0（自动）：自己就是长机，这一项填什么都不生效，
+            // 显示原值会让人以为「填了就在用」。
+            Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
                    1, 0, 999999, ""),
             Info("row.apiHealth", _ => WtHud.Program.ApiHealthZh(WtHud.Program.ApiHealthNow)),
