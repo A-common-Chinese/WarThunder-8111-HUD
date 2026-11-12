@@ -51,7 +51,8 @@ namespace WtHud.Telemetry;
 internal sealed class DataLink : IDisposable
 {
     public const int Port = 48017;
-    private const int StaleMs = 3000;          // 3 秒收不到就当对方掉线
+    /// <summary>3 秒收不到就当对方掉线。公开出来是因为上层要区分「掉线」和「数据错误」。</summary>
+    internal const int StaleMs = 3000;          // 3 秒收不到就当对方掉线
     private const double SendIntervalS = 0.25; // 4 Hz，高度是慢变量，够用
     private const int MaxPayloadBytes = 256;   // 一行文本撑死 60 字节，超了必是畸形包
 
@@ -171,7 +172,14 @@ internal sealed class DataLink : IDisposable
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
     /// 从而给每架友机找到各自的高度。
     /// </summary>
-    public LinkNode[] Snapshot()
+    public LinkNode[] Snapshot() => Snapshot(StaleMs);
+
+    /// <summary>
+    /// 取最近 <paramref name="maxAgeMs"/> 内出现过的节点，**包含已经掉线的**（AgeMs &gt;= 3 s）。
+    /// <para>★ 长机僚机表要用这一版：3 秒硬线适合判断「链路还在不在」，不适合判断
+    /// 「这个人还在不在编队里」。掉了线的僚机必须还能显示成「掉线」，而不是整行消失。</para>
+    /// </summary>
+    public LinkNode[] Snapshot(int maxAgeMs)
     {
         long now = Environment.TickCount64;
         lock (_lock)
@@ -179,10 +187,11 @@ internal sealed class DataLink : IDisposable
             var list = new List<LinkNode>(_nodes.Count);
             foreach (var kv in _nodes)
             {
-                if (now - kv.Value.TickAt >= StaleMs) continue;
+                int age = (int)(now - kv.Value.TickAt);
+                if (age >= maxAgeMs) continue;
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
-                                      n.Xn, n.Yn, (int)(now - n.TickAt), n.TargetBankDeg,
+                                      n.Xn, n.Yn, age, n.TargetBankDeg,
                                       n.Role, n.Packets, n.Wing, n.Slot, n.ErrM));
             }
             return list.ToArray();
@@ -435,6 +444,13 @@ internal sealed class DataLink : IDisposable
     /// <summary>在线节点列表，按包龄从新到旧。面板用它显示「谁在线、谁的包在掉」。</summary>
     public LinkNode[] OnlineNodes()
         => Snapshot().OrderBy(n => n.AgeMs).ToArray();
+
+    /// <summary>
+    /// 最近 <paramref name="maxAgeMs"/> 内出现过的节点（含已经掉线的），按包龄从新到旧。
+    /// <para>长机僚机表用它：掉线的那架要留在表里说「掉线」，不能整行消失。</para>
+    /// </summary>
+    public LinkNode[] RecentNodes(int maxAgeMs)
+        => Snapshot(maxAgeMs).OrderBy(n => n.AgeMs).ToArray();
 
     /// <summary>端口是否绑成功。false = 被防火墙/其它进程占了，功能等于没开数据链。</summary>
     public bool Listening => _running && _socket != null;

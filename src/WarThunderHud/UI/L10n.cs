@@ -441,6 +441,9 @@ public static class L10n
         // 僚机在编队里、但这一帧给不出判定（没自机坐标 / 没认出长机）。
         // ★ 不能写成「未报」：那是"这架没开编队"；也不能算「掉队」：那是凭空定罪。
         ["guide.wing.dataErr"] = ("数据错误", "DATA ERR"),
+        // 掉线：3 秒收不到包。带着秒数，长机才知道是刚断还是断了很久。
+        ["guide.wing.offline"] = ("掉线 {0}s", "OFFLINE {0}s"),
+        ["guide.lead.wingOffline"] = ("僚机掉线", "WINGMAN OFFLINE"),
         ["guide.lead.wingBehind"] = ("{0} 掉队 {1}m", "{0} BEHIND {1}m"),
         ["guide.lead.wingAhead"] = ("{0} 冲出 {1}m", "{0} AHEAD {1}m"),
         ["guide.lead.wingOff"] = ("{0} 偏离站位", "{0} OFF STATION"),

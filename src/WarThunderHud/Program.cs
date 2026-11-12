@@ -627,13 +627,28 @@ public static class Program
             WingStateText(wt3).Length > 0
             && WingStateText(wt3) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr"));
 
-        // ---- 完整性：数据错误那架不参与，但一架都没判定时不能算完整 ----
-        var mixOk = WingCompleteness(new[] { wt2, wt4 });          // 到位 + 数据错误
-        Check("data-error wing does not break completeness", mixOk.Judged == 1 && mixOk.AllInPosition);
-        Check("all data-error means nothing is judged", WingCompleteness(new[] { wt4 }).Judged == 0);
+        // ---- 主状态判定：数据错误/掉线不参与完整性，但没人判定时要说真话 ----
+        Check("data-error wing does not break completeness",
+            WingVerdict(new[] { wt2, wt4 }) == LeadWingVerdict.Complete);
+        Check("all data-error is reported as data error",
+            WingVerdict(new[] { wt4 }) == LeadWingVerdict.DataError);
         Check("a lagging wing still breaks completeness",
-            !WingCompleteness(new[] { wt1, wt2 }).AllInPosition);
-        Check("empty table judges nothing", WingCompleteness(null).Judged == 0);
+            WingVerdict(new[] { wt1, wt2 }) == LeadWingVerdict.Incomplete);
+        Check("empty table cannot claim completeness",
+            WingVerdict(null) == LeadWingVerdict.DataError);
+
+        // 掉线：3 s 收不到包的那架要留在表里，状态从「到位」变成「掉线 12s」
+        var wtOff = new WtHud.Telemetry.DataLink.LinkNode(55, 3000, 0, 0, 0, null, null, 12_000,
+            0, WtHud.Telemetry.DataLink.LinkRole.Wing, 9,
+            WtHud.Telemetry.DataLink.WingState.InPosition, 1, 0);
+        Check("offline wing keeps its slot", WingTable(new[] { wt2, wtOff }).Count == 2);
+        Check("offline state wins over the last report", WingStateText(wtOff).Contains("12"));
+        Check("offline does not break completeness",
+            WingVerdict(new[] { wt2, wtOff }) == LeadWingVerdict.Complete);
+        Check("nobody judged and one offline says offline",
+            WingVerdict(new[] { wtOff }) == LeadWingVerdict.Offline);
+        Check("offline outranks data error when nobody judged",
+            WingVerdict(new[] { wtOff, wt4 }) == LeadWingVerdict.Offline);
 
         // ---- 表不设行数上限：截断等于静默少报（四人以上 / 带数据错误行时正好踩到）----
         var leadOpt = new HudOptions { LeadStatusMain = "X", FormationOnly = true };
@@ -1650,6 +1665,12 @@ public static class Program
         Console.WriteLine();
         Console.WriteLine($"result: rx={link.RxCount}  bad={link.RxBad}  nodes={link.NodeCount}  " +
                           $"lead={leadText}  last={(link.LastPeer.Length == 0 ? "none" : link.LastPeer)}");
+
+        // 长机 HUD 会画的那张表，原样打出来 —— 联调时不用进游戏就能确认「谁掉队、谁数据错误、谁掉线」
+        var rows = WingTable(link.RecentNodes(WingOfflineKeepMs));
+        Console.WriteLine($"wing table: {rows.Count} row(s)");
+        foreach (var n in rows)
+            Console.WriteLine($"  {WingLabel(n),-6} {WingStateText(n)}");
         if (link.RxCount > 0) return 0;
 
         Console.WriteLine("no packet arrived. check, in this order:");
@@ -3316,7 +3337,9 @@ public static class Program
                 // 僚机表先算出来：它同时决定主状态和「要不要跑自己的状态机」。
                 // ★ 链路模式下长机不跑状态机 —— 僚机自报的到位/掉队是权威结果，
                 //   长机再按自己的地图算一遍只会算出第二套结论。
-                var wingRows = WingTable(dataLink?.OnlineNodes());
+                // ★ 用 RecentNodes 而不是 OnlineNodes：掉线的那架要留在表里说「掉线」，
+                //   3 秒硬线会让整行凭空消失，长机只会以为"本来就没这架"。
+                var wingRows = WingTable(dataLink?.RecentNodes(WingOfflineKeepMs));
 
                 // 主状态：僚机在不在位（长机唯一需要关心的事）
                 string main;
@@ -3367,23 +3390,30 @@ public static class Program
                 }
 
                 // ★ 有僚机自报时以自报为准：主行只说整体，具体谁掉了看下面那张表。
-                //   表是逐架的（到位 / 掉队 480m / 偏离站位 / 数据错误）。
-                //   ★ 完整性只看「有判定」的那些：一架数据错误不该把整队判成不完整
-                //     （他连自己在哪都不知道，凭什么拖累别人）；但一架都没判定出来时
-                //     也不能说「编队完整」—— 那同样是一句假话。
-                var (judgedCount, allJudgedInPosition) = WingCompleteness(wingRows);
+                //   表是逐架的（到位 / 掉队 480m / 偏离站位 / 数据错误 / 掉线）。
+                //   ★ 数据错误和掉线都不参与完整性：一个人出问题不该把整队判成不完整。
+                //     但一架都没判定出来时不能说「编队完整」—— 有人掉线就说掉线，
+                //     否则说数据错误。规则集中在 WingVerdict，别在这里再抄一份。
                 if (wingRows.Count > 0)
                 {
-                    if (judgedCount == 0)
+                    switch (WingVerdict(wingRows))
                     {
-                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr");
-                        warn = true;
-                    }
-                    else
-                    {
-                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
-                                                 allJudgedInPosition ? "guide.lead.formation" : "guide.lead.late");
-                        warn = !allJudgedInPosition;
+                        case LeadWingVerdict.Complete:
+                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.formation");
+                            warn = false;
+                            break;
+                        case LeadWingVerdict.Incomplete:
+                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
+                            warn = true;
+                            break;
+                        case LeadWingVerdict.Offline:
+                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.wingOffline");
+                            warn = true;
+                            break;
+                        default:
+                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr");
+                            warn = true;
+                            break;
                     }
                 }
                 foreach (var n in wingRows)
@@ -4338,30 +4368,51 @@ public static class Program
         return byLink;
     }
 
+    /// <summary>长机主状态该怎么写。数据来自僚机表逐行判定，规则集中在这里。</summary>
+    internal enum LeadWingVerdict
+    {
+        /// <summary>有判定的僚机全部到位。</summary>
+        Complete,
+        /// <summary>至少一架有判定的僚机不在位。</summary>
+        Incomplete,
+        /// <summary>没有一架给出判定，而且没人掉线 —— 全是「数据错误」。</summary>
+        DataError,
+        /// <summary>没有一架给出判定，且有人已经掉线（3 s 收不到包）。</summary>
+        Offline,
+    }
+
     /// <summary>
-    /// 长机主状态的判定输入：只看**有判定**的僚机。
-    /// <para>★ 数据错误（Wing = Unknown）的那架不参与完整性 —— 一个人数据错误不该把整队
-    /// 判成不完整；但 <c>Judged == 0</c> 时不能说「编队完整」，那也是一句假话，
-    /// 调用方要改说「数据错误」。</para>
+    /// 长机主状态的判定：只看**有判定**的僚机。
+    /// <para>★ 数据错误和掉线都不参与完整性 —— 一个人出问题不该把整队判成不完整；
+    /// 但一架都没判定出来时不能说「编队完整」，那同样是一句假话：有人掉线就说掉线，
+    /// 否则说数据错误。</para>
     /// </summary>
-    internal static (int Judged, bool AllInPosition) WingCompleteness(
+    internal static LeadWingVerdict WingVerdict(
         IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? rows)
     {
         int judged = 0;
         bool all = true;
-        if (rows is null) return (0, all);
+        bool offline = false;
+        if (rows is null) return LeadWingVerdict.DataError;
         foreach (var n in rows)
         {
+            if (n.AgeMs >= WtHud.Telemetry.DataLink.StaleMs) { offline = true; continue; }
             if (n.Wing == WtHud.Telemetry.DataLink.WingState.Unknown) continue;
             judged++;
             if (n.Wing != WtHud.Telemetry.DataLink.WingState.InPosition) all = false;
         }
-        return (judged, all);
+        if (judged > 0) return all ? LeadWingVerdict.Complete : LeadWingVerdict.Incomplete;
+        return offline ? LeadWingVerdict.Offline : LeadWingVerdict.DataError;
     }
+
+    /// <summary>僚机掉线后还留在表里的时长。超过就整行撤掉 —— 那已经不是"编队里少了一架"，
+    /// 而是这架已经不在这一局了，留着只会越堆越多。</summary>
+    internal const int WingOfflineKeepMs = 60_000;
 
     /// <summary>
     /// 长机 HUD 上的僚机表：只要**发过第 11 段**的节点（槽位 &gt;= 0），按槽位排序。
     /// <para>★ 入表条件不是「状态已知」：状态 Unknown 恰恰是「数据错误」那一档，必须列出来。
+    /// 掉线的（包龄 &gt;= 3 s）也留着，状态列写「掉线」——见 <see cref="WingOfflineKeepMs"/>。
     /// 没发第 11 段的节点是"没开编队辅助/老版本"，不属于这支编队，不进表。</para>
     /// </summary>
     internal static List<WtHud.Telemetry.DataLink.LinkNode> WingTable(
@@ -4381,13 +4432,17 @@ public static class Program
     }
 
     /// <summary>
-    /// 表里那一格的状态词：到位 / 掉队 480m / 冲出 320m / 偏离站位 / 数据错误。
+    /// 表里那一格的状态词：到位 / 掉队 480m / 冲出 320m / 偏离站位 / 数据错误 / 掉线 12s。
     /// <para>数据错误 = 僚机在编队里，但这一帧给不出判定（没自机坐标 / 没认出长机）。
-    /// 不是"没报"，也不是"掉队"：前者会让长机以为这架不存在，后者是凭空定罪。</para>
+    /// 掉线 = 已经 3 s 没收到它的包，上一帧的「到位」不再算数。</para>
     /// </summary>
     internal static string WingStateText(WtHud.Telemetry.DataLink.LinkNode n)
     {
         var alerts = WtHud.UI.LangScope.Alerts;
+        // 掉线优先于一切自报：包一停，最后那句"我在位"就只是历史。
+        if (n.AgeMs >= WtHud.Telemetry.DataLink.StaleMs)
+            return string.Format(WtHud.UI.L10n.Get(alerts, "guide.wing.offline"),
+                                 Math.Max(1, n.AgeMs / 1000));
         return n.Wing switch
         {
             WtHud.Telemetry.DataLink.WingState.InPosition => WtHud.UI.L10n.Get(alerts, "guide.wing.ok"),
