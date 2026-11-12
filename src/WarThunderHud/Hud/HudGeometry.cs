@@ -1266,7 +1266,7 @@ public sealed class HudGeometry
     {
         // useTas: 编队引导按真空速算，带子必须同一口径，否则目标三角和引导数字对不上
         AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall,
-                     FormationAccelWidth, _opt.FormationTargetKmh, useTas: true);
+                     FormationAccelWidth, _opt.FormationTargetKmh, useTas: true, amberAccelZero: true);
         AddAltTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
     }
 
@@ -1286,7 +1286,7 @@ public sealed class HudGeometry
     /// </param>
     private void AddSpeedTape(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg,
         double line, double font, double fontSmall, double accelScale = 1.0,
-        double? targetKmh = null, bool useTas = false)
+        double? targetKmh = null, bool useTas = false, bool amberAccelZero = false)
     {
         double x = cx - _tapeOffsetDeg * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
@@ -1364,11 +1364,12 @@ public sealed class HudGeometry
         double accLen = Math.Clamp(Math.Abs(_opt.AccelMs2) * 0.50 * pxDeg, 0, 5.0 * pxDeg);   // 0-10 m/s^2 maps to 0-5 deg
         double accBarX = x + 1.3 * pxDeg;   // between the tape and the readouts
         double accW = line * accelScale;
-        // 零位基准用琥珀：绿色在这套界面统一表示「实际值」，基准是「该待的地方」，
-        // 用同一根绿线画出来就等于告诉飞行员「现在正好在基准上」。
+        // 零位基准的颜色：编队模式用琥珀（绿色在那边统一表示「实际值」，基准得是另一个颜色），
+        // 普通模式保持原来的淡绿 —— 那边绿色本来就同时扮演刻度和基准，改了反而多出一种颜色。
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Line, Width = accW, Color = Fade(_opt.WarnColor, 0.9),
+            Kind = HudPrimKind.Line, Width = accW,
+            Color = amberAccelZero ? Fade(_opt.WarnColor, 0.9) : Fade(col, 0.55),
             Points = { (accBarX - 0.25 * pxDeg, cy), (accBarX + 0.25 * pxDeg, cy) },
         });
         if (accLen > 0.15 * pxDeg)
