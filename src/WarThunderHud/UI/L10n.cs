@@ -366,6 +366,7 @@ public static class L10n
         ["guide.accel"] = ("加速", "SPEED UP"),
         ["guide.decel"] = ("减速", "SLOW DOWN"),
         ["guide.hold"] = ("保持", "HOLD"),
+        ["guide.altMatch"] = ("高度一致", "LEVEL"),
         ["guide.lead.formation"] = ("编队完整", "FORMATION"),
         ["guide.lead.late"] = ("僚机掉队", "WINGMAN LATE"),
         ["guide.lead.close"] = ("距离过近", "TOO CLOSE"),

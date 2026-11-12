@@ -888,7 +888,7 @@ public sealed class HudGeometry
         {
             int altAbs = (int)Math.Round(Math.Abs(altDiff) / 5.0) * 5;   // 取整到 5 m，别给假精度
             string altText = altAbs < 15
-                ? "高度一致"
+                ? L10n.Get(LangScope.Alerts, "guide.altMatch")
                 : (altDiff > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m";
 
             prims.Add(new HudPrim

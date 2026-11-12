@@ -1,5 +1,5 @@
 {
-  "_version": 18,
+  "_version": 19,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -399,5 +399,109 @@
   "row.dataLinkPeerNow": {
     "zh": "实际生效的发送目标。broadcast = 广播；n target(s) = n 个单播目标；出现 bad 说明有地址格式不对（要 ip:port），那几项已被跳过。这一行读的是链路当前状态，不是配置里的文本。",
     "en": "Targets actually in use. broadcast = broadcast; n target(s) = n unicast peers; bad means some entries were malformed (want ip:port) and were skipped. This reflects the live link, not the text in the field above."
+  },
+  "row.holeX": {
+    "zh": "光标洞中心相对屏幕中心的横向偏移（像素）。光标洞是 HUD 上挖掉的一块透明方形，把这一处的点击让给游戏——平时整块覆盖层都是穿透的，只有这里要显式让开，否则点不到座舱里的开关。正 = 向右。换了分辨率或窗口位置要重调。",
+    "en": "Horizontal offset of the cursor hole from the screen centre, in pixels. The hole is a transparent square cut out of the overlay so clicks land in the game instead of being eaten. Positive moves it right. Re-tune after changing resolution or window placement."
+  },
+  "row.holeY": {
+    "zh": "光标洞中心相对屏幕中心的纵向偏移（像素）。正 = 向下。和「光标洞 X」一起定位，配合 Ctrl+Alt+H 循环改大小。",
+    "en": "Vertical offset of the cursor hole from the screen centre, in pixels. Positive moves it down. Used together with CURSOR HOLE X; Ctrl+Alt+H cycles the size."
+  },
+  "row.splashEnabled": {
+    "zh": "击落播报：游戏报出「某甲 (机型) 击落了 某乙」时在屏幕上提示一行。配合下面的「玩家昵称」判断是不是自己击落的；昵称留空就只当旁观信息显示，不区分归属。",
+    "en": "Kill feed: shows a line when the game reports \"A (type) shot down B\". The nickname below decides whether the kill is yours; leave it empty and every kill is shown without ownership."
+  },
+  "row.playerName": {
+    "zh": "你的游戏内昵称，用来从击落播报里认出自己。中文昵称、中文联队标签（^雄鹰^张三）、昵称里带括号（张三(老阳)）都能正确匹配，标签会先剥掉再比。留空 = 不判定归属。",
+    "en": "Your in-game nickname, used to recognise your own kills in the feed. Chinese names, Chinese squad tags (^X^Name) and brackets inside the name all match - tags are stripped before comparing. Empty means no ownership check."
+  },
+  "row.rollCoupleMode": {
+    "zh": "坡度耦合三选一：开 = HUD 跟着座舱一起滚（1:1）；关 = 不跟着滚，第三人称视角用；自动 = 当前实现里等同「开」。★ 坡度滚反了要用下面的「坡度方向翻转」改符号，改这一项没用。",
+    "en": "Roll coupling: ON rotates the HUD with the cockpit (1:1); OFF keeps it level, for third-person; AUTO currently behaves as ON. If the roll goes the wrong way use BANK FLIP - this row will not fix it."
+  },
+  "row.keyPitchZero": {
+    "zh": "俯仰零位校准键。平飞时按一下，把当前俯仰记成零点，之后俯仰梯对着真实地平线读 0。默认 F7。改完按 SAVE 才写进配置。",
+    "en": "Pitch zero key. Fly level, press once, and the current pitch becomes zero so the ladder reads 0 against the real horizon. Default F7; press SAVE to persist."
+  },
+  "row.keyBankFlip": {
+    "zh": "坡度方向翻转键。HUD 的坡度方向和真实相反时按它翻符号，按一次翻一次（正负互换）。默认 F8。",
+    "en": "Bank flip key. Inverts the bank sign when the HUD rolls the wrong way; each press flips it again. Default F8."
+  },
+  "row.keyBodyFixed": {
+    "zh": "纯机体固连开关。开 = HUD 固定在机体坐标系里，跟着飞机一起转、不做地平线稳定；关 = 正常按地平线稳定。默认 F9。",
+    "en": "Body-fixed toggle. ON locks the HUD to the airframe so it rotates with the aircraft instead of staying horizon-stable; OFF is normal. Default F9."
+  },
+  "row.keyReset": {
+    "zh": "状态复位键：清掉运行时的临时状态（视角、地图、计分板这类开关状态），不动任何配置项。默认 F5。",
+    "en": "State reset: clears runtime state (view / map / scoreboard toggles) back to initial. Touches no configuration. Default F5."
+  },
+  "row.keyStall": {
+    "zh": "失速迎角校准键。平飞减速到抖杆或失速，按一下把当前迎角记成失速迎角，之后 AOA 告警按它算余量。默认 CTRL+ALT+S。",
+    "en": "Stall AoA calibration. Slow to the buffet and press once; the current angle of attack becomes the stall reference the AoA alert measures margin against. Default CTRL+ALT+S."
+  },
+  "row.spaaRange": {
+    "zh": "友军防空（SPAA）在导航块里的显示距离上限，单位 km。0 = 不显示。默认 60。调大能看到更远的友军防空，但也更容易把无关目标塞进视野。",
+    "en": "How far friendly SPAA is shown in the nav block, in km. 0 hides them. Default 60 - larger reaches further but clutters the view."
+  },
+  "row.pullUp": {
+    "zh": "PULL UP 告警的提前量（秒）：按当前下降率和离地高度算，还有几秒撞地就报警。默认 5 s，可调 1.5–10。调大更早报（低空机动时会频繁响），调小更晚、更安静。",
+    "en": "PULL UP lead time in seconds: the alert fires when time-to-impact at the current sink rate drops below it. Default 5 s, range 1.5-10. Larger warns earlier and chatters during low-level manoeuvring."
+  },
+  "row.sinkRate": {
+    "zh": "下降率告警阈值（m/s），下降率超过它就报。默认 40。只影响告警，不改任何飞控行为。",
+    "en": "Sink rate alert threshold in m/s; fires when the descent rate exceeds it. Default 40. Alerting only - nothing is flown differently."
+  },
+  "row.keyHoldHide": {
+    "zh": "长按隐藏 HUD 的键：按住临时隐藏（例如想看清目标），松开恢复。默认 U。",
+    "en": "Hold-to-hide key: hold to hide the HUD temporarily (to see a target), release to bring it back. Default U."
+  },
+  "row.keyFix1": {
+    "zh": "固定组合键，不可改：CTRL+ALT+↑/↓ 把整块 HUD 上下移动 0.5°（改的就是「上下偏移」那一项）。飞的时候不用开面板也能调位置，调完按 SAVE 才存。",
+    "en": "Fixed, not rebindable: CTRL+ALT+Up/Down shifts the whole HUD by 0.5 deg - the same value as the VERT OFFSET row. Reposition in flight without opening the panel; SAVE to keep it."
+  },
+  "row.keyFix2": {
+    "zh": "固定组合键，不可改：CTRL+ALT+PgUp/PgDn 改视场角 1°。PgUp 变小（符号更大），PgDn 变大（符号更小）。和「视场角」那一项是同一个值。",
+    "en": "Fixed, not rebindable: CTRL+ALT+PgUp/PgDn changes FOV by 1 deg. PgUp narrows it (symbols bigger), PgDn widens it. Same value as the FOV row."
+  },
+  "row.keyFix3": {
+    "zh": "固定组合键，不可改：CTRL+ALT+R 在坡度耦合 0 / 1 之间来回切（第三人称 ↔ 座舱 1:1）。它改的是耦合数值本身，不改变上面的「坡度耦合方式」。",
+    "en": "Fixed, not rebindable: CTRL+ALT+R toggles roll coupling between 0 and 1 (third-person to cockpit 1:1). It changes the coupling value, not the ROLL COUPLING MODE row."
+  },
+  "row.importWt": {
+    "zh": "从战雷导出的 controls .blk 里读减速板 / 计分板的热键，省得手填。会弹文件选择框；读完提示读到了什么，没读到通常是文件选错、或这两项在游戏里本来没绑。",
+    "en": "Reads the airbrake and scoreboard bindings out of a War Thunder controls .blk so you do not have to type them. Opens a file dialog and reports what it found; nothing found usually means the wrong file or those actions are unbound."
+  },
+  "page.formationTune": {
+    "zh": "编队：僚机与长机的全部设置。开头是开关与角色（辅助开关、长机机型、长机模式、僚机侧位、锁定航向、全向跟随、设定马赫、转弯告警），接着是三个站位距离、五个判定阈值与保持死区、六个制导增益、三个提前量、两个包线，最后是数据链。",
+    "en": "Formation: everything for wingman and lead. Switches and role first (assist, lead type, lead mode, slot, locked heading, omni follow, set Mach, turn warning), then three slot distances, five stage thresholds and hold deadbands, six guidance gains, three lead-turn terms, two envelope limits, and the data link at the end."
+  },
+  "row.leadHeading": {
+    "zh": "长机锁定航向（度）：长机按它飞，僚机据此算前置。填 -1 = 不锁死，进入编队时把当时的航向锁存下来。打开「全向跟随」后这一项不起作用。",
+    "en": "Heading the lead holds, in degrees. -1 latches the heading that was current when the formation was engaged. Ignored while OMNI FOLLOW is on."
+  },
+  "row.dataLinkId": {
+    "zh": "本机节点 ID，首次启用时随机生成并一直沿用。两端靠它区分彼此；显示「-」表示还没生成（把上面的开关打开就会写进去）。两台机器撞同一个 ID 概率极低，真撞了日志里会提示。",
+    "en": "This machine's node id, generated on first use and kept. It is how the two ends tell each other apart; \"-\" means it has not been assigned yet (turning the switch on writes one). A collision is very unlikely and would be logged."
+  },
+  "row.dataLinkState": {
+    "zh": "链路当前状态。off = 没启用；no partner = 已启用但没收到别人（查端口、防火墙、对端地址）；linked = 收到 1 个节点；linked xN = 收到多个。这一行读的是运行中的链路，不是上面的配置文本。",
+    "en": "Live link state. off = disabled; no partner = enabled but nothing heard (check port, firewall, peer address); linked = one node; linked xN = several. Reads the running link, not the config text above."
+  },
+  "row.dataLinkPort": {
+    "zh": "UDP 端口 48017，固定不可改。两端的防火墙都要放行它；同时开两个 HUD 会抢这个端口，后开的那个绑不上、一个包都收不到。",
+    "en": "UDP port 48017, fixed. Both ends must allow it through the firewall; a second HUD instance fights for it, and the later one binds nothing so it receives nothing."
+  },
+  "row.dataLinkDesc": {
+    "zh": "数据链关掉时的退化行为：只剩平面数据——方位和水平距离仍然准，但没有高度差，编队圈的上下分区会一直空着。",
+    "en": "What happens with the link off: planar data only - bearing and horizontal range stay accurate, but there is no height difference, so the vertical sectors of the formation scope stay empty."
+  },
+  "page.airframe": {
+    "zh": "机型：每架飞机一套覆盖值。标了「按机型」的参数（失速迎角等）在这里选中机型后改的只对它生效；没有覆盖的机型仍用全局值。",
+    "en": "Airframes: one set of overrides per aircraft. Parameters marked per-airframe (stall AoA and friends) are stored against the selected type; anything without an override keeps using the global value."
+  },
+  "page.snapshots": {
+    "zh": "回归快照：把当前配置存成一条带名字的记录，用来对比改动前后。选中一条按 CONFIRM 进入二次确认再恢复；列表由页面自己绘制，不走普通的两列设置布局。",
+    "en": "Snapshots: saves the current config as a named record so changes can be compared before and after. Select one and CONFIRM to restore, with a second confirmation. The list is drawn by the page itself, not the usual two-column layout."
   }
 }
