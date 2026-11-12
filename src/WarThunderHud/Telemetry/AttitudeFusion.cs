@@ -61,6 +61,7 @@ public sealed class AttitudeFusion
     private double _turnRateDegS;   // low-passed
     private double _confidence = 1;
     private double _bankIntegrated; // from Wx roll rate
+    private double _bankSign = 1.0; // 最近一次滚转的方向，稳定压坡度后 Wx 归零时靠它定符号
     private double _lastTime = double.NaN;
 
     /// <summary>0 = auto-detect the native pitch sign, +1 / -1 = forced by the user.</summary>
@@ -181,11 +182,28 @@ public sealed class AttitudeFusion
         if (!s.HasHeading)
         {
             // No compass at all (e.g. Rafale C): the turn-rate estimate is always zero, so the
-            // bank pointer would never move. Integrate the roll rate instead and decay slowly
-            // back to level once the aircraft stops rolling.
+            // bank pointer would never move. Integrate the roll rate instead.
             _bankIntegrated += s.RollRateDegS * stepDt;
             Normalize(ref _bankIntegrated);
-            if (Math.Abs(s.RollRateDegS) < 2.0)
+
+            // 稳定压住坡度后 Wx 归零，符号只能靠「最近一次滚转」记住
+            if (Math.Abs(s.RollRateDegS) > 15.0) _bankSign = Math.Sign(s.RollRateDegS);
+
+            // ★ 2026-11-12 实测修正：只靠积分 + 回平衰减，会把持续坡度吃掉。
+            // 阵风实飞两段稳盘（Ny 2.07 / 2.52，真值 55.2° / 66.0°）读数是 −7.1° / −1.4° ——
+            // 因为稳盘时 Wx≈0，正好触发下面那条 4 秒衰减。
+            // Ny 是现成的绝对参考：协调平飞转弯里 bank = acos(1/Ny)，只要高度不变就成立。
+            // 于是「压坡度瞬间」靠积分跟手，「保持坡度」靠 Ny 锚住，两者互补且不需要地图数据。
+            bool steadyTurn = Math.Abs(s.VyMs) < 3.0
+                              && s.NyG > 1.08 && s.NyG < 2.6     // 排除推杆/大 G 拉升
+                              && Math.Abs(s.RollRateDegS) < 5.0; // 只在不滚的时候锚
+            if (steadyTurn)
+            {
+                double target = Math.Acos(Math.Clamp(1.0 / s.NyG, -1.0, 1.0)) * 180.0 / Math.PI * _bankSign;
+                double k = 1.0 - Math.Exp(-stepDt / 2.0);        // τ=2 s：比原来的衰减快，又不会被噪声带着跳
+                _bankIntegrated += (target - _bankIntegrated) * k;
+            }
+            else if (Math.Abs(s.RollRateDegS) < 2.0)
             {
                 double decay = 40.0 * stepDt;             // deg per step back towards level (~4 s to settle)
                 _bankIntegrated += Math.Clamp(-_bankIntegrated, -decay, decay);

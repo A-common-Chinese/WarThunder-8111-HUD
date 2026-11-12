@@ -63,6 +63,8 @@ public static class Program
                 return RunOverlay(args.Length > 0 ? args : new[] { "overlay" });
             case "fusiontest":
                 return FusionTest();
+            case "ahrslog":
+                return AhrsLog(args.Length > 1 ? double.Parse(args[1], CultureInfo.InvariantCulture) : 120.0);
             case "formationsim":
                 return FormationSim(args);
             default:
@@ -91,6 +93,76 @@ public static class Program
         Console.WriteLine($"frames={count}  rate={(count / seconds):F1} Hz  state={client.AvgStateRequestMs:F1}ms ind={client.AvgIndRequestMs:F1}ms cycle={client.AvgCycleMs:F1}ms");
         if (last != null) Console.WriteLine("caps: " + last.Caps);
         return last != null ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 姿态数据记录：按 20 Hz 把「原始量 + 估算结果」打成 CSV，用于离线比对算法。
+    /// <para>为什么单独做一个模式：阵风这类没有罗盘的机型，坡度只能靠积分 Wx，
+    /// 而地图位置差分（<c>CourseDeg</c>）其实也能反推航向。两条路的误差特性不同，
+    /// 到底谁的权重该多大，必须有同一段飞行的两条曲线才能定 —— 靠肉眼看不出来。</para>
+    /// <para>用法：进对局后 <c>WtHud.exe ahrslog 120 &gt; ahrs.csv</c>，飞完把 CSV 发回来。</para>
+    /// </summary>
+    private static int AhrsLog(double seconds)
+    {
+        var client = new TelemetryClient(25);
+        TelemetrySnapshot? last = null;
+        int frames = 0;
+        client.SnapshotReceived += s => { last = s; frames++; };
+        client.Start();
+
+        var map = new WtHud.Telemetry.MapData();
+        map.Start();
+
+        var fusion = new WtHud.Telemetry.AttitudeFusion();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int seen = 0;
+        long warnedAt = -10_000;
+
+        Console.WriteLine("t,tas_kmh,alt_m,vy_ms,aoa_deg,ny_g,wx_dps,has_hdg,hdg_deg,course_deg,pitch_native,bank_native,pitch_est,bank_est,conf,src");
+
+        while (clock.Elapsed.TotalSeconds < seconds)
+        {
+            Thread.Sleep(40);
+            // 按「收到几帧」去重而不是按时间戳：游戏时钟只有 0.1 s 分辨率，
+            // 同一时刻会连出好几条，按时间戳去重会漏掉一半样本。
+            if (last is null || frames == seen) continue;
+            seen = frames;
+
+            // 没有自机坐标就没有 course，整段数据白飞 —— 每 5 秒喊一次，别等落地才发现
+            if (map.CourseDeg is null && clock.ElapsedMilliseconds - warnedAt > 5000)
+            {
+                warnedAt = clock.ElapsedMilliseconds;
+                Console.Error.WriteLine("!! map_obj 里没有自机坐标（试飞/无对局/地图未加载），course 列会一直是空的");
+            }
+
+            var sol = fusion.Update(last);
+            static string N(double? v, string fmt = "F1") => v is double d ? d.ToString(fmt, CultureInfo.InvariantCulture) : "";
+            static string F(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
+
+            Console.WriteLine(string.Join(",",
+                F(last.ElapsedSeconds),
+                F(last.TasKmh),
+                F(last.AltM),
+                F(last.VyMs),
+                F(last.AoaDeg),
+                F(last.NyG),
+                F(last.RollRateDegS),
+                last.HasHeading ? "1" : "0",
+                last.HasHeading ? F(last.HeadingDeg) : "",
+                N(map.CourseDeg),
+                N(last.PitchDeg),
+                N(last.BankDeg),
+                N(sol.PitchDeg),
+                N(sol.BankDeg),
+                sol.Confidence.ToString("F2", CultureInfo.InvariantCulture),
+                sol.Source.ToString()));
+        }
+
+        map.Dispose();
+        client.Dispose();
+        Console.Error.WriteLine($"logged {seconds:F0}s, {seen} frames, last t={last?.ElapsedSeconds ?? double.NaN:F1}s, " +
+                                $"course={(map.CourseDeg is null ? "none" : "ok")}");
+        return last is null ? 1 : 0;
     }
 
     private static int SelfTest()
@@ -1471,12 +1543,24 @@ public static class Program
         FusionScenario("loop / high G  bank~0", bankExpected: 0, pitchExpected: 33.7,
             heading: _ => 90, tas: _ => 800, vy: t => 60, aoa: _ => 18.0, ny: _ => 7.0);
 
+        // 无罗盘机型（阵风）：先滚 0.75 s 到 30°，然后稳住不改平。
+        // 这条以前是空的 —— 所以「稳盘读出 0」这个 bug 一路没被发现。
+        FusionScenario("no compass, hold 30 bank", bankExpected: 30, pitchExpected: 2.0,
+            heading: _ => 90, tas: _ => 900, vy: _ => 1.0, aoa: _ => 2.0, ny: _ => 1.155,
+            hasHeading: false, wx: t => t < 0.75 ? 40.0 : 0.0);
+
+        // 同样的动作，但滚到位后立刻回平：应该回到 0，不能因为锚定而卡住
+        FusionScenario("no compass, back to level", bankExpected: 0, pitchExpected: 2.0,
+            heading: _ => 90, tas: _ => 900, vy: _ => 0.0, aoa: _ => 2.0, ny: _ => 1.0,
+            hasHeading: false, wx: t => t < 0.5 ? 40.0 : (t < 1.0 ? -40.0 : 0.0));
+
         return Environment.ExitCode;
     }
 
     private static void FusionScenario(string name, double bankExpected, double pitchExpected,
         Func<double, double> heading, Func<double, double> tas, Func<double, double> vy,
-        Func<double, double> aoa, Func<double, double> ny)
+        Func<double, double> aoa, Func<double, double> ny,
+        bool hasHeading = true, Func<double, double>? wx = null)
     {
         var fusion = new AttitudeFusion();
         AttitudeSolution att = default;
@@ -1487,9 +1571,10 @@ public static class Program
             var snap = new TelemetrySnapshot
             {
                 Valid = true, InFlight = true, ElapsedSeconds = t,
-                HeadingDeg = heading(t), HasHeading = true,
+                HeadingDeg = heading(t), HasHeading = hasHeading,
                 TasKmh = tas(t), IasKmh = tas(t) * 0.9,
                 VyMs = vy(t), AoaDeg = aoa(t), NyG = ny(t), AltM = 2000,
+                RollRateDegS = wx?.Invoke(t) ?? 0,
             };
             att = fusion.Update(snap);
         }
