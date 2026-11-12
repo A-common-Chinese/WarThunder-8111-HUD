@@ -2617,6 +2617,7 @@ public static class Program
         guideIntegral = 0;
         guideIntegralLastT = 0;
         leadHeadingLockValid = false;
+        altitudeStageActive = false;      // 重新开始编队时回到「先爬升」的判定
     }
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
@@ -2897,22 +2898,33 @@ public static class Program
                 if (opt.AltDiffM is double currentDiff)
                 {
                     double altErr = currentDiff - slot.TargetDeltaHM;
-                    // 编队未完成 + 高度差超门槛 → 高度优先：这条提到上面并加大，油门建议让位
-                    bool altFirst = formationStage == FormationStage.Converge
-                                    && Math.Abs(altErr) > Math.Max(5, cfg.FormationVertGateM);
+                    double vertGate = Math.Max(5, cfg.FormationVertGateM);
+
+                    // ---- 两阶段（2026-11-12）----
+                    // 阶段 1：先爬到目标高度层，这段时间**只给爬升率**，横向引导完全不画
+                    //         （圈、航向、距离、油门都不出）—— 爬升很简单，飞行员自己完成。
+                    // 阶段 2：高度进入门槛后才开始横向引导。
+                    // 迟滞：进入用门槛，退出用 60% 门槛，否则在门槛附近会一小时里反复切换。
+                    bool altStage = formationStage == FormationStage.Converge
+                                    && (altitudeStageActive
+                                        ? Math.Abs(altErr) > vertGate * 0.6
+                                        : Math.Abs(altErr) > vertGate);
+                    altitudeStageActive = altStage;
+
                     opt.Vertical = new VerticalCue(
                         altErr,
                         VerticalRateCmd(altErr, cfg.FormationVertMaxMs),
                         opt.AltDiffStale,
-                        altFirst,
-                        Math.Abs(altErr) <= Math.Max(5, cfg.FormationVertGateM));
+                        altStage,
+                        Math.Abs(altErr) <= vertGate);
                 }
 
                 FormationAction action = FormationAction.None;
                 double deltaKmh = 0;
 
                 // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
-                if (Math.Abs(lead.RelBearingDeg) < 50)
+                // 爬升阶段整段跳过：横向引导还没开始，PID 积分不该在场外偷偷累积。
+                if (opt.Vertical is not { Priority: true } && Math.Abs(lead.RelBearingDeg) < 50)
                 {
                     // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
                     // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
@@ -3019,8 +3031,8 @@ public static class Program
                     }
                 }
 
-                // 高度优先：编队还没编好、高度又差得远时，先不给油门建议。
-                // 爬升本身要功率，这时候再喊「加速」会把人推去做一个做不到的组合动作。
+                // 爬升阶段：横向引导完全不出现（圈/航向/距离/油门），只留那条爬升率。
+                // 这不是「压掉油门建议」，而是「还没轮到横向」——两阶段的分界。
                 if (opt.Vertical is { Priority: true })
                     action = FormationAction.None;
 
@@ -3034,11 +3046,17 @@ public static class Program
                 {
                     opt.Guide = null;
                 }
+                else if (opt.Vertical is { Priority: true })
+                {
+                    // 阶段 1：只画爬升率。连目标航向三角也收掉，免得两个阶段抢同一块注意力。
+                    opt.Guide = null;
+                    opt.TargetHeadingDeg = null;
+                }
                 else
                 {
                     opt.TargetHeadingDeg = NormalizeDeg(navHeading + guideTurn);
                     opt.Guide = new FormationLead(guideTurn, lead.RangeM,
-                                             cfg.FormationRangeM, action, deltaKmh,
+                                             slot.RangeM, action, deltaKmh,
                                              leadRateShown, leadFromLink, turnG, overG,
                                              snap.TasKmh);
                 }
@@ -3565,6 +3583,9 @@ public static class Program
     private static double lastAltDiffM;
     private static long lastAltDiffAtMs;
     private static bool hasLastAltDiff;
+
+    /// <summary>是否处在「先爬升」阶段（带迟滞）。编队重编时由状态机重置。</summary>
+    private static bool altitudeStageActive;
 
     /// <summary>垂直环增益（1/s）。0.15 对应约 6.7 s 时间常数：120 m 用 18 s 左右收掉。</summary>
     internal const double VerticalGain = 0.15;
@@ -4197,6 +4218,8 @@ public static class Program
                 double V(int i, double dflt) => vp.Length > i
                     && double.TryParse(vp[i], NumberStyles.Any, CultureInfo.InvariantCulture, out double x) ? x : dflt;
                 opt.Vertical = new VerticalCue(V(0, 120), V(1, 4.5), V(2, 0) > 0.5, V(3, 0) > 0.5, V(0, 120) == 0);
+                // 爬升阶段横向引导不出现：样张也照这个规则，否则出图会和真机不一致
+                if (V(3, 0) > 0.5) { opt.Guide = null; opt.TargetHeadingDeg = null; }
             }
 
             // 长机样张：WT_PREVIEW_LEAD="主状态|副状态|是否警告(0/1)[|当前速度,目标速度]"

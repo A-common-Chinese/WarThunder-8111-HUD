@@ -1,5 +1,5 @@
 {
-  "_version": 24,
+  "_version": 25,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -577,11 +577,11 @@
     "en": "Vertical offset for the CUSTOM shape in metres (positive = above the lead), default 0. Only applies to CUSTOM; named shapes take their altitude from the slot table, so this row greys out."
   },
   "row.fVertGate": {
-    "zh": "垂直引导的「算到位」门槛（米），默认 30。误差小于它就显示「高度一致」且不再给升降建议；同时它也是「高度优先」的触发线 —— 编队未完成时误差超过它，垂直那行会提到速度条下面并加大，油门建议在这一阶段让位。",
-    "en": "Altitude band for vertical guidance, default 30 m. Inside it the cue reads LEVEL and stops asking; it is also the trigger for altitude priority - during convergence, an error beyond it promotes the vertical line above the speed cues and the throttle advice stands down."
+    "zh": "两阶段的分界线（米），默认 30。★ 编队未完成时，高度差超过它就是「爬升阶段」：**横向引导完全不出现**（没有引导圈、没有转向指令、没有距离和速度），屏幕上只留一条爬升率；爬进门槛后横向引导才开始。退出用 60% 门槛（18 m）做迟滞，避免在边界反复切换。",
+    "en": "The line between the two stages, default 30 m. While the formation is not yet set, an altitude error beyond it means the climb stage: all lateral guidance disappears (no circle, no turn cue, no range, no speed) and only a climb rate is shown. Lateral guidance starts once inside the gate; it exits at 60% of it (18 m) for hysteresis."
   },
   "row.fVertMax": {
-    "zh": "升降率建议的上限（m/s），默认 10。不限幅的话差 300 m 会算出 45 m/s，飞机做不到，指令等于永远失败。仿真里 120 m 起始偏差在 10 m/s 限幅下 17.5 s 收敛到 1 m。",
-    "en": "Cap on the suggested vertical rate, default 10 m/s. Uncapped, a 300 m error asks for 45 m/s which no aircraft can hold. In simulation a 120 m initial error converges to 1 m in 17.5 s at this cap."
+    "zh": "爬升率建议的上限（m/s），默认 10。爬升由飞行员自己完成，辅助只给速率；不限幅的话差 300 m 会算出 45 m/s，飞机做不到。仿真里 120 m 偏差在 10 m/s 限幅下 17.5 s 收完。",
+    "en": "Cap on the suggested climb rate, default 10 m/s. The pilot flies the climb; the HUD only supplies the rate. Uncapped, a 300 m error asks for 45 m/s. In simulation a 120 m error settles in 17.5 s at this cap."
   }
 }

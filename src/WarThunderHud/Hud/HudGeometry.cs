@@ -809,6 +809,46 @@ public sealed class HudGeometry
             });
         }
 
+        // ---- 垂直/爬升阶段 ----
+        // 两阶段：先爬到高度层，横向引导才开始。所以这一段必须在 `Guide is null` 的
+        // 早退**之前**画，否则爬升阶段什么都看不到。
+        //   Priority（爬升阶段）：只给爬升率，不带米数 —— 米数是给「已经在编队里微调」用的；
+        //   AtTarget：高度一致，一小行暗字，不占视觉。
+        if (_opt.Vertical is { } v)
+        {
+            string text;
+            if (v.Priority)
+            {
+                text = (v.ErrorM > 0 ? "\u2191 " : "\u2193 ")
+                       + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
+            }
+            else if (v.AtTarget)
+            {
+                text = L10n.Get(LangScope.Alerts, "guide.altMatch");
+            }
+            else
+            {
+                int altAbs = (int)Math.Round(Math.Abs(v.ErrorM) / 5.0) * 5;
+                text = (v.ErrorM > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m   "
+                       + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
+            }
+            if (v.Stale) text += "   " + L10n.Get(LangScope.Alerts, "guide.vertStale");
+
+            var vertColor = v.Priority ? _opt.WarnColor
+                : v.AtTarget ? Fade(_opt.Color, 0.7) : _opt.FriendlyColor;
+            if (v.Stale) vertColor = Fade(vertColor, 0.55);
+
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = text, Align = HudAlign.Center,
+                // 爬升阶段没有别的元素，这条就是全场唯一读数，给大字号
+                FontSize = v.Priority ? fontSmall * 1.9 : fontSmall * 1.1,
+                Color = vertColor,
+                // 爬升阶段放 9.2°：FPM 圈画在 cy + 迎角（3–6°），6.5° 时大字会和圈的下缘压上
+                Points = { (cx, v.Priority ? cy + 9.2 * pxDeg : cy + 13.0 * pxDeg) },
+            });
+        }
+
         // ---- 找不到长机：说明是哪一种，别让飞行员对着空屏猜 ----
         if (_opt.FormationHint.Length > 0)
         {
@@ -934,35 +974,6 @@ public sealed class HudGeometry
             Kind = HudPrimKind.Text, Text = "\u2192 " + target, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
             Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 12.2 * pxDeg) },
         });
-
-        // ---- 2.5) 垂直引导：米数 + 建议升降率 ----
-        // 挂在距离行下面而不是右上角：编队时"水平多远"和"垂直差多少"是一起读的。
-        // ★ 高度优先（编队未完成且差得远）时提到速度条下面并加大字号 —— 那时候该做的是先爬到位，
-        //   不是修速度；油门建议在这一阶段已经让位（Program 里把 action 压成 None）。
-        if (_opt.Vertical is { } v)
-        {
-            int altAbs = (int)Math.Round(Math.Abs(v.ErrorM) / 5.0) * 5;   // 取整到 5 m，别给假精度
-            string text = v.AtTarget
-                ? L10n.Get(LangScope.Alerts, "guide.altMatch")
-                : (v.ErrorM > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m   "
-                  + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
-            if (v.Stale) text += "   " + L10n.Get(LangScope.Alerts, "guide.vertStale");
-
-            var vertColor = v.AtTarget ? Fade(col, 0.7)
-                : v.Priority ? _opt.WarnColor : _opt.FriendlyColor;
-            if (v.Stale) vertColor = Fade(vertColor, 0.55);
-
-            prims.Add(new HudPrim
-            {
-                Kind = HudPrimKind.Text, Text = text, Align = HudAlign.Center,
-                FontSize = v.Priority ? fontSmall * 1.5 : fontSmall * 1.1,
-                Color = vertColor,
-                // ★ 位置不动，靠字号和颜色突出。试过提到上面：5.4° 正好是 FPM 圈的位置
-                // （圈画在 cy + 迎角，巡航迎角 3–6°），10.4°/11.4° 又会压加速度条和距离行。
-                // 「优先」的实质是油门建议让位（Program 里把 action 压成 None），不是这一行搬家。
-                Points = { (cx, cy + 13.0 * pxDeg) },
-            });
-        }
 
         // ---- 3) 油门：加/减速给数值，稳定时给"保持" ----
         if (g.Action != FormationAction.None)
