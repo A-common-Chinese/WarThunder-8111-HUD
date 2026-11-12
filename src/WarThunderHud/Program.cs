@@ -296,6 +296,26 @@ public static class Program
         Check("peer note single target", PeerNote(1, 0) == "1 target(s)");
         Check("peer note mixed", PeerNote(2, 1) == "1 ok / 1 bad");
 
+        // ---- 面板草稿必须是深拷贝 ----
+        // _work = _cfg.Clone() 之后两者若共用集合，SettingsRouter.Set 的就地写会绕过 SAVE，
+        // 表现为「没点保存也生效了」，而 CANCEL 只能靠快照兜。
+        var cloneSrc = new HudConfig();
+        cloneSrc.PerVehicleOverrides["f16"] = new Dictionary<string, double> { ["AoaWarnDeg"] = 18 };
+        cloneSrc.DataLinkPeers.Add("1.1.1.1:48017");
+        var cloneCopy = cloneSrc.Clone();
+        cloneCopy.PerVehicleOverrides["f16"]["AoaWarnDeg"] = 99;
+        cloneCopy.DataLinkPeers.Add("2.2.2.2:48017");
+        Check("clone deep-copies overrides", cloneSrc.PerVehicleOverrides["f16"]["AoaWarnDeg"] == 18);
+        Check("clone deep-copies peers", cloneSrc.DataLinkPeers.Count == 1);
+
+        // 兜底：任何引用类型属性都不能与源共用实例 —— 将来加集合忘了处理，这条会先红
+        var refProps = typeof(HudConfig).GetProperties()
+            .Where(p => p.CanRead && p.PropertyType != typeof(string) && !p.PropertyType.IsValueType)
+            .ToArray();
+        Check("clone shares no reference property",
+            refProps.Length > 0
+            && refProps.All(p => !ReferenceEquals(p.GetValue(cloneSrc), p.GetValue(cloneCopy))));
+
         // ---- 节点 ↔ 地图友机配对：给每架友机各自的高度 ----
         var twoNodes = new[]
         {

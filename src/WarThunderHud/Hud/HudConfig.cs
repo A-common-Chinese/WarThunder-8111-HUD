@@ -448,7 +448,20 @@ public sealed class HudConfig
         catch { }
     }
 
-    public HudConfig Clone() => (HudConfig)MemberwiseClone();
+    /// <summary>
+    /// 面板用的草稿副本。
+    /// <para>★ <c>MemberwiseClone</c> 只复制引用，所以集合属性必须单独深拷贝 —— 否则
+    /// <c>_work.PerVehicleOverrides</c> 和 <c>_cfg.PerVehicleOverrides</c> 是**同一个字典**，
+    /// 而 <see cref="SettingsRouter.Set"/> 是就地写 <c>map[name] = value</c>，于是
+    /// 面板里改任何一个「按机型」的设置都会直接写进正在生效的配置，绕过 SAVE。
+    /// 这类问题不会报错，只会表现为「没点保存也生效了」。</para>
+    /// </summary>
+    public HudConfig Clone()
+    {
+        var clone = (HudConfig)MemberwiseClone();
+        clone.CopyReferenceTypesFrom(this);
+        return clone;
+    }
 
     /// <summary>Copies every writable property from <paramref name="other"/> (used by CANCEL).</summary>
     public void CopyFrom(HudConfig other)
@@ -458,6 +471,27 @@ public sealed class HudConfig
             if (!p.CanRead || !p.CanWrite) continue;
             p.SetValue(this, p.GetValue(other));
         }
+        // 反射只搬引用，集合要单独深拷贝，否则源和目的从此共用一份数据
+        CopyReferenceTypesFrom(other);
+    }
+
+    /// <summary>
+    /// 深拷贝所有引用类型属性。新增引用类型属性时必须在这里补一行 ——
+    /// selftest 的 "clone shares no reference property" 会在漏掉时变红。
+    /// <para>★ 这里只处理 HudConfig 的直接属性。嵌套对象（<see cref="LanguageConfig"/>、
+    /// <see cref="MfdSettings"/>）目前只有 string / bool 字段，浅拷贝等价于深拷贝；
+    /// 一旦给它们加集合，它们的 <c>Clone()</c> 也要一起改成深拷贝。</para>
+    /// </summary>
+    private void CopyReferenceTypesFrom(HudConfig src)
+    {
+        PerVehicleOverrides = new Dictionary<string, Dictionary<string, double>>(src.PerVehicleOverrides.Count);
+        foreach (var kv in src.PerVehicleOverrides)
+            PerVehicleOverrides[kv.Key] = new Dictionary<string, double>(kv.Value);
+
+        StallAoaByVehicle = new Dictionary<string, double>(src.StallAoaByVehicle);
+        DataLinkPeers = new List<string>(src.DataLinkPeers);
+        Language = src.Language.Clone();
+        Mfd = src.Mfd.Clone();
     }
 
     // ---------------------------------------------------------------- language
@@ -480,6 +514,9 @@ public sealed class LanguageConfig
     [JsonPropertyName("screen")] public string Screen { get; set; } = "zh";
     [JsonPropertyName("alerts")] public string Alerts { get; set; } = "en";
 
+    /// <summary>字段全是 string / bool，MemberwiseClone 即深拷贝。加集合时要一起改。</summary>
+    public LanguageConfig Clone() => (LanguageConfig)MemberwiseClone();
+
 }
 
 /// <summary>MFD panel appearance/behaviour settings.</summary>
@@ -493,4 +530,7 @@ public sealed class MfdSettings
 
     /// <summary>Realistic mode: screen rows can only be driven by the physical keys.</summary>
     public bool RealisticKeys { get; set; }
+
+    /// <summary>字段全是 string / bool，MemberwiseClone 即深拷贝。加集合时要一起改。</summary>
+    public MfdSettings Clone() => (MfdSettings)MemberwiseClone();
 }
