@@ -242,6 +242,23 @@ public static class Program
         Check("turn targets clamp low G", Math.Abs(TurnAssistTargets(0.5, 800).BankDeg - 33.56) < 0.05);
 
         var st = new TurnAssistState(TurnAssistStage.Off, 0, -1);
+        // ---- 数据链目标坡度段：追加、可缺省、越界只丢自己 ----
+        var pBank = WtHud.Telemetry.DataLink.BuildPayload(7, 3000, 0, 90, 0, 0.5, 0.5, -54.3);
+        Check("datalink carries target bank", pBank.Split('|').Length == 9);
+        Check("datalink parses target bank",
+            WtHud.Telemetry.DataLink.TryParsePayload(pBank, out _, out _, out _, out _, out _,
+                                                     out _, out _, out double? bankOut)
+            && bankOut is double bb && Math.Abs(bb + 54.3) < 0.05);
+        var pNoBank = WtHud.Telemetry.DataLink.BuildPayload(7, 3000, 0, 90, 0, 0.5, 0.5);
+        Check("datalink 8-field has no bank",
+            WtHud.Telemetry.DataLink.TryParsePayload(pNoBank, out _, out _, out _, out _, out _,
+                                                     out _, out _, out double? bankNone)
+            && bankNone is null);
+        Check("datalink bad bank segment ignored",
+            WtHud.Telemetry.DataLink.TryParsePayload(pNoBank + "|9999", out _, out _, out _, out _, out _,
+                                                     out _, out _, out double? bankBad)
+            && bankBad is null);
+
         Check("turn assist off stays off",
             AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
         st = new TurnAssistState(TurnAssistStage.Arming, 0, -1);
@@ -1031,12 +1048,13 @@ public static class Program
                 ? $"pos={x:F5},{y:F5}"
                 : "pos=-";
             string hdg = n.HeadingDeg is double h ? h.ToString("F0") : "-";
+            string bank = n.TargetBankDeg is double b ? b.ToString("F0") + "deg" : "-";
             Console.WriteLine($"  {DateTime.Now:HH:mm:ss.fff}  from {from,-22} id={n.Id,-7} " +
-                              $"alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  {pos}");
+                              $"alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
         };
 
         Console.WriteLine($"datalink probe: listening on udp {WtHud.Telemetry.DataLink.Port} for {seconds}s");
-        Console.WriteLine("  expecting WTDL2|id|alt|vy|hdg|turn[|x|y]  (Ctrl+C stops early)");
+        Console.WriteLine("  expecting WTDL2|id|alt|vy|hdg|turn[|x|y[|bank]]  (Ctrl+C stops early)");
 
         long t0 = Environment.TickCount64;
         while (Environment.TickCount64 - t0 < seconds * 1000L) Thread.Sleep(200);
@@ -2084,7 +2102,7 @@ public static class Program
             double? dlXn = null, dlYn = null;
             if (mapData.Self is { } dlSelf) { dlXn = dlSelf.X; dlYn = dlSelf.Y; }
             dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg,
-                           dlXn, dlYn);
+                           dlXn, dlYn, TurnAssistBroadcastBank(cfg));
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -2731,7 +2749,10 @@ public static class Program
             opt.TurnAssist = null;
             // 切回僚机就退出辅助：状态留着会在下次当长机时凭空亮起来
             if (turnAssist.Stage != TurnAssistStage.Off)
+            {
                 turnAssist = new TurnAssistState(TurnAssistStage.Off, 0, -1);
+                turnAssistBankDeg = 0;
+            }
 
             // 高度差：map_obj 没有 z，这一项只能来自数据链。正 = 对方比我高（我该爬）。
             opt.AltDiffM = null;
@@ -3419,6 +3440,9 @@ public static class Program
 
     private static TurnAssistState turnAssist = new(TurnAssistStage.Off, 0, -1);
 
+    /// <summary>最近一次算出的目标坡度（带符号）。数据链按它广播，每帧发出的是上一帧的值，100 ms 误差可忽略。</summary>
+    private static double turnAssistBankDeg;
+
     /// <summary>状态机位置：Off / 等方向（Arming）/ 已锁方向（Active）。</summary>
     internal enum TurnAssistStage { Off, Arming, Active }
 
@@ -3473,6 +3497,23 @@ public static class Program
             ? new TurnAssistState(TurnAssistStage.Arming, 0, -1)
             : new TurnAssistState(TurnAssistStage.Off, 0, -1);
         Console.WriteLine($"turn assist -> {turnAssist.Stage}");
+    }
+
+    /// <summary>
+    /// 要广播的目标坡度。只在**已锁方向**时广播：待锁阶段那个值是占位（按右侧画的），
+    /// 发出去会让僚机以为长机要右转。
+    /// </summary>
+    private static double? TurnAssistBroadcastBank(HudConfig cfg)
+        => cfg.FormationTurnBroadcast && turnAssist.Stage == TurnAssistStage.Active
+            ? turnAssistBankDeg
+            : (double?)null;
+
+    /// <summary>面板只读行：数据链上收到的目标坡度（僚机侧看这一行判断广播到没到）。</summary>
+    public static string PartnerTurnBankText()
+    {
+        var link = dataLink;
+        if (link == null) return "-";
+        return link.TryGetPartnerTargetBank(out double bank) ? bank.ToString("0") + "°" : "-";
     }
 
     /// <summary>面板只读行：当前状态。</summary>
@@ -3570,7 +3611,7 @@ public static class Program
     private static TurnAssistCue? BuildTurnAssistCue(HudConfig cfg, TelemetrySnapshot snap, double nowS)
     {
         turnAssist = AdvanceTurnAssist(turnAssist, ownTurnRateDeg, nowS);
-        if (turnAssist.Stage == TurnAssistStage.Off) return null;
+        if (turnAssist.Stage == TurnAssistStage.Off) { turnAssistBankDeg = 0; return null; }
 
         var (targetBank, targetRate) = TurnAssistTargets(cfg.FormationTurnTargetG, snap.TasKmh);
         var bankNow = (snap.BankDeg ?? 0) * cfg.BankSign;
@@ -3591,6 +3632,7 @@ public static class Program
         // 压反了：不管大小，先回正再说
         if (Math.Sign(bankNow) == -dir && absBank > tolBank) action = TurnAssistAction.BankMore;
 
+        turnAssistBankDeg = signedTarget;
         return new TurnAssistCue(dir, bankNow, signedTarget, targetRate,
                                  Math.Clamp(cfg.FormationTurnTargetG, 1.2, 9.0), action,
                                  turnAssist.Stage == TurnAssistStage.Arming);

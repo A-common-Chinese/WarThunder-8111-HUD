@@ -1,5 +1,5 @@
 {
-  "_version": 21,
+  "_version": 22,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -563,5 +563,9 @@
   "row.turnStatus": {
     "zh": "辅助当前状态：OFF = 关；ARM = 已按下、等第一次转向来锁方向；R / L = 已锁右转 / 左转（反向超过门槛并持续 1 s 会自动重锁）。",
     "en": "Assist state: OFF = stopped; ARM = pressed, waiting for the first turn to latch a direction; R / L = latched right or left (a sustained reversal beyond the gate for 1 s re-latches automatically)."
+  },
+  "row.turnWing": {
+    "zh": "数据链上收到的对方目标坡度。长机开着自己的转向辅助并勾选「广播目标坡度」时，僚机这一行会显示长机准备压到的角度；显示「-」表示没收到（对方没开辅助、没勾广播、或链路没通）。",
+    "en": "Target bank received over the data link. When the lead has its own assist running and BROADCAST is on, this row shows the bank it is aiming for; \"-\" means nothing arrived (assist off, broadcast off, or no link)."
   }
 }

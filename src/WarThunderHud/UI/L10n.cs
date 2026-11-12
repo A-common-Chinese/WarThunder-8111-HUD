@@ -274,6 +274,7 @@ public static class L10n
         ["row.turnBcast"] = ("广播目标坡度", "BROADCAST BANK"),
         ["row.turnBank"] = ("目标坡度", "TARGET BANK"),
         ["row.turnStatus"] = ("当前状态", "STATE"),
+        ["row.turnWing"] = ("收到的目标坡度", "RECEIVED"),
         ["page.formationShape"] = ("队形", "FORMATION SHAPE"),
         ["menu.hint.formationShape"] = ("形状 / 槽位 / 站位几何", "SHAPE · SLOT · GEOMETRY"),
         ["row.fShape"] = ("队形形状", "SHAPE"),

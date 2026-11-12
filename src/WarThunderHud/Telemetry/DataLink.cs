@@ -64,6 +64,9 @@ internal sealed class DataLink : IDisposable
         public double? Xn;
         public double? Yn;
 
+        /// <summary>对方当前的目标坡度（长机转向辅助广播）。老版本或未开启 → null。</summary>
+        public double? TargetBankDeg;
+
         public long TickAt;
         public int Packets;
     }
@@ -97,7 +100,8 @@ internal sealed class DataLink : IDisposable
     /// <summary>收到的一个数据链节点。位置可能为 null（对方版本不带坐标）。</summary>
     public readonly record struct LinkNode(int Id, int AltM, double VyMs,
                                            double? HeadingDeg, double? TurnRateDeg,
-                                           double? Xn, double? Yn, int AgeMs);
+                                           double? Xn, double? Yn, int AgeMs,
+                                           double? TargetBankDeg = null);
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -114,7 +118,7 @@ internal sealed class DataLink : IDisposable
                 if (now - kv.Value.TickAt >= StaleMs) continue;
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
-                                      n.Xn, n.Yn, (int)(now - n.TickAt)));
+                                      n.Xn, n.Yn, (int)(now - n.TickAt), n.TargetBankDeg));
             }
             return list.ToArray();
         }
@@ -186,6 +190,26 @@ internal sealed class DataLink : IDisposable
     /// 取最近最活跃的那个伙伴的高度。只有一台机器开了数据链时，这就是唯一值。
     /// 返回 false 表示没有可用数据（链路没开、对方没发、或全超时了）。
     /// </summary>
+    /// <summary>取最新在线节点的目标坡度（长机转向辅助广播）。没有节点或对方没发 → false。</summary>
+    public bool TryGetPartnerTargetBank(out double bankDeg)
+    {
+        long now = Environment.TickCount64;
+        bankDeg = 0;
+        lock (_lock)
+        {
+            Remote? best = null;
+            foreach (var node in _nodes.Values)
+            {
+                if (now - node.TickAt >= StaleMs) continue;
+                if (node.TargetBankDeg is null) continue;
+                if (best == null || node.TickAt > best.TickAt) best = node;
+            }
+            if (best?.TargetBankDeg is not double b) return false;
+            bankDeg = b;
+            return true;
+        }
+    }
+
     public bool TryGetPartnerAltitude(out int altM, out double vyMs)
     {
         long now = Environment.TickCount64;
@@ -315,13 +339,26 @@ internal sealed class DataLink : IDisposable
     /// </summary>
     internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
                                         double? xn, double? yn)
+        => BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, null);
+
+    /// <summary>
+    /// 完整报文：基础 6 段 + 坐标 2 段 + 目标坡度 1 段（度 ×10，带符号）。
+    /// <para>★ 目标坡度是**追加**段：老读端按前 8 段解析，不会因为多一段而失败；
+    /// 新读端遇到 8 段报文就把目标坡度当未知。</para>
+    /// </summary>
+    internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
+                                        double? xn, double? yn, double? targetBankDeg)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         if (xn is not double x || yn is not double y) return head;   // 坐标未知 → 仍是 6 段
 
         int ix = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * CoordinateScale);
         int iy = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * CoordinateScale);
-        return $"{head}|{ix}|{iy}";
+        if (targetBankDeg is not double bank)
+            return $"{head}|{ix}|{iy}";
+
+        int ib = (int)Math.Round(Math.Clamp(bank, -90.0, 90.0) * 10.0);
+        return $"{head}|{ix}|{iy}|{ib}";
     }
 
     /// <summary>归一化坐标的整数倍率：0..1 → 0..100000。</summary>
@@ -348,7 +385,15 @@ internal sealed class DataLink : IDisposable
     internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
                                          out double? turnRateDeg, out double? headingDeg,
                                          out double? xn, out double? yn)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out xn, out yn, out _);
+
+    /// <summary>解析一行报文（含目标坡度段）。</summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn, out double? targetBankDeg)
     {
+        targetBankDeg = null;
         selfId = 0;
         altM = 0;
         vyMs = 0;
@@ -383,6 +428,11 @@ internal sealed class DataLink : IDisposable
             yn = iy / (double)CoordinateScale;
         }
 
+        // 目标坡度（第 9 段）：度 ×10。缺失或越界 → null（不因为这一段毁掉整包）。
+        if (parts.Length >= 9 && int.TryParse(parts[8], out int bankTenths)
+            && bankTenths >= -900 && bankTenths <= 900)
+            targetBankDeg = bankTenths / 10.0;
+
         return true;
     }
 
@@ -392,7 +442,7 @@ internal sealed class DataLink : IDisposable
     /// <param name="xn">自己的归一化位置（0..1）。null = 这一帧地图还没有自己的图标，不发坐标。</param>
     /// <param name="yn">同上，y 轴。</param>
     public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg,
-                     double? xn = null, double? yn = null)
+                     double? xn = null, double? yn = null, double? targetBankDeg = null)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -406,7 +456,7 @@ internal sealed class DataLink : IDisposable
 
         try
         {
-            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn);
+            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
@@ -457,7 +507,7 @@ internal sealed class DataLink : IDisposable
 
         if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
                              out double? turnRate, out double? heading,
-                             out double? xn, out double? yn))
+                             out double? xn, out double? yn, out double? targetBank))
         {
             Interlocked.Increment(ref _rxBad);
             return;
@@ -486,13 +536,14 @@ internal sealed class DataLink : IDisposable
             // 坐标同理：老版本不发 → null，配对会跳过这个节点，但高度仍可用于单长机场景
             node.Xn = xn;
             node.Yn = yn;
+            node.TargetBankDeg = targetBank;
             node.TickAt = Environment.TickCount64;
             node.Packets++;
         }
 
         if (PacketCallback is { } cb)
         {
-            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0), from.ToString()); }
+            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank), from.ToString()); }
             catch { /* 调试回调不能影响接收 */ }
         }
     }

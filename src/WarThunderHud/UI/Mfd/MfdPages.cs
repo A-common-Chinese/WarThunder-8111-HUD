@@ -489,6 +489,7 @@ internal static class MfdPages
             Info("row.turnBank", c => WtHud.Program.TurnAssistTargets(c.FormationTurnTargetG, 0).BankDeg
                                           .ToString("0") + "°"),
             Info("row.turnStatus", _ => WtHud.Program.TurnAssistStatusText()),
+            Info("row.turnWing", _ => WtHud.Program.PartnerTurnBankText()),
         },
     };
 
