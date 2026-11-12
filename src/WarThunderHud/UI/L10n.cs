@@ -457,6 +457,8 @@ public static class L10n
         ["guide.formationDone"] = ("编队完成", "FORMATION SET"),
         // 找不到长机的两种原因：说清是哪一种，否则空屏无从判断
         ["formation.noFriendly"] = ("附近没有友军", "NO FRIENDLY NEARBY"),
+        // 认得长机但拿不到自机坐标：8111 半初始化 / 不在对局。这是错误状态，要明说
+        ["formation.noSelfPos"] = ("无自机坐标 · 8111 未就绪", "NO OWN POSITION · 8111 NOT READY"),
         ["formation.noMatch"] = ("无 {0} 型友军 · 检查长机机型", "NO {0} CONTACT · CHECK LEAD TYPE"),
         ["guide.formationOff"] = ("编队已解除", "FORMATION OFF"),
         ["guide.lead.nolink"] = ("无数据链", "NO LINK"),

@@ -551,6 +551,35 @@ public static class Program
                 0, WtHud.Telemetry.DataLink.LinkRole.Wing, 0,
                 WtHud.Telemetry.DataLink.WingState.Behind, -1, 100)) == "#424242");
 
+        // ---- 两条编队路径：几何算得一样，缺坐标时明确降级 ----
+        var relEast = FormationResolver.Relative(0.5, 0.5, 0.6, 0.5, 100000, 100000, false, 90);
+        Check("relative east: 10 km, zero offset",
+            Math.Abs(relEast.RangeM - 10000) < 1 && Math.Abs(relEast.RelBearingDeg) < 0.01);
+        var relNorth = FormationResolver.Relative(0.5, 0.5, 0.5, 0.6, 100000, 100000, false, 0);
+        Check("relative north: 10 km, zero offset",
+            Math.Abs(relNorth.RangeM - 10000) < 1 && Math.Abs(relNorth.RelBearingDeg) < 0.01);
+        var relWest = FormationResolver.Relative(0.5, 0.5, 0.4, 0.5, 100000, 100000, false, 0);
+        Check("relative west reads -90", Math.Abs(relWest.RelBearingDeg + 90) < 0.01);
+        Check("normalize wraps 190 to -170", Math.Abs(FormationResolver.Normalize(190) + 170) < 1e-9);
+        Check("normalize keeps 180", Math.Abs(FormationResolver.Normalize(180) - 180) < 1e-9);
+
+        var linkWithPos = new WtHud.Telemetry.DataLink.LinkNode(77, 3000, 0, 90, 0, 0.6, 0.5, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Lead, 3);
+        var tLink = FormationResolver.ByLink(linkWithPos, 0.5, 0.5, 100000, 100000, false, 90);
+        Check("link target keeps horizontal when own position exists",
+            tLink.Source == FormationSource.Link && tLink.HasHorizontal && tLink.RangeM > 9000);
+        var tNoSelf = FormationResolver.ByLink(linkWithPos, null, null, 100000, 100000, false, 90);
+        Check("link target degrades without own position",
+            tNoSelf.Source == FormationSource.Link && !tNoSelf.HasHorizontal);
+        var linkNoPos = new WtHud.Telemetry.DataLink.LinkNode(78, 3000, 0, 90, 0, null, null, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Lead, 3);
+        Check("link target degrades when the lead sends no coordinates",
+            !FormationResolver.ByLink(linkNoPos, 0.5, 0.5, 100000, 100000, false, 0).HasHorizontal);
+        var tMap = FormationResolver.ByMap(400, 12);
+        Check("map target passes values through",
+            tMap.Source == FormationSource.Map && tMap.HasHorizontal
+            && tMap.RangeM == 400 && tMap.RelBearingDeg == 12);
+
         // ---- 长机僚机表：按槽位排序、过滤未知、状态词带数字 ----
         var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
             0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
@@ -3225,6 +3254,11 @@ public static class Program
                     targetHdg = leadHeadingLocked;
                 }
 
+                // 僚机表先算出来：它同时决定主状态和「要不要跑自己的状态机」。
+                // ★ 链路模式下长机不跑状态机 —— 僚机自报的到位/掉队是权威结果，
+                //   长机再按自己的地图算一遍只会算出第二套结论。
+                var wingRows = WingTable(dataLink?.OnlineNodes());
+
                 // 主状态：僚机在不在位（长机唯一需要关心的事）
                 string main;
                 bool warn = false;
@@ -3253,7 +3287,9 @@ public static class Program
                         wingSlot = LeadWingSlot(nodeForFriendly, onlineNodes,
                                                 NearestFriendlyIndex(opt.Friendlies), -1);
                     }
-                    UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg, wingSlot);
+                    // 没有链路自报时才跑长机自己的状态机（无链路模式保留现状）
+                    if (wingRows.Count == 0)
+                        UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg, wingSlot);
 
                     if (wing.RangeM < 200)
                     {
@@ -3273,12 +3309,15 @@ public static class Program
 
                 // ★ 有僚机自报时以自报为准：主行只说整体，具体谁掉了看下面那张表。
                 //   表是逐架的（到位 / 掉队 480m / 偏离站位），最多四行。
-                var wingRows = WingTable(dataLink?.OnlineNodes());
-                var wingReports = WingReports(dataLink?.OnlineNodes());
-                if (wingReports.Count > 0)
+                //   「编队完整」= 所有报到的僚机都在位，少一架没报到也不算完整。
+                bool allInPosition = wingRows.Count > 0;
+                foreach (var n in wingRows)
+                    if (n.Wing != WtHud.Telemetry.DataLink.WingState.InPosition) allInPosition = false;
+                if (wingRows.Count > 0)
                 {
-                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
-                    warn = true;
+                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                                             allInPosition ? "guide.lead.formation" : "guide.lead.late");
+                    warn = !allInPosition;
                 }
                 foreach (var n in wingRows)
                     opt.LeadWingRows.Add((WingLabel(n), WingStateText(n),
@@ -3364,25 +3403,15 @@ public static class Program
                 }
             }
 
-            // --- 直接引导：只针对最近那一架（"往哪转、加减速"） ---
-            // 门槛都写在这里而不是几何层，方便按真机手感调，不用碰绘制代码。
-            if (opt.Friendlies.Count > 0)
+            // --- 目标解析：数据链优先，取不到才用地图像素 ---
+            // 两条路径的差别只在这一步：有链路就直接认节点（不依赖 map_obj 的友机列表，
+            // 也就不会把「最近的僚机」当成长机）；无链路才退回「最近的友机」。
+            // 两者都需要自机坐标才能给水平量 —— 拿不到就只留垂直引导。
+            var target = ResolveFormationTarget(cfg, map, dataLink, opt, sizeX, sizeY, navHeading);
+            if (target.Source != FormationSource.None)
             {
-                // 已按机型过滤 + 距离排序；这里再走一遍「取最近」把约定钉死在代码里
-                // 引导锁定谁：默认「最近的友机」；数据链认出长机、且它在地图友机里配得上，
-                // 就锁长机那架。★ 三机以上这是必须的 —— 否则圈指向最近的僚机，高度差却来自长机。
-                int leadIdx = NearestFriendlyIndex(opt.Friendlies);
-                if (dataLink != null && dataLink.TryGetLeadNode(out var leadNode))
-                {
-                    var nodes = dataLink.Snapshot();
-                    int nodeIdx = -1;
-                    for (int i = 0; i < nodes.Length; i++)
-                        if (nodes[i].Id == leadNode.Id) { nodeIdx = i; break; }
-                    double tol = 50.0 / Math.Max(2000.0, Math.Max(sizeX, sizeY));
-                    var nodeForFriendly = WtHud.Telemetry.DataLink.MatchNodeIndex(friendPos, nodes, tol);
-                    leadIdx = LeadFriendlyIndex(nodeForFriendly, nodeIdx, leadIdx);
-                }
-                var lead = opt.Friendlies[Math.Clamp(leadIdx, 0, opt.Friendlies.Count - 1)];
+                double leadRange = target.RangeM;
+                double leadBearing = target.RelBearingDeg;
 
                 // 长机航向 / 转向率：油门前馈和转弯提前量共用，放在 PID 之前算好。
                 // 有数据链就用长机自报值，没有就用本机航向近似 / 本地估算（实测差别不大）。
@@ -3404,11 +3433,11 @@ public static class Program
                     }
                     else
                     {
-                        leadRate = EstimateLeadTurnRate(lead.RelBearingDeg, ownTurnRateDeg, snap.ElapsedSeconds);
+                        leadRate = EstimateLeadTurnRate(leadBearing, ownTurnRateDeg, snap.ElapsedSeconds);
                     }
                 }
 
-                double closing = UpdateClosingRate(lead.RangeM, snap.ElapsedSeconds);
+                double closing = UpdateClosingRate(leadRange, snap.ElapsedSeconds);
 
                 // 本机要飞的站位（形状 + 槽位）。后面所有站位几何、到位判定、速度前馈都读它，
                 // 避免出现「引导按新队形算、油门还按旧距离算」的分叉。
@@ -3437,8 +3466,8 @@ public static class Program
 
                     // 远距例外：爬升阶段本来只给爬升率，但被甩开 2 km 还不给距离就是坑。
                     // 只放距离行，不放圈/航向/油门 —— 横向仍然等高度到位再开始。
-                    double? farRange = altStage && RevealRangeWhileClimbing(lead.RangeM, cfg.FormationFarRangeM)
-                        ? lead.RangeM
+                    double? farRange = altStage && RevealRangeWhileClimbing(leadRange, cfg.FormationFarRangeM)
+                        ? leadRange
                         : null;
 
                     opt.Vertical = new VerticalCue(
@@ -3451,161 +3480,174 @@ public static class Program
                         farRange is null ? null : slot.RangeM);
                 }
 
-                FormationAction action = FormationAction.None;
-                double deltaKmh = 0;
-
-                // 站位偏差：从当前视线指向理想槽位的角度，站准时为 0。
-                // ★ 只判距离会出现「正后方 500 m」和「左后 45° 500 m」都算到位 ——
-                //   后者压根不在槽位上。这个角就是判「位置」的那一维，油门和转向共用同一个数。
-                double aimDeg = WingAimDeg(lead.RelBearingDeg, lead.RangeM, leadHdgDelta,
-                                           slot.SideM, slot.BackM);
-
-                // 距离误差（米，正 = 比槽位远）。原来只在油门那段里算，站位自报也要用同一个数，
-                // 提到这里避免两处各算一份、符号还不一样。
-                double err = lead.RangeM - slot.RangeM;
-
-                // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
-                // 爬升阶段整段跳过：横向引导还没开始，PID 积分不该在场外偷偷累积。
-                if (opt.Vertical is not { Priority: true } && Math.Abs(lead.RelBearingDeg) < 50)
+                // 没有自机坐标：认得长机，但算不出它在哪一侧。
+                // ★ 这是错误状态（8111 半初始化 / 不在对局），不是"没有僚机"——
+                //   必须明说，否则飞行员只会看到"圈不见了"。
+                if (!target.HasHorizontal)
                 {
-                    // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
-                    // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
-                    double nowS = snap.ElapsedSeconds;
-                    double dt = guideIntegralLastT > 0
-                        ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5)
-                        : 0;
-                    guideIntegralLastT = nowS;
-
-                    // 增益调度：距离误差大时用小增益（慢慢追，别给自己挖坑），
-                    // 逼近 400 m 时过渡到大增益（快速收尾）。这一条把到位时间又压掉两成。
-                    double blend = Math.Max(100.0, cfg.FormationBlendM);
-                    double far = Math.Clamp(err / blend, 0.0, 1.0);
-                    double kp = err > 0
-                        ? cfg.FormationKp + (cfg.FormationKpNear - cfg.FormationKp) * (1.0 - far)
-                        : cfg.FormationKpNear;      // 太近了要果断拉开，直接用大增益
-
-                    double wantClosing = kp * err + cfg.FormationKi * guideIntegral;
-                    // ★ 这一层限幅是安全底线。放开它会在大距离上索要上百 m/s 的接近率，
-                    //   物理上根本刹不住（实测交叉场景需要 10 km 才能减速到位）。
-                    wantClosing = Math.Clamp(wantClosing, -20, 30);
-
-                    // 内环：期望与实际接近率之差 → 油门；按偏角修正（斜着飞时沿视线的分量更小）
-                    double cosOff = Math.Max(0.5, Math.Cos(lead.RelBearingDeg * Math.PI / 180));
-                    double dvRaw = (wantClosing - closing) * cfg.FormationKv / cosOff * 3.6;
-
-                    // 僚机速度前馈：外圈路径更长，按 |ω|·(r_w−ρ) 提前补速度差；
-                    // 纯反馈 PID 要等距离拉大才动作，天然滞后。前馈与反馈一起过低通避免突变。
-                    double tasRef = Math.Max(50, snap.TasKmh);
-                    double feed = FormationFeedKmh(leadRate, lead.RangeM, snap.TasKmh,
-                        slot.SideSign, lead.RelBearingDeg, leadHdgDelta,
-                        cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
-                    // 总增量按长机真空速倍数上下限收窄：外圈不许超速、内圈不许失速
-                    deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw + feed, nowS, cfg.FormationGuideTauS),
-                        tasRef * (cfg.FormationWingMinRatio - 1),
-                        tasRef * (cfg.FormationWingMaxRatio - 1));
-
-                    // 抗积分饱和：外环顶到限幅、或油门已经饱和时都不再累积
-                    if (dt > 0 && Math.Abs(deltaKmh) < 114 && Math.Abs(wantClosing) < 29.4)
-                        guideIntegral = Math.Clamp(guideIntegral + err * dt,
-                                                   -GuideIntegralLimit, GuideIntegralLimit);
-
-                    // 滞回：进入要 18，已经在动作里只要还大于 8 就继续，避免在两个动作之间抖
-                    bool wasAccel = guideActionPrev == FormationAction.Accelerate;
-                    bool wasDecel = guideActionPrev == FormationAction.Decelerate;
-                    if (Math.Abs(deltaKmh) >= 18
-                        || (wasAccel && deltaKmh >= 8)
-                        || (wasDecel && deltaKmh <= -8))
-                    {
-                        action = deltaKmh > 0 ? FormationAction.Accelerate : FormationAction.Decelerate;
-                    }
-                    else
-                    {
-                        // "保持"也要滞回：已经稳住时放宽门槛，否则会在 400 m 附近一闪一闪
-                        bool wasHold = guideActionPrev == FormationAction.Hold;
-                        double holdErr = wasHold ? 140 : 100;
-                        double holdClosing = wasHold ? 12 : 8;
-                        double holdAim = Math.Max(0.5, cfg.FormationAlignDeg) * (wasHold ? 1.6 : 1.0);
-                        if (Math.Abs(err) <= holdErr && Math.Abs(closing) < holdClosing
-                            && Math.Abs(aimDeg) <= holdAim)
-                            action = FormationAction.Hold;
-                    }
-                }
-
-                // 滞回状态每帧都更新（偏角大到没给建议时也要清掉，否则残留到下一段）
-                guideActionPrev = action;
-
-                // 自报站位：长机不看地图也能知道谁掉队了。
-                // 槽位号直接用配置里的那个 —— 三人编队时它同时也是「我是第几号僚机」。
-                selfWingSlot = Math.Clamp(cfg.FormationSlot, 0, 8);
-                selfWingErrM = (int)Math.Round(Math.Clamp(err, -9999, 9999));
-                selfWingState = WingStateFrom(err, aimDeg, slot.RangeM, cfg);
-
-                // ---- 转弯提前量：把机头指向长机的未来位置 ----
-                // 优先用数据链里长机自报的转向率（准、无滞后）；没有就退化为相对方位变化率反推。
-                // 油门那一侧不动：提前量只改"往哪转"，距离仍由 PID 管。
-                // 设定了侧位后按内外圈分治：提前量按转弯半径重算、外圈反向，避免切进长机航线。
-                // leadHdgDelta / leadRate 已在上方（PID 之前）算好，油门前馈与转弯提前量共用
-
-                // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
-                double guideTurn = aimDeg;
-                // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
-                // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
-                double leadRateShown = 0;
-                if (cfg.FormationLeadFeed && Math.Abs(leadRate) >= Math.Max(0.2, cfg.FormationLeadMinRate))
-                {
-                    guideTurn += FormationLeadAheadDeg(leadRate, lead.RangeM, snap.TasKmh,
-                                                       Math.Max(5, cfg.FormationLeadMaxDeg),
-                                                       slot.SideSign);
-                    guideTurn = NormalizeDeg(guideTurn);
-                    leadRateShown = leadRate;   // 只有真叠了提前量，才需要解释"数值为什么比目视大"
-                }
-
-                double turnG = TurnLoadG(leadRate, snap.TasKmh);
-                bool overG = cfg.FormationWarnG > 0.05 && turnG >= cfg.FormationWarnG;
-
-                // ---- 两阶段：收敛阶段给明确指令，保持阶段只在小偏差时才开口 ----
-                // HUD 是显示层，sim 里那套「角速度前馈」没法直接搬（飞行员不是自动驾驶），
-                // 能落地的是**指令的松紧**：已经在 40 m 内的时候，指针还一直在动反而看不清，
-                // 所以保持阶段把小偏差直接归零，让界面安静下来；真偏了照样报。
-                if (formationStage == FormationStage.Maintain)
-                {
-                    // 死区随站位一起调：站位改大时同样的角度对应更大的横向偏差
-                    if (Math.Abs(guideTurn) < cfg.FormationSteadyDeg) guideTurn = 0;
-                    if (Math.Abs(deltaKmh) < cfg.FormationSteadyKmh)
-                    {
-                        deltaKmh = 0;
-                        action = FormationAction.Hold;
-                    }
-                }
-
-                // 爬升阶段：横向引导完全不出现（圈/航向/距离/油门），只留那条爬升率。
-                // 这不是「压掉油门建议」，而是「还没轮到横向」——两阶段的分界。
-                if (opt.Vertical is { Priority: true })
-                    action = FormationAction.None;
-
-                // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
-                UpdateFormationStage(lead.RangeM, aimDeg, snap.ElapsedSeconds, cfg);
-
-                // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
-                // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
-                //   解除后每帧又把 Guide 设回来，解除键等于失效。（曾经这样错过一次。）
-                if (formationStage == FormationStage.Disabled)
-                {
-                    opt.Guide = null;
-                }
-                else if (opt.Vertical is { Priority: true })
-                {
-                    // 阶段 1：只画爬升率。连目标航向三角也收掉，免得两个阶段抢同一块注意力。
                     opt.Guide = null;
                     opt.TargetHeadingDeg = null;
+                    ClearSelfWingReport();      // 没有水平量就没有站位误差，别发上一帧的残留
+                    opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noSelfPos");
                 }
                 else
                 {
-                    opt.TargetHeadingDeg = NormalizeDeg(navHeading + guideTurn);
-                    opt.Guide = new FormationLead(guideTurn, lead.RangeM,
-                                             slot.RangeM, action, deltaKmh,
-                                             leadRateShown, leadFromLink, turnG, overG,
-                                             snap.TasKmh);
+                    FormationAction action = FormationAction.None;
+                    double deltaKmh = 0;
+
+                    // 站位偏差：从当前视线指向理想槽位的角度，站准时为 0。
+                    // ★ 只判距离会出现「正后方 500 m」和「左后 45° 500 m」都算到位 ——
+                    //   后者压根不在槽位上。这个角就是判「位置」的那一维，油门和转向共用同一个数。
+                    double aimDeg = WingAimDeg(leadBearing, leadRange, leadHdgDelta,
+                                               slot.SideM, slot.BackM);
+
+                    // 距离误差（米，正 = 比槽位远）。原来只在油门那段里算，站位自报也要用同一个数，
+                    // 提到这里避免两处各算一份、符号还不一样。
+                    double err = leadRange - slot.RangeM;
+
+                    // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
+                    // 爬升阶段整段跳过：横向引导还没开始，PID 积分不该在场外偷偷累积。
+                    if (opt.Vertical is not { Priority: true } && Math.Abs(leadBearing) < 50)
+                    {
+                        // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
+                        // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
+                        double nowS = snap.ElapsedSeconds;
+                        double dt = guideIntegralLastT > 0
+                            ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5)
+                            : 0;
+                        guideIntegralLastT = nowS;
+
+                        // 增益调度：距离误差大时用小增益（慢慢追，别给自己挖坑），
+                        // 逼近 400 m 时过渡到大增益（快速收尾）。这一条把到位时间又压掉两成。
+                        double blend = Math.Max(100.0, cfg.FormationBlendM);
+                        double far = Math.Clamp(err / blend, 0.0, 1.0);
+                        double kp = err > 0
+                            ? cfg.FormationKp + (cfg.FormationKpNear - cfg.FormationKp) * (1.0 - far)
+                            : cfg.FormationKpNear;      // 太近了要果断拉开，直接用大增益
+
+                        double wantClosing = kp * err + cfg.FormationKi * guideIntegral;
+                        // ★ 这一层限幅是安全底线。放开它会在大距离上索要上百 m/s 的接近率，
+                        //   物理上根本刹不住（实测交叉场景需要 10 km 才能减速到位）。
+                        wantClosing = Math.Clamp(wantClosing, -20, 30);
+
+                        // 内环：期望与实际接近率之差 → 油门；按偏角修正（斜着飞时沿视线的分量更小）
+                        double cosOff = Math.Max(0.5, Math.Cos(leadBearing * Math.PI / 180));
+                        double dvRaw = (wantClosing - closing) * cfg.FormationKv / cosOff * 3.6;
+
+                        // 僚机速度前馈：外圈路径更长，按 |ω|·(r_w−ρ) 提前补速度差；
+                        // 纯反馈 PID 要等距离拉大才动作，天然滞后。前馈与反馈一起过低通避免突变。
+                        double tasRef = Math.Max(50, snap.TasKmh);
+                        double feed = FormationFeedKmh(leadRate, leadRange, snap.TasKmh,
+                            slot.SideSign, leadBearing, leadHdgDelta,
+                            cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
+                        // 总增量按长机真空速倍数上下限收窄：外圈不许超速、内圈不许失速
+                        deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw + feed, nowS, cfg.FormationGuideTauS),
+                            tasRef * (cfg.FormationWingMinRatio - 1),
+                            tasRef * (cfg.FormationWingMaxRatio - 1));
+
+                        // 抗积分饱和：外环顶到限幅、或油门已经饱和时都不再累积
+                        if (dt > 0 && Math.Abs(deltaKmh) < 114 && Math.Abs(wantClosing) < 29.4)
+                            guideIntegral = Math.Clamp(guideIntegral + err * dt,
+                                                       -GuideIntegralLimit, GuideIntegralLimit);
+
+                        // 滞回：进入要 18，已经在动作里只要还大于 8 就继续，避免在两个动作之间抖
+                        bool wasAccel = guideActionPrev == FormationAction.Accelerate;
+                        bool wasDecel = guideActionPrev == FormationAction.Decelerate;
+                        if (Math.Abs(deltaKmh) >= 18
+                            || (wasAccel && deltaKmh >= 8)
+                            || (wasDecel && deltaKmh <= -8))
+                        {
+                            action = deltaKmh > 0 ? FormationAction.Accelerate : FormationAction.Decelerate;
+                        }
+                        else
+                        {
+                            // "保持"也要滞回：已经稳住时放宽门槛，否则会在 400 m 附近一闪一闪
+                            bool wasHold = guideActionPrev == FormationAction.Hold;
+                            double holdErr = wasHold ? 140 : 100;
+                            double holdClosing = wasHold ? 12 : 8;
+                            double holdAim = Math.Max(0.5, cfg.FormationAlignDeg) * (wasHold ? 1.6 : 1.0);
+                            if (Math.Abs(err) <= holdErr && Math.Abs(closing) < holdClosing
+                                && Math.Abs(aimDeg) <= holdAim)
+                                action = FormationAction.Hold;
+                        }
+                    }
+
+                    // 滞回状态每帧都更新（偏角大到没给建议时也要清掉，否则残留到下一段）
+                    guideActionPrev = action;
+
+                    // 自报站位：长机不看地图也能知道谁掉队了。
+                    // 槽位号直接用配置里的那个 —— 三人编队时它同时也是「我是第几号僚机」。
+                    selfWingSlot = Math.Clamp(cfg.FormationSlot, 0, 8);
+                    selfWingErrM = (int)Math.Round(Math.Clamp(err, -9999, 9999));
+                    selfWingState = WingStateFrom(err, aimDeg, slot.RangeM, cfg);
+
+                    // ---- 转弯提前量：把机头指向长机的未来位置 ----
+                    // 优先用数据链里长机自报的转向率（准、无滞后）；没有就退化为相对方位变化率反推。
+                    // 油门那一侧不动：提前量只改"往哪转"，距离仍由 PID 管。
+                    // 设定了侧位后按内外圈分治：提前量按转弯半径重算、外圈反向，避免切进长机航线。
+                    // leadHdgDelta / leadRate 已在上方（PID 之前）算好，油门前馈与转弯提前量共用
+
+                    // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
+                    double guideTurn = aimDeg;
+                    // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
+                    // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
+                    double leadRateShown = 0;
+                    if (cfg.FormationLeadFeed && Math.Abs(leadRate) >= Math.Max(0.2, cfg.FormationLeadMinRate))
+                    {
+                        guideTurn += FormationLeadAheadDeg(leadRate, leadRange, snap.TasKmh,
+                                                           Math.Max(5, cfg.FormationLeadMaxDeg),
+                                                           slot.SideSign);
+                        guideTurn = NormalizeDeg(guideTurn);
+                        leadRateShown = leadRate;   // 只有真叠了提前量，才需要解释"数值为什么比目视大"
+                    }
+
+                    double turnG = TurnLoadG(leadRate, snap.TasKmh);
+                    bool overG = cfg.FormationWarnG > 0.05 && turnG >= cfg.FormationWarnG;
+
+                    // ---- 两阶段：收敛阶段给明确指令，保持阶段只在小偏差时才开口 ----
+                    // HUD 是显示层，sim 里那套「角速度前馈」没法直接搬（飞行员不是自动驾驶），
+                    // 能落地的是**指令的松紧**：已经在 40 m 内的时候，指针还一直在动反而看不清，
+                    // 所以保持阶段把小偏差直接归零，让界面安静下来；真偏了照样报。
+                    if (formationStage == FormationStage.Maintain)
+                    {
+                        // 死区随站位一起调：站位改大时同样的角度对应更大的横向偏差
+                        if (Math.Abs(guideTurn) < cfg.FormationSteadyDeg) guideTurn = 0;
+                        if (Math.Abs(deltaKmh) < cfg.FormationSteadyKmh)
+                        {
+                            deltaKmh = 0;
+                            action = FormationAction.Hold;
+                        }
+                    }
+
+                    // 爬升阶段：横向引导完全不出现（圈/航向/距离/油门），只留那条爬升率。
+                    // 这不是「压掉油门建议」，而是「还没轮到横向」——两阶段的分界。
+                    if (opt.Vertical is { Priority: true })
+                        action = FormationAction.None;
+
+                    // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
+                    UpdateFormationStage(leadRange, aimDeg, snap.ElapsedSeconds, cfg);
+
+                    // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
+                    // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
+                    //   解除后每帧又把 Guide 设回来，解除键等于失效。（曾经这样错过一次。）
+                    if (formationStage == FormationStage.Disabled)
+                    {
+                        opt.Guide = null;
+                    }
+                    else if (opt.Vertical is { Priority: true })
+                    {
+                        // 阶段 1：只画爬升率。连目标航向三角也收掉，免得两个阶段抢同一块注意力。
+                        opt.Guide = null;
+                        opt.TargetHeadingDeg = null;
+                    }
+                    else
+                    {
+                        opt.TargetHeadingDeg = NormalizeDeg(navHeading + guideTurn);
+                        opt.Guide = new FormationLead(guideTurn, leadRange,
+                                                 slot.RangeM, action, deltaKmh,
+                                                 leadRateShown, leadFromLink, turnG, overG,
+                                                 snap.TasKmh);
+                    }
                 }
             }
             else
@@ -4186,6 +4228,37 @@ public static class Program
                 list.Add(n);
         list.Sort((a, b) => Math.Abs(b.ErrM).CompareTo(Math.Abs(a.ErrM)));
         return list;
+    }
+
+    /// <summary>
+    /// 选编队目标。**这是两条路径唯一的分叉点**：
+    /// 有链路就按节点认（不依赖 map_obj 的友机列表），否则退回最近的友机。
+    /// 之后 PID、两阶段、垂直引导、绘制全部共用一份。
+    /// </summary>
+    private static FormationTarget ResolveFormationTarget(HudConfig cfg, WtHud.Telemetry.MapData map,
+        WtHud.Telemetry.DataLink? link, HudOptions opt, double sizeX, double sizeY, double navHeading)
+    {
+        var byLink = default(FormationTarget);
+        var leadNode = default(WtHud.Telemetry.DataLink.LinkNode);
+        bool haveLink = link != null && link.TryGetLeadNode(out leadNode);
+        if (haveLink)
+        {
+            byLink = FormationResolver.ByLink(leadNode, map.Self?.X, map.Self?.Y,
+                                              sizeX, sizeY, cfg.MapYFlip, navHeading);
+            if (byLink.HasHorizontal) return byLink;
+        }
+
+        // 链路认得长机、但对方报文没带坐标（它自己 map_obj 空）——这时退回地图友机：
+        // 至少本机地图知道它在哪，和旧行为一致；配对不上时锁最近的，也是旧行为。
+        if (opt.Friendlies.Count > 0)
+        {
+            var f = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
+            return FormationResolver.ByMap(f.RangeM, f.RelBearingDeg);
+        }
+
+        // 两条路都给不出水平量：返回链路结果（Source=Link, HasHorizontal=false），
+        // 调用方据此只留垂直引导并给出「无自机坐标」的警告。
+        return byLink;
     }
 
     /// <summary>长机 HUD 上的僚机表：只要自报过站位的节点，按槽位排序（没有槽位的排最后）。</summary>

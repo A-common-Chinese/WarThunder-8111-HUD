@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 34,
+  "_version": 35,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -473,11 +473,11 @@
     "en": "Formation (shared): what both sides need - assist switch, lead mode, formation shape, done/drop gates - plus three entries: WINGMAN for identification, station keeping, gains, throttle and lead-turn terms; LEAD for heading, Mach and turn assist; DATA LINK for connection and status. LEAD MODE stays here on purpose: it decides which side you are, so hiding it inside a role page would make it hard to find."
   },
   "page.formationWing": {
-    "zh": "僚机参数（三级）：认长机（机型只在数据链失效时用、手填节点 ID）、站位判定（容差、保持死区）、垂直引导（门槛、升降率上限、远距例外）、跟随增益（Kp/KpNear/Ki/Kv/融合距离/低通）、转弯提前量与速度前馈上下限、长机转弯告警阈值。★ 这些是僚机独有的，长机页里没有；改之前先看每行的 HELP，都有实测依据。",
+    "zh": "僚机参数（三级）：认长机（机型只在数据链失效时用、手填节点 ID）、站位判定（容差、保持死区）、垂直引导（门槛、升降率上限、远距例外）、跟随增益（Kp/KpNear/Ki/Kv/融合距离/低通）、转弯提前量与速度前馈上下限、长机转弯告警阈值。★ 这些是僚机独有的，长机页里没有；改之前先看每行的 HELP，都有实测依据。★ 数据链能收到长机时，水平引导直接按它自报的坐标算，不再依赖地图里的友机列表；但如果连自机坐标都拿不到（8111 半初始化、不在对局），只保留垂直引导并显示「无自机坐标」，不会拿上一帧的方位凑数。",
     "en": "Wingman (third level): finding the lead (type only when the link is down, manual node id), station gates (tolerance, hold deadbands), vertical guidance (gate, climb cap, far-range exception), follow gains (Kp/KpNear/Ki/Kv/blend/tau), turn-ahead terms and speed feedforward limits, and the lead-turn warning threshold. Wingman-only - the lead page has none of these. Check each row's HELP before changing anything."
   },
   "page.formationLead": {
-    "zh": "长机参数（三级）：锁定航向、全向跟随、设定马赫、转向辅助（目标 G / 容差 / 按键 / 广播），最后一行是僚机自报的站位汇总 —— 谁掉队、掉多少（HUD 上按槽位列成表）。★ 长机不跑跟随环，所以这一页没有任何增益；那些都在僚机页里。",
+    "zh": "长机参数（三级）：锁定航向、全向跟随、设定马赫、转向辅助（目标 G / 容差 / 按键 / 广播），最后一行是僚机自报的站位汇总 —— 谁掉队、掉多少（HUD 上按槽位列成表）。「编队完整」要求所有报到的僚机都在位，少一架没报到也不算完整。★ 长机不跑跟随环，所以这一页没有任何增益；那些都在僚机页里。",
     "en": "Lead (third level): locked heading, omni follow, set Mach, turn assist (target G / tolerance / key / broadcast), and a live line of wingmen's self-reported stations - who is behind and by how much. The lead runs no follow loop, so there are no gains here; they belong to the wingman page."
   },
   "row.leadHeading": {
