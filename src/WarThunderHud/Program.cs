@@ -259,6 +259,97 @@ public static class Program
                                                      out _, out _, out double? bankBad)
             && bankBad is null);
 
+        // ---- 数据链角色（第 10 段）：只在坐标存在时追加，老读端照收 ----
+        var pLead = WtHud.Telemetry.DataLink.BuildPayload(123456, 3000, 5, 90, 1.5, 0.5, 0.5, -30,
+                                                          WtHud.Telemetry.DataLink.LinkRole.Lead);
+        Check("role packet has 10 fields", pLead.Split('|').Length == 10);
+        Check("role round-trips as lead",
+            WtHud.Telemetry.DataLink.TryParsePayload(pLead, out _, out _, out _, out _, out _,
+                                                     out _, out _, out _, out var roleOut)
+            && roleOut == WtHud.Telemetry.DataLink.LinkRole.Lead);
+        // 老签名（9 个 out）必须继续能用：漏了它等于把 selftest 自己搞崩
+        Check("old 9-out parser still accepts role packet",
+            WtHud.Telemetry.DataLink.TryParsePayload(pLead, out _, out _, out _, out _, out _,
+                                                     out _, out _, out double? bankKeep)
+            && bankKeep is double bk && Math.Abs(bk + 30) < 0.05);
+        Check("no role keeps 9 fields",
+            WtHud.Telemetry.DataLink.BuildPayload(1, 3000, 0, 90, 0, 0.5, 0.5, -30).Split('|').Length == 9);
+        // 没有坡度但有角色：第 9 段留空占位，角色必须还在第 10 段
+        var pWingNoBank = WtHud.Telemetry.DataLink.BuildPayload(1, 3000, 0, 90, 0, 0.5, 0.5, null,
+                                                               WtHud.Telemetry.DataLink.LinkRole.Wing);
+        var wParts = pWingNoBank.Split('|');
+        Check("role keeps its slot when bank is absent",
+            wParts.Length == 10 && wParts[8].Length == 0 && wParts[9] == "2");
+        Check("role packet parses with null bank",
+            WtHud.Telemetry.DataLink.TryParsePayload(pWingNoBank, out _, out _, out _, out _, out _,
+                                                     out _, out _, out double? bankW, out var roleW)
+            && bankW is null && roleW == WtHud.Telemetry.DataLink.LinkRole.Wing);
+
+        // ---- 解析加固：ID 越界、空白、BOM ----
+        Check("node id 0 rejected",
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|0|3000|0|90|0", out _, out _, out _, out _, out _));
+        Check("node id 1000000 rejected",
+            !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|1000000|3000|0|90|0", out _, out _, out _, out _, out _));
+        Check("surrounding whitespace tolerated",
+            WtHud.Telemetry.DataLink.TryParsePayload("  WTDL2|42|3000|0|90|0  \r\n", out _, out _, out _, out _, out _));
+        Check("BOM tolerated",
+            WtHud.Telemetry.DataLink.TryParsePayload("\uFEFFWTDL2|42|3000|0|90|0", out _, out _, out _, out _, out _));
+
+        // ---- 长机选择：手填 ID → 唯一长机 → 单节点 → 最近活跃（歧义） ----
+        long tn = 1_000_000;
+        var nSolo = new (int Id, int Role, long TickAt)[] { (11, (int)WtHud.Telemetry.DataLink.LinkRole.Wing, tn - 100) };
+        var sSolo = WtHud.Telemetry.DataLink.SelectLead(nSolo, 0, tn);
+        Check("solo node is the lead", sSolo.Index == 0
+            && sSolo.Source == WtHud.Telemetry.DataLink.LeadSource.SingleNode && !sSolo.Ambiguous);
+
+        var nPair = new (int Id, int Role, long TickAt)[]
+        {
+            (11, (int)WtHud.Telemetry.DataLink.LinkRole.Wing, tn - 50),
+            (22, (int)WtHud.Telemetry.DataLink.LinkRole.Lead, tn - 400),
+        };
+        var sPair = WtHud.Telemetry.DataLink.SelectLead(nPair, 0, tn);
+        Check("unique lead wins over newer wing", sPair.Index == 1
+            && sPair.Source == WtHud.Telemetry.DataLink.LeadSource.ByRole && !sPair.Ambiguous);
+
+        var nBothLead = new (int Id, int Role, long TickAt)[]
+        {
+            (11, (int)WtHud.Telemetry.DataLink.LinkRole.Lead, tn - 500),
+            (22, (int)WtHud.Telemetry.DataLink.LinkRole.Lead, tn - 50),
+        };
+        var sBoth = WtHud.Telemetry.DataLink.SelectLead(nBothLead, 0, tn);
+        Check("two leads fall back to newest and flag it", sBoth.Index == 1 && sBoth.Ambiguous
+            && sBoth.Source == WtHud.Telemetry.DataLink.LeadSource.Newest);
+
+        var sById = WtHud.Telemetry.DataLink.SelectLead(nPair, 11, tn);
+        Check("configured lead id wins", sById.Index == 0 && !sById.Ambiguous
+            && sById.Source == WtHud.Telemetry.DataLink.LeadSource.ByConfig);
+        var sBadId = WtHud.Telemetry.DataLink.SelectLead(nPair, 99, tn);
+        Check("configured id that is absent means no lead", sBadId.Index == -1
+            && sBadId.Source == WtHud.Telemetry.DataLink.LeadSource.None);
+
+        var nStale = new (int Id, int Role, long TickAt)[]
+        {
+            (11, (int)WtHud.Telemetry.DataLink.LinkRole.Lead, tn - 5000),
+        };
+        Check("stale node is not a lead", WtHud.Telemetry.DataLink.SelectLead(nStale, 0, tn).Index == -1);
+        Check("empty node list has no lead",
+            WtHud.Telemetry.DataLink.SelectLead(Array.Empty<(int, int, long)>(), 0, tn).Index == -1);
+
+        var nThree = new (int Id, int Role, long TickAt)[]
+        {
+            (11, (int)WtHud.Telemetry.DataLink.LinkRole.Wing, tn - 10),
+            (22, (int)WtHud.Telemetry.DataLink.LinkRole.Lead, tn - 900),
+            (33, (int)WtHud.Telemetry.DataLink.LinkRole.Wing, tn - 5),
+        };
+        Check("three-ship still finds the lead", WtHud.Telemetry.DataLink.SelectLead(nThree, 0, tn).Index == 1);
+
+        // ---- 显示平滑：dt=0 不动、dt≫tau 到底、单调不过冲 ----
+        Check("smooth snaps when dt is zero", Math.Abs(SmoothStep(10, 50, 0, 0.3) - 50) < 1e-9);
+        Check("smooth reaches target after 10 tau", Math.Abs(SmoothStep(0, 100, 3.0, 0.3) - 100) < 0.1);
+        double sm = 0;
+        for (int i = 0; i < 20; i++) sm = SmoothStep(sm, 100, 0.05, 0.3);
+        Check("smooth monotonic and no overshoot", sm > 0 && sm < 100);
+
         // ---- 垂直引导：增益、限幅、槽位高度的符号 ----
         Check("vert rate clamps at max", Math.Abs(VerticalRateCmd(300, 10) - 10) < 1e-9);
         Check("vert rate proportional", Math.Abs(VerticalRateCmd(20, 10) - 3.0) < 1e-9);
@@ -387,6 +478,22 @@ public static class Program
             && epB.Port == WtHud.Telemetry.DataLink.Port);
         Check("peer rejects hostname", !WtHud.Telemetry.DataLink.TryParsePeer("example.com:48017", out _));
         Check("peer rejects bad port", !WtHud.Telemetry.DataLink.TryParsePeer("10.0.0.5:70000", out _));
+
+        // ---- IPv6 目标：方括号带端口、裸地址、坏输入 ----
+        Check("peer bracketed ipv6 with port",
+            WtHud.Telemetry.DataLink.TryParsePeer("[2001:db8::1]:48017", out var ep6)
+            && ep6.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+            && ep6.Port == 48017 && ep6.Address.ToString() == "2001:db8::1");
+        Check("peer bare ipv6 keeps default port",
+            WtHud.Telemetry.DataLink.TryParsePeer("::1", out var ep6b)
+            && ep6b.Address.ToString() == "::1" && ep6b.Port == WtHud.Telemetry.DataLink.Port);
+        Check("peer bare ipv6 with many colons",
+            WtHud.Telemetry.DataLink.TryParsePeer("fd00:1234::55", out var ep6c)
+            && ep6c.Port == WtHud.Telemetry.DataLink.Port);
+        Check("peer rejects unclosed bracket",
+            !WtHud.Telemetry.DataLink.TryParsePeer("[::1:48017", out _));
+        Check("peer rejects bracket without colon",
+            !WtHud.Telemetry.DataLink.TryParsePeer("[::1]48017", out _));
 
         // ---- 面板那一行文本 ↔ 配置里的列表（F1 数据链模块里直接改地址） ----
         string peerText = HudConfig.PeersToText(new[] { "172.16.5.23:48017", "10.0.0.5" });
@@ -1122,8 +1229,15 @@ public static class Program
                 : "pos=-";
             string hdg = n.HeadingDeg is double h ? h.ToString("F0") : "-";
             string bank = n.TargetBankDeg is double b ? b.ToString("F0") + "deg" : "-";
+            // 角色：L = 自称长机、W = 自称僚机、- = 旧版没发第 10 段
+            string role = n.Role switch
+            {
+                WtHud.Telemetry.DataLink.LinkRole.Lead => "L",
+                WtHud.Telemetry.DataLink.LinkRole.Wing => "W",
+                _ => "-",
+            };
             Console.WriteLine($"  {DateTime.Now:HH:mm:ss.fff}  from {from,-22} id={n.Id,-7} " +
-                              $"alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
+                              $"role={role}  alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
         };
 
         Console.WriteLine($"datalink probe: listening on udp {WtHud.Telemetry.DataLink.Port} for {seconds}s");
@@ -1132,9 +1246,14 @@ public static class Program
         long t0 = Environment.TickCount64;
         while (Environment.TickCount64 - t0 < seconds * 1000L) Thread.Sleep(200);
 
+        // 长机是谁、依据是什么：三机以上编队时这一行比 rx 更能说明问题
+        string leadText = "none";
+        if (link.TryGetLeadNode(out var leadNode, out var leadSrc, out bool leadAmb))
+            leadText = $"#{leadNode.Id}({LeadSourceText(leadSrc)}{(leadAmb ? "!" : "")})";
+
         Console.WriteLine();
         Console.WriteLine($"result: rx={link.RxCount}  bad={link.RxBad}  nodes={link.NodeCount}  " +
-                          $"last={(link.LastPeer.Length == 0 ? "none" : link.LastPeer)}");
+                          $"lead={leadText}  last={(link.LastPeer.Length == 0 ? "none" : link.LastPeer)}");
         if (link.RxCount > 0) return 0;
 
         Console.WriteLine("no packet arrived. check, in this order:");
@@ -2175,7 +2294,7 @@ public static class Program
             double? dlXn = null, dlYn = null;
             if (mapData.Self is { } dlSelf) { dlXn = dlSelf.X; dlYn = dlSelf.Y; }
             dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg,
-                           dlXn, dlYn, TurnAssistBroadcastBank(cfg));
+                           dlXn, dlYn, TurnAssistBroadcastBank(cfg), SelfLinkRole(cfg));
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -2624,6 +2743,7 @@ public static class Program
         guideIntegralLastT = 0;
         leadHeadingLockValid = false;
         altitudeStageActive = false;      // 重新开始编队时回到「先爬升」的判定
+        vertSmoothT = -1;                 // 平滑器一起重置，否则会从上一段的旧值慢慢爬过来
     }
 
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
@@ -2878,10 +2998,10 @@ public static class Program
                 bool leadFromLink = false;
                 if (cfg.FormationLeadFeed)
                 {
-                    // 只在**链路里只有一个伙伴**时才信它的转向率：报文里没有位置，多伙伴时
-                    // 无法确认这个值来自编队长机还是战场上的其它队友，宁可退回本地估算。
-                    if (dataLink != null && dataLink.NodeCount == 1
-                        && dataLink.TryGetPartnerTurnRate(out double linkedRate))
+                    // 长机认准了才信它的转向率。判断已经收进 DataLink：手填 ID / 唯一 role=1 /
+                    // 场上只有一个节点 → 可信；多候选退回「最近活跃」时它自己返回 false。
+                    // ★ 以前这里是 `NodeCount == 1`，三方编队时直接失效 —— 认长机的能力就体现在这。
+                    if (dataLink != null && dataLink.TryGetPartnerTurnRate(out double linkedRate))
                     {
                         leadRate = linkedRate;
                         leadFromLink = true;
@@ -2904,6 +3024,8 @@ public static class Program
                 if (opt.AltDiffM is double currentDiff)
                 {
                     double altErr = currentDiff - slot.TargetDeltaHM;
+                    // 显示/指令用平滑值，阶段判定用原始值：4 Hz 的跳变不该让横带和数字抖
+                    double altShown = SmoothVertError(altErr, snap.ElapsedSeconds);
                     double vertGate = Math.Max(5, cfg.FormationVertGateM);
 
                     // ---- 两阶段（2026-11-12）----
@@ -2924,8 +3046,8 @@ public static class Program
                         : null;
 
                     opt.Vertical = new VerticalCue(
-                        altErr,
-                        VerticalRateCmd(altErr, cfg.FormationVertMaxMs),
+                        altShown,
+                        VerticalRateCmd(altShown, cfg.FormationVertMaxMs),
                         opt.AltDiffStale,
                         altStage,
                         Math.Abs(altErr) <= vertGate,
@@ -3613,6 +3735,41 @@ public static class Program
     internal static double VerticalRateCmd(double errorM, double maxMs)
         => Math.Clamp(errorM * VerticalGain, -Math.Abs(maxMs), Math.Abs(maxMs));
 
+    /// <summary>高度读数的一阶平滑时间常数（秒）。4 Hz 的数据直接上屏会每 250 ms 跳一次。</summary>
+    internal const double VerticalDisplayTauS = 0.30;
+
+    /// <summary>一阶低通：把 <paramref name="prev"/> 拉向 <paramref name="target"/>。
+    /// <para>抽成纯函数是为了能在 selftest 里断言（dt=0 不动、dt≫tau 到底、单调不过冲）。</para></summary>
+    internal static double SmoothStep(double prev, double target, double dtS, double tauS)
+    {
+        if (tauS <= 0 || dtS <= 0) return target;
+        double a = 1.0 - Math.Exp(-dtS / tauS);
+        return prev + (target - prev) * a;
+    }
+
+    // 显示用平滑状态：只在「有高度差」时推进，数据断了就重置，避免拿旧值继续拉。
+    private static double vertSmooth;
+    private static double vertSmoothT = -1;
+
+    /// <summary>
+    /// 把 4 Hz 跳变的高度误差平滑成连续读数。只用于显示与升降率指令，
+    /// **阶段判定仍然用原始值** —— 判定要靠真值，不能靠惯性。
+    /// <para>断流超过 0.5 s 或时间倒流时直接重置成当前值，不做「追」的动作：</para>
+    /// </summary>
+    private static double SmoothVertError(double raw, double nowS)
+    {
+        if (vertSmoothT < 0 || nowS < vertSmoothT || nowS - vertSmoothT > 0.5)
+        {
+            vertSmooth = raw;
+            vertSmoothT = nowS;
+            return raw;
+        }
+        double dt = nowS - vertSmoothT;
+        vertSmoothT = nowS;
+        vertSmooth = SmoothStep(vertSmooth, raw, dt, VerticalDisplayTauS);
+        return vertSmooth;
+    }
+
     /// <summary>
     /// 爬升阶段是否因为「离得太远」而破例放出距离行。
     /// <para>两阶段的分界是高度，但长机一跑起来距离是按秒变的：先爬 20 s 高度，
@@ -3995,13 +4152,67 @@ public static class Program
     private static double ResolveLeadHeading(double? linkedHeading, double ownHeading)
         => linkedHeading ?? ownHeading;
 
+    /// <summary>
+    /// 本机在编队里的角色：面板上的「长机模式」开着就是长机，否则是僚机。
+    /// <para>★ 角色只描述「我在这局里干什么」，和有没有开数据链无关 —— 所以写进每一包，
+    /// 让僚机端不用猜。两台都开长机模式属于配置错误，接收端会同时看到两个 role=1，
+    /// 那时选择逻辑退回最近活跃并在面板上标「歧义」。</para>
+    /// </summary>
+    internal static WtHud.Telemetry.DataLink.LinkRole SelfLinkRole(HudConfig cfg)
+        => cfg.LeadMode
+            ? WtHud.Telemetry.DataLink.LinkRole.Lead
+            : WtHud.Telemetry.DataLink.LinkRole.Wing;
+
+    /// <summary>长机是怎么认出来的，面板上一行字。</summary>
+    internal static string LeadSourceText(WtHud.Telemetry.DataLink.LeadSource src) => src switch
+    {
+        WtHud.Telemetry.DataLink.LeadSource.ByConfig => "by id",
+        WtHud.Telemetry.DataLink.LeadSource.ByRole => "by role",
+        WtHud.Telemetry.DataLink.LeadSource.SingleNode => "solo",
+        WtHud.Telemetry.DataLink.LeadSource.Newest => "ambiguous",
+        _ => "-",
+    };
+
+    /// <summary>
+    /// 数据链状态（面板显示）：off / no partner / linked。
+    /// 后面追「长机 #ID（怎么认出来的）」和节点数，认不出来时能一眼看出该手填 ID。
+    /// </summary>
     public static string DataLinkStatusText()
     {
         var link = dataLink;
         if (link == null) return "off";
-        if (!link.TryGetPartnerAltitude(out _, out _)) return "no partner";
         int n = link.NodeCount;
-        return n > 1 ? $"linked x{n}" : "linked";
+        if (!link.TryGetLeadNode(out var lead, out var src, out bool ambiguous))
+            return n > 1 ? $"x{n} / no lead" : "no partner";
+
+        string how = LeadSourceText(src);
+        if (ambiguous) how += "!";
+        return n > 1 ? $"linked x{n} · #{lead.Id} ({how})" : $"linked #{lead.Id} ({how})";
+    }
+
+    /// <summary>
+    /// 在线节点一览（面板一行）：`#123456 L 2846m 0.2s`，多个用逗号隔开。
+    /// <para>联调时这行最有用：谁的包龄在涨、谁报的是长机，都写在这。</para>
+    /// </summary>
+    public static string DataLinkNodeText()
+    {
+        var link = dataLink;
+        if (link == null) return "-";
+        var nodes = link.OnlineNodes();
+        if (nodes.Length == 0) return "-";
+
+        var parts = new List<string>(nodes.Length);
+        foreach (var n in nodes)
+        {
+            char role = n.Role switch
+            {
+                WtHud.Telemetry.DataLink.LinkRole.Lead => 'L',
+                WtHud.Telemetry.DataLink.LinkRole.Wing => 'W',
+                _ => '?',
+            };
+            parts.Add($"#{n.Id}{role} {n.AltM}m {n.AgeMs / 1000.0:0.0}s");
+        }
+        return string.Join(", ", parts);
     }
 
     /// <summary>对端地址的现状（面板上单独一行显示）：broadcast / 2 target(s) / 1 ok / 1 bad。</summary>
@@ -4039,6 +4250,8 @@ public static class Program
 
         var bad = link.SetPeers(cfg.DataLinkPeers);
         dataLinkPeerNote = PeerNote(cfg.DataLinkPeers.Count, bad.Count);
+        // 手填的长机 ID 也在这里落地：面板改完立即生效，不用重开 HUD。
+        link.LeadId = cfg.DataLinkLeadId;
 
         foreach (var b in bad)
             Console.WriteLine($"data link: bad peer \"{b}\" ignored (want ip:port)");

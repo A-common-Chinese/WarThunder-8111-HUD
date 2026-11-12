@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 26,
+  "_version": 28,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -385,8 +385,8 @@
     "en": "Speed deadband while holding. Under it the cue reads hold. Default 20 km/h; larger is quieter but hides slow drift longer."
   },
   "row.dataLinkPeer": {
-    "zh": "对端地址。留空 = 广播，只能同一局域网；填 ip:port 走单播，跨网段 / VPN / 组网软件必须填。多个用逗号分隔，改完立即生效不用重启。★ 广播地址 255.255.255.255 出不了路由器。★ 地址格式不对的项会被跳过，看下一行「发送目标」确认实际发了几个。",
-    "en": "Peer address. Empty = broadcast, same subnet only. ip:port sends unicast, which is required across subnets, VPNs and overlay networks. Separate several with commas; changes take effect immediately. Broadcast 255.255.255.255 never crosses a router. Malformed entries are skipped - check the TARGETS row to see how many are actually in use."
+    "zh": "对端地址。留空 = 广播，只能同一局域网；填 ip:port 走单播，跨网段 / VPN / 组网软件必须填。多个用逗号分隔，改完立即生效不用重启。★ 广播地址 255.255.255.255 出不了路由器。★ 支持 IPv6：写成 [2001:db8::1]:48017，裸地址也可以（端口取默认）；链路是双栈的，同一个端口同时收 v4 和 v6。★ 地址格式不对的项会被跳过，看下一行「发送目标」确认实际发了几个。",
+    "en": "Peer address. Empty = broadcast, same subnet only. ip:port sends unicast, which is required across subnets, VPNs and overlay networks. Separate several with commas; changes take effect immediately. Broadcast 255.255.255.255 never crosses a router. IPv6 works too: [2001:db8::1]:48017, or a bare address (default port); the link is dual-stack, so one port carries both v4 and v6. Malformed entries are skipped - check the TARGETS row to see how many are actually in use."
   },
   "row.dataLinkPeerNow": {
     "zh": "实际生效的发送目标。broadcast = 广播；n target(s) = n 个单播目标；出现 bad 说明有地址格式不对（要 ip:port），那几项已被跳过。这一行读的是链路当前状态，不是配置里的文本。",
@@ -476,8 +476,20 @@
     "zh": "本机节点 ID，首次启用时随机生成并一直沿用。两端靠它区分彼此；显示「-」表示还没生成（把上面的开关打开就会写进去）。两台机器撞同一个 ID 概率极低，真撞了日志里会提示。",
     "en": "This machine's node id, generated on first use and kept. It is how the two ends tell each other apart; \"-\" means it has not been assigned yet (turning the switch on writes one). A collision is very unlikely and would be logged."
   },
+  "row.dataLinkRole": {
+    "zh": "本机在编队里的角色，由「长机模式」推导：开着 = 长机，关着 = 僚机。这个值会写进每一包报文的第 10 段，僚机端靠它认出谁是长机（不用再猜「最近活跃的那个」）。两台都开长机模式属于配置错误，对方会看到两个 role=1 并标「歧义」。",
+    "en": "This machine's role in the formation, derived from LEAD MODE: on = lead, off = wing. The value rides in the 10th field of every packet so wingmen can identify the lead instead of guessing \"the most recently active node\". Two machines both in lead mode is a misconfiguration: the receiver sees two role=1 nodes and flags it as ambiguous."
+  },
+  "row.dataLinkLeadId": {
+    "zh": "手动指定长机：填对方的节点 ID，0 = 自动。自动顺序是「手填 ID → 唯一自称长机的节点 → 场上只有一个节点 → 最近活跃」。三方以上编队、或两台都开了长机模式时自动会分不清，这一行就是强制手段。★ 填了就必须真能收到这个 ID，否则僚机侧会一直显示认不出长机——这是有意的，宁可明说，也不拿别人的高度顶替。",
+    "en": "Manual lead selection: the peer's node id, 0 = automatic. Auto order is: configured id -> the only node claiming lead -> the only node present -> most recently active. With three or more aircraft, or when both ends run lead mode, auto cannot decide and this row is the override. It must actually be heard, or the wingman keeps saying it cannot identify the lead - deliberately, rather than substituting someone else's altitude."
+  },
+  "row.dataLinkNodes": {
+    "zh": "在线节点一览，格式 `#节点ID 角色 高度 包龄`：角色 L = 自称长机、W = 自称僚机、? = 老版本没发角色。包龄是「最后一包到现在」的毫秒数，一直往上涨说明那个节点在丢包或已经掉线。联调时这一行比状态行更有用。",
+    "en": "Online nodes as `#id role altitude age`. Role: L = claims lead, W = claims wing, ? = old version without the role field. Age is time since that node's last packet; a rising number means it is losing packets or gone. More useful than the status line when testing a tunnel."
+  },
   "row.dataLinkState": {
-    "zh": "链路当前状态。off = 没启用；no partner = 已启用但没收到别人（查端口、防火墙、对端地址）；linked = 收到 1 个节点；linked xN = 收到多个。这一行读的是运行中的链路，不是上面的配置文本。",
+    "zh": "链路当前状态。off = 没启用；no partner = 已启用但没收到别人（查端口、防火墙、对端地址）；linked #ID (by role) = 已认出长机，括号里是识别依据：by id 手填、by role 对方自称长机、solo 场上只有一个、ambiguous 有歧义（带 ! 号）。linked xN · #ID 表示同时有多个节点。这一行读的是运行中的链路，不是上面的配置文本。",
     "en": "Live link state. off = disabled; no partner = enabled but nothing heard (check port, firewall, peer address); linked = one node; linked xN = several. Reads the running link, not the config text above."
   },
   "row.dataLinkPort": {

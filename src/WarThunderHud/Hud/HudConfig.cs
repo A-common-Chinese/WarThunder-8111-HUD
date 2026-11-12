@@ -384,6 +384,15 @@ public sealed class HudConfig
     [JsonPropertyName("dataLinkId")] public int DataLinkId { get; set; }
 
     /// <summary>
+    /// 手动指定「谁是长机」：填对方的节点 ID。默认 0 = 自动。
+    /// <para>自动规则是「声称自己是长机（role=1）的那个节点」；三方以上编队、或者两台都开了
+    /// 长机模式时，自动会分不清，这一行就是强制手段。</para>
+    /// <para>填了就必须能收到这个 ID 的包，否则僚机侧会一直显示「没认出长机」——
+    /// 这是有意的：宁可明说认不出，也不要拿别人的高度顶替。</para>
+    /// </summary>
+    [JsonPropertyName("dataLinkLeadId")] public int DataLinkLeadId { get; set; }
+
+    /// <summary>
     /// 数据链单播目标，形如 <c>["192.168.16.7:48017"]</c>。为空 = 子网广播。
     /// <para>★ 广播地址 255.255.255.255 **出不了路由器**：两台机器不在同一网段时
     /// （内网穿透 / VPN 组网 / 公网中转）必须在这里填对方的地址，并在链路上放通 UDP 48017。</para>

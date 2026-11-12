@@ -33,9 +33,14 @@ namespace WtHud.Telemetry;
 /// </para>
 /// <para>
 /// 协议刻意做成一行文本，方便用任何工具手工调试：
-/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;|&lt;航向 度&gt;|&lt;转向率 0.1 °/s&gt;[|&lt;x 1e-5&gt;|&lt;y 1e-5&gt;]</c>
-/// 后两段是后加的：老版本只发 4 段、也只读 4 段，双方仍能互通（只是没有转向率可用）。
-/// 坐标两段同样是追加的，老读端会忽略，不影响高度。
+/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;|&lt;航向 度&gt;|&lt;转向率 0.1 °/s&gt;[|&lt;x 1e-5&gt;|&lt;y 1e-5&gt;[|&lt;坡度 0.1°&gt;[|&lt;角色&gt;]]]</c>
+/// 后几段都是后加的：老版本只发 4 段、也只读 4 段，双方仍能互通（只是没有转向率可用）。
+/// 坐标两段同样是追加的，老读端会忽略，不影响高度；角色（1 长机 / 2 僚机）是第 10 段。
+/// <para>
+/// 套接字是**双栈**的（IPv6Any + DualMode）：同一个端口同时收 IPv4 和 IPv6。
+/// 两边宽带都给 IPv6 时可以直接填对方的 v6 地址，不需要任何组网软件；
+/// 没有 v6 的环境里 v4 走 v4-mapped 地址，行为与以前完全一致。
+/// </para>
 /// </para>
 /// </summary>
 internal sealed class DataLink : IDisposable
@@ -43,6 +48,10 @@ internal sealed class DataLink : IDisposable
     public const int Port = 48017;
     private const int StaleMs = 3000;          // 3 秒收不到就当对方掉线
     private const double SendIntervalS = 0.25; // 4 Hz，高度是慢变量，够用
+    private const int MaxPayloadBytes = 256;   // 一行文本撑死 60 字节，超了必是畸形包
+
+    /// <summary>本机在编队里的角色。写到报文的第 10 段，僚机端靠它认出谁是长机。</summary>
+    public enum LinkRole { Unknown = 0, Lead = 1, Wing = 2 }
 
     private readonly int _selfId;
     private UdpClient? _socket;
@@ -66,6 +75,9 @@ internal sealed class DataLink : IDisposable
 
         /// <summary>对方当前的目标坡度（长机转向辅助广播）。老版本或未开启 → null。</summary>
         public double? TargetBankDeg;
+
+        /// <summary>对方自报的编队角色。老版本不发第 10 段 → Unknown，选择逻辑退回「最近活跃」。</summary>
+        public LinkRole Role = LinkRole.Unknown;
 
         public long TickAt;
         public int Packets;
@@ -101,7 +113,9 @@ internal sealed class DataLink : IDisposable
     public readonly record struct LinkNode(int Id, int AltM, double VyMs,
                                            double? HeadingDeg, double? TurnRateDeg,
                                            double? Xn, double? Yn, int AgeMs,
-                                           double? TargetBankDeg = null);
+                                           double? TargetBankDeg = null,
+                                           LinkRole Role = LinkRole.Unknown,
+                                           int Packets = 0);
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -118,7 +132,8 @@ internal sealed class DataLink : IDisposable
                 if (now - kv.Value.TickAt >= StaleMs) continue;
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
-                                      n.Xn, n.Yn, (int)(now - n.TickAt), n.TargetBankDeg));
+                                      n.Xn, n.Yn, (int)(now - n.TickAt), n.TargetBankDeg,
+                                      n.Role, n.Packets));
             }
             return list.ToArray();
         }
@@ -142,24 +157,51 @@ internal sealed class DataLink : IDisposable
         return bad;
     }
 
-    /// <summary>解析 <c>"host:port"</c>；端口缺省用 <see cref="Port"/>。</summary>
+    /// <summary>
+    /// 解析 <c>"host[:port]"</c>；端口缺省用 <see cref="Port"/>。
+    /// <para>支持三种写法：<c>192.168.1.7:48017</c>、<c>[2001:db8::1]:48017</c>、
+    /// <c>2001:db8::1</c>（裸 IPv6，端口用默认）。</para>
+    /// <para>★ 裸 IPv6 有多个冒号，不能按「最后一个冒号切端口」——那会把 <c>::1</c> 切成
+    /// <c>:</c> 和 <c>1</c>。所以先看方括号，再看冒号个数。</para>
+    /// </summary>
     internal static bool TryParsePeer(string? spec, out IPEndPoint ep)
     {
         ep = null!;
         if (string.IsNullOrWhiteSpace(spec)) return false;
 
         string text = spec.Trim();
-        string host = text;
         int port = Port;
+        string host;
 
-        int colon = text.LastIndexOf(':');
-        // IPv6 字面量（[::1]:48017）只有一个冒号在方括号外，这里不处理 —— 内网穿透用不到，
-        // 真需要时再补，别为没验证过的输入写一堆分支。
-        if (colon > 0 && int.TryParse(text.AsSpan(colon + 1), out int p))
+        if (text.StartsWith("["))
         {
-            host = text[..colon];
-            if (p <= 0 || p > 65535) return false;
-            port = p;
+            // [v6] 或 [v6]:port
+            int close = text.IndexOf(']');
+            if (close < 0) return false;
+            host = text[1..close];
+            string rest = text[(close + 1)..];
+            if (rest.Length > 0)
+            {
+                if (rest[0] != ':' || !int.TryParse(rest.AsSpan(1), out port)) return false;
+                if (port <= 0 || port > 65535) return false;
+            }
+        }
+        else
+        {
+            int first = text.IndexOf(':');
+            int last = text.LastIndexOf(':');
+            if (first >= 0 && first == last)
+            {
+                // 恰好一个冒号 = host:port
+                if (!int.TryParse(text.AsSpan(last + 1), out port)) return false;
+                if (port <= 0 || port > 65535) return false;
+                host = text[..last];
+            }
+            else
+            {
+                // 零个或多个冒号：整串当地址，端口用默认（多冒号必然是裸 IPv6）
+                host = text;
+            }
         }
 
         if (!IPAddress.TryParse(host, out var addr)) return false;
@@ -186,109 +228,163 @@ internal sealed class DataLink : IDisposable
         }
     }
 
-    /// <summary>
-    /// 取最近最活跃的那个伙伴的高度。只有一台机器开了数据链时，这就是唯一值。
-    /// 返回 false 表示没有可用数据（链路没开、对方没发、或全超时了）。
-    /// </summary>
-    /// <summary>取最新在线节点的目标坡度（长机转向辅助广播）。没有节点或对方没发 → false。</summary>
-    public bool TryGetPartnerTargetBank(out double bankDeg)
+    /// <summary>长机是怎么认出来的。面板要显示这个，认不出来时用户才知道该手填 ID。</summary>
+    public enum LeadSource
     {
+        /// <summary>没有任何可用节点。</summary>
+        None,
+        /// <summary>配置里手填的长机 ID（dataLinkLeadId）。</summary>
+        ByConfig,
+        /// <summary>对方自报 role=1，且只有一个节点这么报。</summary>
+        ByRole,
+        /// <summary>场上只有一个节点，天然就是它（老版本没有 role 段时的主路径）。</summary>
+        SingleNode,
+        /// <summary>多个候选，退回「最近活跃」——有歧义，调用方要谨慎。</summary>
+        Newest,
+    }
+
+    private int _leadId;      // 0 = 自动
+
+    /// <summary>手填的长机节点 ID（0 = 自动）。由上层在配置变更时写入。</summary>
+    public int LeadId
+    {
+        get => _leadId;
+        set => _leadId = value;
+    }
+
+    /// <summary>
+    /// 选出「编队长机」这一个节点。
+    /// <para>规则按优先级：手填 ID → 唯一 role=1 → 场上只有一个节点 → 最近活跃（有歧义）。</para>
+    /// <para>★ 三条理由：一是 <c>map_obj</c> 里没有呼号，节点 ID 是随机数，没有 role 时根本分不清
+    /// 谁是谁；二是三方编队时「最近活跃」会随开火/机动来回跳，高度值跟着跳；三是手填 ID 是
+    /// 自动识别失败时的唯一强制手段，所以它排第一。</para>
+    /// </summary>
+    /// <param name="ambiguous">true = 候选不止一个、退回了最近活跃，上层应给出提示。</param>
+    public bool TryGetLeadNode(out LinkNode lead, out LeadSource source, out bool ambiguous)
+    {
+        lead = default;
+        source = LeadSource.None;
+        ambiguous = false;
+
         long now = Environment.TickCount64;
-        bankDeg = 0;
         lock (_lock)
         {
-            Remote? best = null;
-            foreach (var node in _nodes.Values)
+            var entries = new List<(int Id, int Role, long TickAt)>(_nodes.Count);
+            var remotes = new List<Remote>(_nodes.Count);
+            foreach (var kv in _nodes)
             {
-                if (now - node.TickAt >= StaleMs) continue;
-                if (node.TargetBankDeg is null) continue;
-                if (best == null || node.TickAt > best.TickAt) best = node;
+                entries.Add((kv.Key, (int)kv.Value.Role, kv.Value.TickAt));
+                remotes.Add(kv.Value);
             }
-            if (best?.TargetBankDeg is not double b) return false;
-            bankDeg = b;
+
+            var (idx, src, amb) = SelectLead(entries, _leadId, now);
+            if (idx < 0) return false;
+
+            var r = remotes[idx];
+            source = src;
+            ambiguous = amb;
+            lead = new LinkNode(entries[idx].Id, r.AltM, r.VyMs, r.HeadingDeg, r.TurnRateDeg,
+                                r.Xn, r.Yn, (int)(now - r.TickAt), r.TargetBankDeg,
+                                r.Role, r.Packets);
             return true;
         }
+    }
+
+    /// <summary>
+    /// 「谁是长机」的纯函数版本：只吃节点清单，不碰锁、不碰套接字，方便在 selftest 里断言。
+    /// <para>返回 -1 表示没有可用节点（或手填的 ID 不在线）。</para>
+    /// <para>★ 多条规则里唯一会「返回一个不确定答案」的是 <see cref="LeadSource.Newest"/>：
+    /// 候选不止一个时只能挑最近活跃的，调用方必须看 <c>ambiguous</c> 决定要不要信它。</para>
+    /// </summary>
+    internal static (int Index, LeadSource Source, bool Ambiguous) SelectLead(
+        IReadOnlyList<(int Id, int Role, long TickAt)> nodes, int leadId, long now)
+    {
+        var fresh = new List<int>(nodes.Count);
+        for (int i = 0; i < nodes.Count; i++)
+            if (now - nodes[i].TickAt < StaleMs) fresh.Add(i);
+        if (fresh.Count == 0) return (-1, LeadSource.None, false);
+
+        if (leadId != 0)
+        {
+            foreach (int i in fresh)
+                if (nodes[i].Id == leadId) return (i, LeadSource.ByConfig, false);
+            // 手填了就必须认这个 ID：认不到就说认不到，绝不拿别人的高度顶替
+            return (-1, LeadSource.None, false);
+        }
+
+        int leadIdx = -1, leadCount = 0;
+        foreach (int i in fresh)
+            if (nodes[i].Role == (int)LinkRole.Lead) { leadIdx = i; leadCount++; }
+        if (leadCount == 1) return (leadIdx, LeadSource.ByRole, false);
+        if (fresh.Count == 1) return (fresh[0], LeadSource.SingleNode, false);
+
+        // 多个 role=1（两台都开了长机模式），或者全都没报角色：只能取最近活跃
+        int best = fresh[0];
+        foreach (int i in fresh)
+            if (nodes[i].TickAt > nodes[best].TickAt) best = i;
+        return (best, LeadSource.Newest, true);
+    }
+
+    /// <summary>取长机节点（不需要知道来源时用这个）。</summary>
+    public bool TryGetLeadNode(out LinkNode lead) => TryGetLeadNode(out lead, out _, out _);
+
+    /// <summary>取长机的目标坡度（长机转向辅助广播）。认不出长机或对方没发 → false。</summary>
+    public bool TryGetPartnerTargetBank(out double bankDeg)
+    {
+        bankDeg = 0;
+        if (!TryGetLeadNode(out var lead)) return false;
+        if (lead.TargetBankDeg is not double b) return false;
+        bankDeg = b;
+        return true;
     }
 
     public bool TryGetPartnerAltitude(out int altM, out double vyMs)
         => TryGetPartnerAltitude(out altM, out vyMs, out _);
 
-    /// <summary>取最新在线节点的高度，并给出这个包的年龄（秒）。上层用它判断「新鲜」还是「保留值」。</summary>
+    /// <summary>取长机高度，并给出这个包的年龄（秒）。上层用它判断「新鲜」还是「保留值」。</summary>
     public bool TryGetPartnerAltitude(out int altM, out double vyMs, out double ageS)
     {
-        ageS = 0;
-        long now = Environment.TickCount64;
         altM = 0;
         vyMs = 0;
-
-        lock (_lock)
-        {
-            Remote? best = null;
-            foreach (var node in _nodes.Values)
-            {
-                if (now - node.TickAt >= StaleMs) continue;
-                if (best == null || node.TickAt > best.TickAt) best = node;
-            }
-            if (best == null) return false;
-
-            altM = best.AltM;
-            vyMs = best.VyMs;
-            ageS = (now - best.TickAt) / 1000.0;
-            return true;
-        }
+        ageS = 0;
+        if (!TryGetLeadNode(out var lead)) return false;
+        altM = lead.AltM;
+        vyMs = lead.VyMs;
+        ageS = lead.AgeMs / 1000.0;
+        return true;
     }
 
     /// <summary>
-    /// 取最近最活跃的那个伙伴的转向率。返回 false 表示没有可用数据
-    /// （链路没开、对方没发、对方是老版本只发 4 段、或全超时了）。
+    /// 取长机的转向率。返回 false 表示没有可用数据（链路没开、对方没发、老版本只发 4 段）
+    /// **或者长机认不准**（多个候选退回最近活跃）。
+    /// <para>★ 认不准时必须返回 false：这个值直接进转弯前馈，认错人会让僚机往反方向补油门。</para>
     /// <para>转向率每 250 ms 才更新一次，调用方不要拿它做逐帧积分 —— 它是给前馈用的稳态量。</para>
     /// </summary>
     public bool TryGetPartnerTurnRate(out double degPerSec)
     {
-        long now = Environment.TickCount64;
         degPerSec = 0;
-
-        lock (_lock)
-        {
-            Remote? best = null;
-            foreach (var node in _nodes.Values)
-            {
-                if (now - node.TickAt >= StaleMs) continue;
-                if (node.TurnRateDeg == null) continue;
-                if (best == null || node.TickAt > best.TickAt) best = node;
-            }
-            if (best?.TurnRateDeg is not double rate) return false;
-
-            degPerSec = rate;
-            return true;
-        }
+        if (!TryGetLeadNode(out var lead, out var source, out bool ambiguous)) return false;
+        if (ambiguous && source == LeadSource.Newest) return false;
+        if (lead.TurnRateDeg is not double rate) return false;
+        degPerSec = rate;
+        return true;
     }
 
     /// <summary>
-    /// 取最近最活跃那个伙伴的航向（度）。返回 false 表示没有可用数据
-    /// （链路没开、对方没发、对方是老版本只发 4 段、或全超时了）。
-    /// <para>没有链路时上层用本机航向近似长机航向 —— 编队两机航向近似平行，实测差别不大。</para>
+    /// 取长机航向（度）。没有链路时上层用本机航向近似 —— 编队两机航向近似平行，实测差别不大。
     /// </summary>
     public bool TryGetPartnerHeading(out double headingDeg)
     {
-        long now = Environment.TickCount64;
         headingDeg = 0;
-
-        lock (_lock)
-        {
-            Remote? best = null;
-            foreach (var node in _nodes.Values)
-            {
-                if (now - node.TickAt >= StaleMs) continue;
-                if (node.HeadingDeg == null) continue;
-                if (best == null || node.TickAt > best.TickAt) best = node;
-            }
-            if (best?.HeadingDeg is not double hdg) return false;
-
-            headingDeg = hdg;
-            return true;
-        }
+        if (!TryGetLeadNode(out var lead)) return false;
+        if (lead.HeadingDeg is not double hdg) return false;
+        headingDeg = hdg;
+        return true;
     }
+
+    /// <summary>在线节点列表，按包龄从新到旧。面板用它显示「谁在线、谁的包在掉」。</summary>
+    public LinkNode[] OnlineNodes()
+        => Snapshot().OrderBy(n => n.AgeMs).ToArray();
 
     /// <summary>端口是否绑成功。false = 被防火墙/其它进程占了，功能等于没开数据链。</summary>
     public bool Listening => _running && _socket != null;
@@ -304,24 +400,36 @@ internal sealed class DataLink : IDisposable
         if (_running) return;
         try
         {
-            _socket = new UdpClient(new IPEndPoint(IPAddress.Any, Port))
-            {
-                EnableBroadcast = true,
-            };
+            // 双栈：一个套接字同时收 IPv4 和 IPv6。IPv6 直连（两边宽带都有 v6）时不需要任何
+            // 组网软件；没有 v6 的环境里，v4 走 v4-mapped 地址，行为和以前完全一样。
+            _socket = new UdpClient(AddressFamily.InterNetworkV6);
+            _socket.Client.DualMode = true;
+            _socket.Client.EnableBroadcast = true;
             // 收到自己发的广播时不要回环进队列（同一台机器多实例的保险）
             _socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            _running = true;
-
-            _rx = new Thread(ReceiveLoop) { IsBackground = true, Name = "WtHud-DataLink" };
-            _rx.Start();
+            _socket.Client.Bind(new IPEndPoint(IPAddress.IPv6Any, Port));
         }
         catch
         {
-            // 端口被占或被防火墙挡：静默降级，功能等同于没开数据链
-            _socket?.Dispose();
-            _socket = null;
-            _running = false;
+            // 系统禁用了 IPv6（或组策略关掉双栈）时退回纯 v4 —— 老机器不该因为这条起不来
+            try
+            {
+                _socket?.Dispose();
+                _socket = new UdpClient(new IPEndPoint(IPAddress.Any, Port)) { EnableBroadcast = true };
+            }
+            catch
+            {
+                // 端口被占或被防火墙挡：静默降级，功能等同于没开数据链
+                _socket?.Dispose();
+                _socket = null;
+                _running = false;
+                return;
+            }
         }
+
+        _running = true;
+        _rx = new Thread(ReceiveLoop) { IsBackground = true, Name = "WtHud-DataLink" };
+        _rx.Start();
     }
 
     /// <summary>
@@ -353,18 +461,27 @@ internal sealed class DataLink : IDisposable
     /// 新读端遇到 8 段报文就把目标坡度当未知。</para>
     /// </summary>
     internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
-                                        double? xn, double? yn, double? targetBankDeg)
+                                        double? xn, double? yn, double? targetBankDeg,
+                                        LinkRole role = LinkRole.Unknown)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         if (xn is not double x || yn is not double y) return head;   // 坐标未知 → 仍是 6 段
 
         int ix = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * CoordinateScale);
         int iy = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * CoordinateScale);
-        if (targetBankDeg is not double bank)
-            return $"{head}|{ix}|{iy}";
 
-        int ib = (int)Math.Round(Math.Clamp(bank, -90.0, 90.0) * 10.0);
-        return $"{head}|{ix}|{iy}|{ib}";
+        string tail = $"{head}|{ix}|{iy}";
+        if (targetBankDeg is double bank)
+            tail += "|" + (int)Math.Round(Math.Clamp(bank, -90.0, 90.0) * 10.0);
+        // ★ 第 10 段（角色）只在坐标存在时追加：坐标那两段是配对用的，缺了它整包已经不可用，
+        //   再塞个 role 只会让报文更难读。role=Unknown 时不追加以保持与旧版完全一致的 9 段。
+        if (role != LinkRole.Unknown)
+        {
+            // 坡度段缺失时用空段占位，保证 role 永远落在第 10 段 —— 解析端按位置取值
+            if (targetBankDeg is not double) tail += "|";
+            tail += "|" + (int)role;
+        }
+        return tail;
     }
 
     /// <summary>归一化坐标的整数倍率：0..1 → 0..100000。</summary>
@@ -398,8 +515,17 @@ internal sealed class DataLink : IDisposable
     internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
                                          out double? turnRateDeg, out double? headingDeg,
                                          out double? xn, out double? yn, out double? targetBankDeg)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out xn, out yn, out targetBankDeg, out _);
+
+    /// <summary>解析一行报文（含角色段）。<paramref name="role"/> 为 Unknown 表示对方是老版本。</summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn, out double? targetBankDeg,
+                                         out LinkRole role)
     {
         targetBankDeg = null;
+        role = LinkRole.Unknown;
         selfId = 0;
         altM = 0;
         vyMs = 0;
@@ -408,9 +534,12 @@ internal sealed class DataLink : IDisposable
         xn = null;
         yn = null;
 
-        var parts = text.Split('|');
+        // 首尾的空白 / BOM 不该让整包作废：手工用 echo 或脚本造包时很容易带进来
+        var parts = text.Trim().Trim('\uFEFF').Split('|');
         if (parts.Length < 4 || parts[0] != "WTDL2") return false;
         if (!int.TryParse(parts[1], out selfId)) return false;
+        // ID 是 6 位随机数，越界的一律当坏包：它会被当成节点键，脏值会污染整个节点表
+        if (selfId < 1 || selfId > 999_999) return false;
         if (!int.TryParse(parts[2], out altM)) return false;
         if (!int.TryParse(parts[3], out int vyTenths)) return false;
         vyMs = vyTenths / 10.0;
@@ -439,6 +568,11 @@ internal sealed class DataLink : IDisposable
             && bankTenths >= -900 && bankTenths <= 900)
             targetBankDeg = bankTenths / 10.0;
 
+        // 角色（第 10 段）：0/1/2。老版本只有 9 段 → Unknown，选择逻辑退回「最近活跃」。
+        if (parts.Length >= 10 && int.TryParse(parts[9], out int roleVal)
+            && roleVal >= 0 && roleVal <= 2)
+            role = (LinkRole)roleVal;
+
         return true;
     }
 
@@ -448,7 +582,8 @@ internal sealed class DataLink : IDisposable
     /// <param name="xn">自己的归一化位置（0..1）。null = 这一帧地图还没有自己的图标，不发坐标。</param>
     /// <param name="yn">同上，y 轴。</param>
     public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg,
-                     double? xn = null, double? yn = null, double? targetBankDeg = null)
+                     double? xn = null, double? yn = null, double? targetBankDeg = null,
+                     LinkRole role = LinkRole.Unknown)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -462,13 +597,13 @@ internal sealed class DataLink : IDisposable
 
         try
         {
-            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg);
+            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg, role);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
                 try
                 {
-                    _socket.Send(bytes, bytes.Length, ep);
+                    _socket.Send(bytes, bytes.Length, ForSocket(ep, _socket.Client));
                     Interlocked.Increment(ref _txCount);
                 }
                 catch
@@ -482,6 +617,16 @@ internal sealed class DataLink : IDisposable
             // 单次发送失败无所谓，下一帧会重试
         }
     }
+
+    /// <summary>v4 端点要映射成 v4-mapped v6，双栈套接字才肯发；v6 端点原样。</summary>
+    private static IPEndPoint ForSocket(IPEndPoint ep, Socket socket)
+        => socket.AddressFamily == AddressFamily.InterNetworkV6 && ep.AddressFamily == AddressFamily.InterNetwork
+            ? new IPEndPoint(ep.Address.MapToIPv6(), ep.Port)
+            : ep;
+
+    /// <summary>显示与回调里把 v4-mapped 还原成 v4，日志里才不会出现 ::ffff:192.168.1.7。</summary>
+    private static IPEndPoint Unmap(IPEndPoint ep)
+        => ep.Address.IsIPv4MappedToIPv6 ? new IPEndPoint(ep.Address.MapToIPv4(), ep.Port) : ep;
 
     private void ReceiveLoop()
     {
@@ -504,8 +649,16 @@ internal sealed class DataLink : IDisposable
     private void Parse(byte[] data, IPEndPoint from)
     {
         Interlocked.Increment(ref _rxCount);
-        LastPeer = from.ToString();
+        LastPeer = Unmap(from).ToString();
         LastRxTick = Environment.TickCount64;
+
+        // 正常报文 50 字节上下，超过 256 只可能是畸形包或别的协议串进来了 ——
+        // 先挡掉再解码，免得一个超长包让 Split 分配一堆无用的字符串。
+        if (data.Length > MaxPayloadBytes)
+        {
+            Interlocked.Increment(ref _rxBad);
+            return;
+        }
 
         string text;
         try { text = Encoding.ASCII.GetString(data); }
@@ -513,7 +666,8 @@ internal sealed class DataLink : IDisposable
 
         if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
                              out double? turnRate, out double? heading,
-                             out double? xn, out double? yn, out double? targetBank))
+                             out double? xn, out double? yn, out double? targetBank,
+                             out LinkRole role))
         {
             Interlocked.Increment(ref _rxBad);
             return;
@@ -543,13 +697,14 @@ internal sealed class DataLink : IDisposable
             node.Xn = xn;
             node.Yn = yn;
             node.TargetBankDeg = targetBank;
+            node.Role = role;
             node.TickAt = Environment.TickCount64;
             node.Packets++;
         }
 
         if (PacketCallback is { } cb)
         {
-            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank), from.ToString()); }
+            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank, role), Unmap(from).ToString()); }
             catch { /* 调试回调不能影响接收 */ }
         }
     }

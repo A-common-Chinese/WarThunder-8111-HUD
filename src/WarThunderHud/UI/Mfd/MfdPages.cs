@@ -574,6 +574,14 @@ internal static class MfdPages
             Info("row.dataLinkPeerNow", _ => WtHud.Program.DataLinkPeerText()),
             Info("row.dataLinkId", c => c.DataLinkId == 0 ? "-" : c.DataLinkId.ToString(),
                  c => c.DataLinkEnabled),
+            // 本机角色：由「长机模式」推导，写进每一包，僚机端靠它认出谁是长机
+            Info("row.dataLinkRole", c => WtHud.UI.L10n.Get(LangScope.Panel,
+                     c.LeadMode ? "val.roleLead" : "val.roleWing"), c => c.DataLinkEnabled),
+            // 长机节点 ID：0 = 自动（唯一 role=1 → 单节点 → 最近活跃）
+            Number("row.dataLinkLeadId", c => c.DataLinkLeadId,
+                   (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
+                   1, 0, 999999, ""),
+            Info("row.dataLinkNodes", _ => WtHud.Program.DataLinkNodeText(), c => c.DataLinkEnabled),
             Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkPort", _ => "48017 / UDP"),
             Info("row.dataLinkDesc", _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc")),

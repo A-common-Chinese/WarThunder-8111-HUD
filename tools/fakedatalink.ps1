@@ -21,6 +21,8 @@ param(
     [double]$RateHz = 4,
     [ValidateSet("circle", "fixed")][string]$Mode = "circle",
     [double]$Seconds = 0,
+    # 编队角色：0 = 不发（旧格式 8 段），1 = 长机，2 = 僚机（第 10 段）
+    [ValidateRange(0, 2)][int]$Role = 0,
     [switch]$Quiet
 )
 
@@ -42,7 +44,8 @@ $udp.EnableBroadcast = $true
 
 if (-not $Quiet) {
     Write-Host "fakedatalink: id=$Id  -> $ipText`:$port  mode=$Mode  rate=${RateHz}Hz " -NoNewline
-    if ($Seconds -gt 0) { Write-Host " for ${Seconds}s" } else { Write-Host " (Ctrl+C to stop)" }
+    Write-Host " role=$Role"
+    if ($Seconds -gt 0) { Write-Host "  for ${Seconds}s" } else { Write-Host "  (Ctrl+C to stop)" }
 }
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -89,6 +92,10 @@ while ($true) {
     $turnTenths = [int][Math]::Round($turn * 10)
 
     $payload = "WTDL2|$Id|$alt|$vyTenths|$hdgInt|$turnTenths|$ix|$iy"
+    if ($Role -gt 0) {
+        # 第 9 段（坡度）留空占位，角色必须落在第 10 段 —— 和 HUD 的拼法保持一致
+        $payload += "||$Role"
+    }
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($payload)
 
     try {
