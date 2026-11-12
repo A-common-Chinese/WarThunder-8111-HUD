@@ -130,6 +130,9 @@ internal sealed class MfdItemsPage : MfdPageBase
                 Text = () => L10n.Get(LangScope.Screen, item.LabelKey),
                 Target = MfdCommand.Of("items.select", idx.ToString(), InputSource.RealButton),
                 ActivateBy = new[] { "SIDE" + cell },
+                // 联动（B 只在 A 开启时可用）：不可用时 Command() 直接返回 null，
+                // 键盘/鼠标/侧键三条路径一起失效，不需要各写一遍判断。
+                Enabled = item.EnabledWhen is null ? null : () => item.IsEnabled(_cfg()),
             });
         }
     }
@@ -167,21 +170,28 @@ internal sealed class MfdItemsPage : MfdPageBase
                 using var hi = new SolidBrush(MfdTheme.Green);
                 g.FillRectangle(hi, x - 6 * s, y, colW + 12 * s, rowH);
             }
-            var fg = selected ? MfdTheme.Dark : MfdTheme.Text;
-            using var fgBrush = new SolidBrush(fg);
 
             var itemIndex = offset + i;
-            if (itemIndex < _data.Items.Count)
+            var item = itemIndex < _data.Items.Count ? _data.Items[itemIndex] : null;
+            bool enabled = item?.IsEnabled(cfg) ?? true;
+
+            // 不可用 → 文字变灰。选中行是绿底，灰字在上面看不清，所以选中时仍用深色，
+            // 靠右侧的值（DisabledText，比如「需开启数据链」）说明为什么不能动。
+            var fg = selected ? MfdTheme.Dark : enabled ? MfdTheme.Text : MfdTheme.Muted;
+            using var fgBrush = new SolidBrush(fg);
+
+            if (item is not null)
             {
-                var item = _data.Items[itemIndex];
                 if (i % 2 == 0)
                 {
-                    using var mark = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Green);
+                    using var mark = new SolidBrush(selected ? MfdTheme.Dark
+                                                    : enabled ? MfdTheme.Green : MfdTheme.Muted);
                     g.FillRectangle(mark, x, y + rowH / 2 - 5 * s, 9 * s, 9 * s);
                 }
                 g.DrawString(L10n.Get(LangScope.Screen, item.LabelKey), label, fgBrush,
                              x + 16 * s, y + 4 * s, StringFormat.GenericTypographic);
-                var val = item.ValueText(cfg);
+                var val = enabled ? item.ValueText(cfg)
+                                  : item.DisabledText?.Invoke(cfg) ?? item.ValueText(cfg);
                 var vw = g.MeasureString(val, value).Width;
                 g.DrawString(val, value, fgBrush, x + colW - vw, y + 6 * s, StringFormat.GenericTypographic);
             }

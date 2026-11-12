@@ -1073,6 +1073,14 @@ public sealed class MfdFrameForm : Form
 
     private void Activate(MfdItem item)
     {
+        // 联动项不可用：在这里统一拦住所有 Kind（含会开子页的那些）。
+        // MfdItemsPage 的按钮 Enabled 只覆盖鼠标/侧键，键盘确认走的是这条路径。
+        if (!item.IsEnabled(_work))
+        {
+            _toast = item.DisabledText?.Invoke(_work) ?? L10n.Get(LangScope.Screen, "hint.unavailable");
+            return;
+        }
+
         // 打开击落播报但没填昵称 → 提示先填，避免「开了却没反应」
         if (item.LabelKey == "row.splashEnabled"
             && item.GetBool?.Invoke(_work) == false

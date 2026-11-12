@@ -183,6 +183,7 @@ public static class L10n
         ["row.dataLinkOn"] = ("使用数据互联", "USE DATA LINK"),
         ["row.dataLinkPeer"] = ("对端地址", "PEER ADDR"),
         ["row.dataLinkPeerNow"] = ("发送目标", "TARGETS"),
+        ["hint.unavailable"] = ("当前不可用", "UNAVAILABLE"),
         ["row.dataLinkId"] = ("节点 ID", "NODE ID"),
         ["row.dataLinkState"] = ("链路状态", "LINK STATE"),
         ["row.dataLinkPort"] = ("端口", "PORT"),

@@ -48,6 +48,19 @@ internal sealed class MfdItem
     public Func<HudConfig, int>? GetChoice { get; init; }
     public Action<HudConfig, int>? SetChoice { get; init; }
 
+    /// <summary>
+    /// 何时可用（null = 永远可用）。联动用：B 只在 A 开启时可用。
+    /// <para>★ 必须是 Func 而不是 bool：同页里切了 A 之后 B 要立刻变，
+    /// bool 只在 Build() 时算一次就固化了。</para>
+    /// </summary>
+    public Func<HudConfig, bool>? EnabledWhen { get; init; }
+
+    /// <summary>不可用时右侧显示的文本（替掉 ValueText）。null = 只把整行变灰，不解释原因。</summary>
+    public Func<HudConfig, string>? DisabledText { get; init; }
+
+    /// <summary>当前是否可用。绘制与命令分派都从这里取，避免两处判断不一致。</summary>
+    public bool IsEnabled(HudConfig cfg) => EnabledWhen?.Invoke(cfg) ?? true;
+
     public string ValueText(HudConfig cfg)
     {
         switch (Kind)
@@ -84,6 +97,9 @@ internal sealed class MfdItem
     /// <summary>direction = +1 for left click / CONFIRM, -1 for right click / SHIFT.</summary>
     public void Activate(HudConfig cfg, int direction = 1)
     {
+        // 联动项不可用时，左右步进也要一起失效（按钮层只拦住鼠标/侧键）
+        if (!IsEnabled(cfg)) return;
+
         switch (Kind)
         {
             case ItemKind.Toggle:
@@ -130,30 +146,39 @@ internal static class MfdPages
         Airframes(), Diag(), Snapshots(),
     };
 
-    private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set) =>
-        new() { LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set };
+    private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set,
+                                  Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set, EnabledWhen = enabledWhen };
 
     private static MfdItem Number(string label, Func<HudConfig, double> get, Action<HudConfig, double> set,
-        double step, double min, double max, string unit = "") =>
+        double step, double min, double max, string unit = "", Func<HudConfig, bool>? enabledWhen = null) =>
         new()
         {
             LabelKey = label, Kind = ItemKind.Number, GetNumber = get, SetNumber = set,
-            Step = step, Min = min, Max = max, Unit = unit,
+            Step = step, Min = min, Max = max, Unit = unit, EnabledWhen = enabledWhen,
         };
 
-    private static MfdItem Action(string label, Action<HudConfig> run) =>
-        new() { LabelKey = label, Kind = ItemKind.Action, Run = run };
+    private static MfdItem Action(string label, Action<HudConfig> run,
+                                  Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, EnabledWhen = enabledWhen };
 
     /// <summary>直接执行的动作，并在执行后显示一条提示（例如导入结果）。</summary>
-    private static MfdItem ActionDirectMsg(string label, Action<HudConfig> run, Func<HudConfig, string?> toast) =>
-        new() { LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true, ToastAfterRun = toast };
+    private static MfdItem ActionDirectMsg(string label, Action<HudConfig> run, Func<HudConfig, string?> toast,
+                                           Func<HudConfig, bool>? enabledWhen = null) =>
+        new()
+        {
+            LabelKey = label, Kind = ItemKind.Action, Run = run, Direct = true,
+            ToastAfterRun = toast, EnabledWhen = enabledWhen,
+        };
 
-    private static MfdItem Info(string label, Func<HudConfig, string> text) =>
-        new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text };
+    private static MfdItem Info(string label, Func<HudConfig, string> text,
+                                Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text, EnabledWhen = enabledWhen };
 
 
-    private static MfdItem PresetRow(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
-        new() { LabelKey = label, Kind = ItemKind.Preset, GetPreset = get, SetPreset = set };
+    private static MfdItem PresetRow(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
+                                     Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Preset, GetPreset = get, SetPreset = set, EnabledWhen = enabledWhen };
 
     private static MfdItem Airframe(string id) =>
         new()
@@ -168,17 +193,25 @@ internal static class MfdPages
             },
         };
 
-    private static MfdItem Preset(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
-        new() { LabelKey = label, Kind = ItemKind.Preset, GetPreset = get, SetPreset = set };
+    private static MfdItem Preset(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
+                                  Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Preset, GetPreset = get, SetPreset = set, EnabledWhen = enabledWhen };
 
-    private static MfdItem Key(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
-        new() { LabelKey = label, Kind = ItemKind.KeyBinding, GetText = get, SetText2 = set };
+    private static MfdItem Key(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
+                               Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.KeyBinding, GetText = get, SetText2 = set, EnabledWhen = enabledWhen };
 
-    private static MfdItem Text(string label, Func<HudConfig, string> get, Action<HudConfig, string> set) =>
-        new() { LabelKey = label, Kind = ItemKind.Text, GetText = get, SetText2 = set };
+    private static MfdItem Text(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
+                                Func<HudConfig, bool>? enabledWhen = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Text, GetText = get, SetText2 = set, EnabledWhen = enabledWhen };
 
-    private static MfdItem Enum(string label, string[] choices, Func<HudConfig, int> get, Action<HudConfig, int> set) =>
-        new() { LabelKey = label, Kind = ItemKind.Enum, Choices = choices, GetChoice = get, SetChoice = set };
+    private static MfdItem Enum(string label, string[] choices, Func<HudConfig, int> get, Action<HudConfig, int> set,
+                                Func<HudConfig, bool>? enabledWhen = null) =>
+        new()
+        {
+            LabelKey = label, Kind = ItemKind.Enum, Choices = choices,
+            GetChoice = get, SetChoice = set, EnabledWhen = enabledWhen,
+        };
 
     private static MfdPage Display() => new()
     {
@@ -449,26 +482,11 @@ internal static class MfdPages
                     WtHud.Program.ApplyDataLinkPeers(c);
                 }),
             Info("row.dataLinkPeerNow", _ => WtHud.Program.DataLinkPeerText()),
-            new MfdItem
-            {
-                LabelKey = "row.dataLinkId", Kind = ItemKind.ReadOnly,
-                GetText = c => c.DataLinkId == 0 ? "-" : c.DataLinkId.ToString(),
-            },
-            new MfdItem
-            {
-                LabelKey = "row.dataLinkState", Kind = ItemKind.ReadOnly,
-                GetText = _ => WtHud.Program.DataLinkStatusText(),
-            },
-            new MfdItem
-            {
-                LabelKey = "row.dataLinkPort", Kind = ItemKind.ReadOnly,
-                GetText = _ => "48017 / UDP",
-            },
-            new MfdItem
-            {
-                LabelKey = "row.dataLinkDesc", Kind = ItemKind.ReadOnly,
-                GetText = _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc"),
-            },
+            Info("row.dataLinkId", c => c.DataLinkId == 0 ? "-" : c.DataLinkId.ToString(),
+                 c => c.DataLinkEnabled),
+            Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
+            Info("row.dataLinkPort", _ => "48017 / UDP"),
+            Info("row.dataLinkDesc", _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc")),
         },
     };
 

@@ -337,6 +337,33 @@ public static class Program
         Check("side slot rejects SIDEX", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot("SIDEX", out _));
         Check("side slot rejects null", !WtHud.UI.Mfd.Controls.MfdInputRouter.TryParseSideSlot(null, out _));
 
+        // ---- 行级联动：EnabledWhen 每次求值，不可用时激活路径全部无效 ----
+        var gateCfg = new HudConfig { DataLinkEnabled = false };
+        var gatedRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "gated",
+            Kind = WtHud.UI.Mfd.ItemKind.Toggle,
+            GetBool = c => c.DataLinkEnabled,
+            SetBool = (c, v) => c.DataLinkEnabled = v,
+            EnabledWhen = c => c.DataLinkEnabled,
+        };
+        Check("gated row off while feature off", !gatedRow.IsEnabled(gateCfg));
+        gateCfg.DataLinkEnabled = true;
+        Check("gated row live once feature on", gatedRow.IsEnabled(gateCfg));
+
+        var blockedRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "blocked",
+            Kind = WtHud.UI.Mfd.ItemKind.Toggle,
+            GetBool = c => c.DataLinkEnabled,
+            SetBool = (c, v) => c.DataLinkEnabled = v,
+            EnabledWhen = _ => false,
+        };
+        blockedRow.Activate(gateCfg);
+        Check("disabled row ignores activate", gateCfg.DataLinkEnabled);
+        Check("row without gate stays enabled",
+            new WtHud.UI.Mfd.MfdItem { LabelKey = "plain" }.IsEnabled(gateCfg));
+
         // ---- 节点 ↔ 地图友机配对：给每架友机各自的高度 ----
         var twoNodes = new[]
         {
