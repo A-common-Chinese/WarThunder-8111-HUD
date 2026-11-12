@@ -524,9 +524,9 @@ internal static class MfdPages
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
             Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
             // ---- 状态机判定与保持死区（改站位时这几个要跟着看） ----
-            Number("row.fDoneM", c => c.FormationDoneM, (c, v) => c.FormationDoneM = v, 5, 10, 200, "m"),
+            Number("row.fDonePct", c => c.FormationDonePct, (c, v) => c.FormationDonePct = v, 1, 1, 50, "%"),
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),
-            Number("row.fDropM", c => c.FormationDropM, (c, v) => c.FormationDropM = v, 10, 50, 500, "m"),
+            Number("row.fDropPct", c => c.FormationDropPct, (c, v) => c.FormationDropPct = v, 5, 5, 100, "%"),
             Number("row.fSteadyDeg", c => c.FormationSteadyDeg, (c, v) => c.FormationSteadyDeg = v, 0.5, 0, 20, "°"),
             Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h"),
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头

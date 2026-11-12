@@ -139,6 +139,9 @@ public sealed class HudOptions
     /// <summary>长机转向辅助：有值就画坡度横带（只有长机模式会设它）。</summary>
     public TurnAssistCue? TurnAssist { get; set; }
 
+    /// <summary>数据链收到的长机目标坡度（僚机侧）。有值就在航向带下面报一行「长机 R54°」。</summary>
+    public double? LeadTargetBankDeg { get; set; }
+
     /// <summary>
     /// 编队引导的提示行：找不到长机时说明原因是哪一种。空 = 不画。
     /// <para>没有它的话，条件不满足时界面上一个像素都不会变，飞行员只能猜是功能坏了还是设置错了。</para>
@@ -776,6 +779,21 @@ public sealed class HudGeometry
                 AddTurnAssistBand(prims, cx, cy - 7.6 * pxDeg, pxDeg, fontSmall, ta);
 
             return;
+        }
+
+        // 数据链收到的长机目标坡度：一行小字，证明广播真的到了。
+        // 位置与长机自己的坡度横带同高（−7.6°），两种角色切换时视线不用重新找。
+        if (_opt.LeadTargetBankDeg is double leadBank)
+        {
+            string bankDir = leadBank >= 0 ? "R" : "L";
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text,
+                Text = string.Format(L10n.Get(LangScope.Alerts, "guide.leadBank"), bankDir,
+                                     Math.Abs(leadBank).ToString("0")),
+                Align = HudAlign.Center, FontSize = fontSmall, Color = _opt.WarnColor,
+                Points = { (cx, cy - 7.6 * pxDeg) },
+            });
         }
 
         // ---- 找不到长机：说明是哪一种，别让飞行员对着空屏猜 ----

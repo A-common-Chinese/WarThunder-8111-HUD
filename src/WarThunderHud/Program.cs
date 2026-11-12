@@ -259,6 +259,13 @@ public static class Program
                                                      out _, out _, out double? bankBad)
             && bankBad is null);
 
+        // ---- 到位判定改百分比：同一套门限在 400 m 与 1545 m 的槽位上都成立 ----
+        Check("range error pct at 10 percent", Math.Abs(FormationRangeErrorPct(440, 400) - 10.0) < 1e-9);
+        Check("range error pct symmetric", Math.Abs(FormationRangeErrorPct(360, 400) - 10.0) < 1e-9);
+        Check("range error pct scales with slot",
+            Math.Abs(FormationRangeErrorPct(1545 * 1.1, 1545) - 10.0) < 1e-9);
+        Check("range error pct guards zero target", FormationRangeErrorPct(500, 0) == 0);
+
         Check("turn assist off stays off",
             AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
         st = new TurnAssistState(TurnAssistStage.Arming, 0, -1);
@@ -2645,6 +2652,12 @@ public static class Program
 
             // ================= 长机模式 =================
             // 长机不追人：只看自己有没有在设定航向 / 设定马赫上，僚机只当"状态"报，不给数字。
+            // 数据链上长机的目标坡度：僚机侧显示一行，用来确认广播生效。
+            // 长机自己收不到（对端才有这个值），所以这里不需要区分角色。
+            opt.LeadTargetBankDeg = dataLink is { } dl && dl.TryGetPartnerTargetBank(out double partnerBank)
+                ? partnerBank
+                : (double?)null;
+
             if (cfg.LeadMode)
             {
                 opt.Guide = null;
@@ -3650,14 +3663,22 @@ public static class Program
     /// <para>到位线 40 m、需持续 2 s：40 m 比 sim 里的 60 m 更严，因为「编队完成」是给长机的承诺，
     /// 一旦显示他就会开始机动。</para>
     /// </summary>
+    /// <summary>
+    /// 距离误差，按槽位斜距的百分比。抽成纯函数为了能断言百分比换算。
+    /// <para>目标距离 ≤ 1 m 时返回 0：地面/静止时站位没有意义，不要因为除零跳到 100%。</para>
+    /// </summary>
+    internal static double FormationRangeErrorPct(double rangeM, double targetM)
+        => targetM <= 1.0 ? 0.0 : Math.Abs(rangeM - targetM) / targetM * 100.0;
+
     private static void UpdateFormationStage(double rangeM, double nowS, HudConfig cfg)
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        double err = Math.Abs(rangeM - WtHud.Hud.FormationGeometry.Current(cfg).RangeM);
+        // 按槽位斜距的百分比判定：同一套松紧在 400 m 和 1545 m 的槽位上都成立
+        double err = FormationRangeErrorPct(rangeM, WtHud.Hud.FormationGeometry.Current(cfg).RangeM);
         if (formationStage == FormationStage.Converge)
         {
-            if (err <= cfg.FormationDoneM)
+            if (err <= cfg.FormationDonePct)
             {
                 if (formationDoneSince < 0) formationDoneSince = nowS;
                 else if (nowS - formationDoneSince >= Math.Max(0.1, cfg.FormationDoneHoldS))
@@ -3670,7 +3691,7 @@ public static class Program
             }
             else formationDoneSince = -1;
         }
-        else if (formationStage == FormationStage.Maintain && err > cfg.FormationDropM)
+        else if (formationStage == FormationStage.Maintain && err > cfg.FormationDropPct)
         {
             formationStage = FormationStage.Converge;
             formationStageSince = nowS;
@@ -4038,6 +4059,11 @@ public static class Program
                 opt.Guide = new FormationLead(12, 820, pcfg.FormationRangeM, FormationAction.Decelerate, -90,
                                               0, false, 0, false, 640);
             }
+
+            // 数据链目标坡度样张：WT_PREVIEW_LEADBANK="54"（僚机侧那行「长机 R54°」）
+            if (double.TryParse(Environment.GetEnvironmentVariable("WT_PREVIEW_LEADBANK"),
+                                NumberStyles.Any, CultureInfo.InvariantCulture, out double previewBank))
+                opt.LeadTargetBankDeg = previewBank;
 
             // 高度差样张：WT_PREVIEW_ALTD="120"（正 = 对方高）
             var altSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_ALTD");
