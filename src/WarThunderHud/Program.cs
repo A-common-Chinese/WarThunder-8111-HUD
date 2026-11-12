@@ -710,6 +710,25 @@ public static class Program
         Check("lead friendly survives empty pair",
             LeadFriendlyIndex(Array.Empty<int?>(), 0, 2) == 2);
 
+        // ---- 8111 健康度：四种组合必须分得开，否则「请重启游戏」会误报 ----
+        Check("api ok when everything present",
+            ClassifyApiHealth(true, true, true, true) == ApiHealth.Ok);
+        Check("api not-in-battle when state dead",
+            ClassifyApiHealth(false, false, false, false) == ApiHealth.NotInBattle);
+        // 机库里 state 是 valid、indicators 与 map 都空 —— 这是正常状态，不能喊重启
+        Check("api hangar is not a fault",
+            ClassifyApiHealth(true, false, false, false) == ApiHealth.NotInBattle);
+        Check("api half-ready when flying with both empty",
+            ClassifyApiHealth(true, true, false, false) == ApiHealth.HalfReady);
+        Check("api airframe without avionics is not half-ready",
+            ClassifyApiHealth(true, true, false, true) == ApiHealth.NoIndicatorsOnly);
+        Check("api missing map only",
+            ClassifyApiHealth(true, true, true, false) == ApiHealth.NoMapOnly);
+        Check("api text mentions restart",
+            ApiHealthText(ApiHealth.HalfReady).Contains("restart"));
+        Check("api zh is readable",
+            ApiHealthZh(ApiHealth.HalfReady).Contains("重启"));
+
         // ---- 长机航向来源：有链路用自报值，没有用本机航向近似 ----
         Check("lead heading prefers link", ResolveLeadHeading(275, 10) == 275);
         Check("lead heading falls back to own", ResolveLeadHeading(null, 10) == 10);
@@ -2762,6 +2781,11 @@ public static class Program
                     Console.WriteLine($"      fuel: flow={fuelFlow:F2} kg/s scale={cfg.EnduranceScale:F2} fuel={snap.FuelKg:F0} kg -> endurance={secs / 60}:{secs % 60:00}");
                 }
                 Console.WriteLine($"      map self={mapData.Self?.ToString() ?? "null"} size={mapData.MapSizeM.X:F0}x{mapData.MapSizeM.Y:F0} airfields={mapData.Airfields.Count}");
+                // 8111 半边服务检测：state 有、indicators 与 map 同时空 = 启动竞态，
+                // 只有重启游戏能恢复。这一行是给现场排查用的，出现就该知道别再猜解析器。
+                var health = UpdateApiHealth(latest, mapData.Self is not null);
+                Console.WriteLine($"      api={ApiHealthText(health)}  state={latest?.Caps.StateValid} ind={latest?.Caps.IndicatorsValid} " +
+                                  $"map={(mapData.Self is not null)}");
                 if (!string.IsNullOrEmpty(opt.GridText) || !string.IsNullOrEmpty(opt.NavFriendly) || !string.IsNullOrEmpty(opt.NavEnemy))
                     Console.WriteLine($"      nav({gridDebug}) grid={opt.GridText} friendly='{opt.NavFriendly}' enemy='{opt.NavEnemy}' edge={opt.EdgeWarning}");
             }
@@ -4314,6 +4338,86 @@ public static class Program
     /// </summary>
     private static double ResolveLeadHeading(double? linkedHeading, double ownHeading)
         => linkedHeading ?? ownHeading;
+
+    /// <summary>8111 那半边服务到底给了什么。面板与日志共用这一个判断。</summary>
+    internal enum ApiHealth
+    {
+        /// <summary>还没采到第一帧。</summary>
+        Unknown,
+        /// <summary>该有的都有。</summary>
+        Ok,
+        /// <summary>不在对局里（机库、主菜单、地面停机）。</summary>
+        NotInBattle,
+        /// <summary>★ 8111 只起来一半：state 正常，indicators 与 map_obj 同时空。重启游戏才恢复。</summary>
+        HalfReady,
+        /// <summary>地图正常、仪表为空 —— 该机型本来就不提供航空电子数据（2.59 的部分新机）。</summary>
+        NoIndicatorsOnly,
+        /// <summary>仪表正常、地图为空 —— 看得到姿态但看不到友机。</summary>
+        NoMapOnly,
+    }
+
+    /// <summary>
+    /// 判断 8111 的健康度。抽成纯函数是为了能在 selftest 里把四种组合都断言一遍。
+    /// <para>★ 只在**飞行中**判断：机库里 state 也是 valid，但 indicators/map_obj 本来就空，
+    /// 那不是故障。用 <paramref name="inFlight"/> 而不是「有没有数据」来分界。</para>
+    /// </summary>
+    internal static ApiHealth ClassifyApiHealth(bool stateValid, bool inFlight,
+                                                bool indicatorsValid, bool hasSelf)
+    {
+        if (!stateValid) return ApiHealth.NotInBattle;
+        if (!inFlight) return ApiHealth.NotInBattle;
+        if (!indicatorsValid && !hasSelf) return ApiHealth.HalfReady;
+        if (!indicatorsValid) return ApiHealth.NoIndicatorsOnly;
+        if (!hasSelf) return ApiHealth.NoMapOnly;
+        return ApiHealth.Ok;
+    }
+
+    /// <summary>健康度的一句话说明。给日志用英文、给面板用中文。</summary>
+    internal static string ApiHealthText(ApiHealth h) => h switch
+    {
+        ApiHealth.Ok => "ok",
+        ApiHealth.NotInBattle => "not in battle",
+        ApiHealth.HalfReady => "HALF-READY (8111 gave state but no indicators/map - restart the game)",
+        ApiHealth.NoIndicatorsOnly => "no indicators (this airframe has no avionics data)",
+        ApiHealth.NoMapOnly => "no map objects (attitude ok, no friendly positions)",
+        _ => "-",
+    };
+
+    /// <summary>面板上那一行中文。端用户看的是这个，不要塞英文错误码。</summary>
+    internal static string ApiHealthZh(ApiHealth h) => h switch
+    {
+        ApiHealth.Ok => "正常",
+        ApiHealth.NotInBattle => "不在对局",
+        ApiHealth.HalfReady => "未就绪·请重启游戏",
+        ApiHealth.NoIndicatorsOnly => "本机型无仪表",
+        ApiHealth.NoMapOnly => "无地图对象",
+        _ => "-",
+    };
+
+    private static ApiHealth lastApiHealth = ApiHealth.Unknown;
+
+    /// <summary>面板读这个，不用自己再算一遍。</summary>
+    internal static ApiHealth ApiHealthNow => lastApiHealth;
+
+    /// <summary>
+    /// 每帧调一次：只在**状态发生变化**时打日志，不在稳态刷屏。
+    /// 返回当前健康度，面板直接读。
+    /// </summary>
+    internal static ApiHealth UpdateApiHealth(TelemetrySnapshot? snap, bool hasSelf)
+    {
+        var h = snap is null
+            ? ApiHealth.Unknown
+            : ClassifyApiHealth(snap.Caps.StateValid, snap.InFlight,
+                                snap.Caps.IndicatorsValid, hasSelf);
+
+        if (h != lastApiHealth)
+        {
+            lastApiHealth = h;
+            // 只记录有意义的转变：Unknown->Ok 这种正常启动也记一行，方便对时间
+            Console.WriteLine($"api: {ApiHealthText(h)}");
+        }
+        return h;
+    }
 
     /// <summary>
     /// 本机在编队里的角色：面板上的「长机模式」开着就是长机，否则是僚机。

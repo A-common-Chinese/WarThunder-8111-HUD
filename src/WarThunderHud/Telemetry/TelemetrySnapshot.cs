@@ -18,8 +18,19 @@ public sealed class Capabilities
     public bool HasVariometer { get; init; }
     public int IndicatorKeyCount { get; init; }
 
+    /// <summary>/state 这一轮是否解得动。<c>false</c> 基本等于「游戏没在跑 / 不在对局」。</summary>
+    public bool StateValid { get; init; }
+
+    /// <summary>
+    /// /indicators 这一轮是否声称 valid。
+    /// <para>★ 它和 <see cref="StateValid"/> 分开记：两者一真一假正是「8111 只起来一半」的特征，
+    /// 合起来看才能和「机型不提供仪表」区分开。</para>
+    /// </summary>
+    public bool IndicatorsValid { get; init; }
+
     public override string ToString() =>
-        $"attitude={HasNativeAttitude} ammo={HasAmmo} fuelInd={HasFuelIndicator} altInd={HasAltimeterIndicator} vario={HasVariometer} keys={IndicatorKeyCount}";
+        $"attitude={HasNativeAttitude} ammo={HasAmmo} fuelInd={HasFuelIndicator} altInd={HasAltimeterIndicator} " +
+        $"vario={HasVariometer} keys={IndicatorKeyCount} state={StateValid} ind={IndicatorsValid}";
 }
 
 /// <summary>

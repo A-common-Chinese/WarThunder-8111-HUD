@@ -581,6 +581,7 @@ internal static class MfdPages
             Number("row.dataLinkLeadId", c => c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
                    1, 0, 999999, ""),
+            Info("row.apiHealth", _ => WtHud.Program.ApiHealthZh(WtHud.Program.ApiHealthNow)),
             Info("row.dataLinkNodes", _ => WtHud.Program.DataLinkNodeText(), c => c.DataLinkEnabled),
             Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkPort", _ => "48017 / UDP"),

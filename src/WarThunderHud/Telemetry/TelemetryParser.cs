@@ -108,6 +108,8 @@ public static class TelemetryParser
             HasAltimeterIndicator = hasAltInd,
             HasVariometer = hasVario,
             IndicatorKeyCount = indKeyCount,
+            StateValid = stateValid,
+            IndicatorsValid = indValid,
         };
 
         return new TelemetrySnapshot

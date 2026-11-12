@@ -187,6 +187,7 @@ public static class L10n
         ["row.dataLinkId"] = ("节点 ID", "NODE ID"),
         ["row.dataLinkRole"] = ("本机角色", "MY ROLE"),
         ["row.dataLinkLeadId"] = ("长机节点 ID", "LEAD NODE ID"),
+        ["row.apiHealth"] = ("接口状态", "API STATE"),
         ["row.dataLinkNodes"] = ("在线节点", "NODES"),
         ["row.dataLinkState"] = ("链路状态", "LINK STATE"),
         ["row.dataLinkPort"] = ("端口", "PORT"),
