@@ -144,7 +144,19 @@ public sealed class MapData : IDisposable
         // The game legitimately answers 200 with an empty body when it has no map data for the
         // current battle (some modes never expose it). Parsing that would throw and take the
         // grid poll down with it, so treat "no tokens" as "no data this cycle".
-        if (string.IsNullOrWhiteSpace(json)) return;
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            // ★ 空 body 多半是 8111 还没就绪、或者正在换局，不是"这局没有地图"。
+            //   旧实现在这里直接 return，Self / 友军 / 机场会**冻结在上一局的值**：
+            //   换图后长机把上一局的坐标发给僚机，僚机拿它去配这一局的友机，必然配错。
+            //   宁可让上层看到"没有位置"，也不要让它用错的位置 —— 前者只是没有圈，
+            //   后者是圈指向错误的方向，更难发现。
+            Self = null;
+            Friendlies.Clear();
+            FriendlyTotal = 0;
+            Airfields.Clear();
+            return;
+        }
 
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
