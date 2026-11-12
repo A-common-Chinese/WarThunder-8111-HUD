@@ -1310,20 +1310,24 @@ public sealed class HudGeometry
         AddBoxedText(prims, x - 0.6 * pxDeg, cy, shownKmh.ToString("0"), font, HudAlign.Right,
             overspeed ? _opt.DangerColor : col, line, pxDeg);
 
-        // 差值贴在**本机速度框**正下方：框里是「现在多少」，紧挨着的这行是「还差多少」。
+        // 差值贴在**本机速度框**正下方，按框的**左边缘**左对齐。
+        // ★ 原来右对齐到框的右边缘，数字紧贴速度带，会和刻度短横线挤在一起，
+        //   负号那一位也容易被带子压掉；左对齐后整行落在框下、远离带子。
         // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。
         if (targetKmh is double tgt2 && tgt2 > 1)
         {
             int dvShow = (int)(Math.Round((tgt2 - shownKmh) / 10.0) * 10);
             if (dvShow != 0)
             {
+                string curText = shownKmh.ToString("0");
+                double boxLeft = (x - 0.6 * pxDeg) - BoxWidthDeg(curText, font);
                 prims.Add(new HudPrim
                 {
                     Kind = HudPrimKind.Text,
                     Text = (dvShow > 0 ? "+" : "-") + Math.Abs(dvShow).ToString(),
-                    Align = HudAlign.Right, FontSize = fontSmall * 0.95,
+                    Align = HudAlign.Left, FontSize = fontSmall * 0.95,
                     Color = Fade(_opt.WarnColor, 0.9),
-                    Points = { (x - 0.6 * pxDeg, cy + 1.55 * pxDeg) },
+                    Points = { (boxLeft, cy + 1.55 * pxDeg) },
                 });
             }
         }
@@ -1951,10 +1955,17 @@ public sealed class HudGeometry
         });
     }
 
+    /// <summary>
+    /// 带框读数的框宽（像素口径与渲染器一致）。抽出来是因为「本机速度框下方的差值」
+    /// 必须知道框的左边缘在哪 —— 两处各写一份公式，改字号时必然错位。
+    /// </summary>
+    private double BoxWidthDeg(string text, double font)
+        => Math.Max(font * 2.0, TextWidthEm(text) * font + font * 0.35);
+
     private void AddBoxedText(List<HudPrim> prims, double x, double y, string text, double font, HudAlign align,
         HudColor color, double line, double pxDeg)
     {
-        double w = Math.Max(font * 2.0, TextWidthEm(text) * font + font * 0.35);
+        double w = BoxWidthDeg(text, font);
         double h = font * 1.45;
         double left = align == HudAlign.Right ? x - w : (align == HudAlign.Center ? x - w / 2 : x);
         double top = y - h / 2;
