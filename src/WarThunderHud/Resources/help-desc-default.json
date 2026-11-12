@@ -1,5 +1,5 @@
 {
-  "_version": 17,
+  "_version": 18,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -9,28 +9,28 @@
     "en": "Main menu: pick a module with the side keys, CONFIRM enters it; PAGE flips within a module."
   },
   "page.display": {
-    "zh": "显示设置：HUD 总开关、视场角、整体偏移、俯仰零点、光标洞、俯仰梯、飞行矢量，以及编队辅助 / 编队模式 / 长机模式。",
-    "en": "Display: HUD master switch, FoV, vertical offset, pitch zero, cursor hole, ladder, FPM, plus formation assist / formation-only / lead mode."
+    "zh": "显示设置：HUD 总开关、视场角、整体偏移、光标洞、俯仰梯、速度矢量，以及座舱 / 机头 / 地面三种自动隐藏条件。编队相关项已移到「编队」页。",
+    "en": "Display: HUD master switch, field of view, layout offset, cursor hole, pitch ladder, flight path marker, and the three auto-hide conditions (cockpit / nose / ground). Formation settings moved to the FORMATION page."
   },
   "page.camera": {
-    "zh": "视角与姿态：俯仰零点校准、俯仰梯显示、飞行矢量标记、坡度方向与微调、相机滚转耦合。",
-    "en": "Camera and attitude: pitch zero calibration, ladder, flight path marker, bank direction/trim, camera roll coupling."
+    "zh": "姿态与校准：俯仰零点、坡度方向与耦合、符号源，以及各校准动作（俯仰零位 / 坡度翻转 / 机体固连 / 状态复位 / 失速迎角）的触发键。俯仰梯与速度矢量不在这里，在「显示」页。",
+    "en": "Attitude and calibration: pitch zero, bank direction and coupling, symbol source, and the key that triggers each calibration action (pitch zero / bank flip / body-fixed / state reset / stall AoA). Pitch ladder and flight path marker live on DISPLAY, not here."
   },
   "page.alerts": {
     "zh": "告警设置：失速迎角、迎角告警阈值、极速判定方式与阈值、低油量时间、机场/边界告警距离。",
     "en": "Alerts: stall AoA, AoA warning, overspeed mode and limits, bingo time, airfield and map-edge warning ranges."
   },
   "page.keys": {
-    "zh": "按键设置：显示隐藏、视角、地图、保存、光标洞等按键；选中后按 CONFIRM 进入捕获页重新绑定。",
-    "en": "Keys: show/hide, view, map, save, cursor hole. Press CONFIRM on a row to capture a new combination."
+    "zh": "按键设置：显示隐藏、视角、地图、保存、光标洞等热键；选中后按 CONFIRM 进入捕获页重新绑定。校准动作的按键不在这里，在「姿态与校准」页。",
+    "en": "Key bindings: show/hide, view, map, save, cursor hole and the rest. CONFIRM opens live capture. Keys for calibration actions live on the ATTITUDE page."
   },
   "page.panel": {
-    "zh": "面板设置：文本颜色、高亮颜色（各 5 个预设）、拟真按键操作（开启后只能用实体按键）。",
-    "en": "Panel: text colour, accent colour (five presets each), key-only mode."
+    "zh": "面板设置：文本颜色、高亮颜色（各 5 个预设）、拟真按键操作，以及界面语言（外板 / 屏幕 / 告警三处可分别选中英文）。",
+    "en": "Panel: text colour, accent colour (5 presets each), realistic bezel keys, and interface language (panel / screen / alerts chosen separately)."
   },
   "page.language": {
-    "zh": "语言设置：外板丝印 / 屏幕内容 / HUD 告警三处可分别选择中英文。",
-    "en": "Language: bezel silkscreen, screen text and HUD alerts can each be Chinese or English."
+    "zh": "语言设置已并入「面板 / 语言」页。",
+    "en": "Language settings moved into the PANEL page."
   },
   "page.diag": {
     "zh": "诊断信息：各接口状态与延迟、机场数量、配置调试、更新检查与复制诊断文本。",
@@ -113,8 +113,8 @@
     "en": "Right-button aiming layout: tapes move outboard and the ladder drops while held."
   },
   "row.rollCouple": {
-    "zh": "相机滚转耦合：补偿第三人称相机旋转。",
-    "en": "Camera roll coupling: compensate the third-person camera rotation."
+    "zh": "坡度耦合：补偿第三人称相机随坡度产生的旋转。",
+    "en": "Bank coupling: compensates the third-person camera's roll as the aircraft banks."
   },
   "row.bankSign": {
     "zh": "坡度方向：翻转坡度指针左右方向。",
@@ -305,8 +305,8 @@
     "en": "Use data link: exchanges barometric altitude with another player on the same subnet (UDP broadcast at 4 Hz, altitude only, no positions). Off means planar data only. Windows Firewall may prompt once."
   },
   "page.datalink": {
-    "zh": "数据链设置（独立模块）：开关「使用数据互联」、查看节点 ID / 链路状态 / 端口。关掉就回到只看平面的旧逻辑（水平距离与方位，无高度差）。",
-    "en": "Data link (own module): toggle the link, inspect the node id, link state and port. When off, the HUD falls back to planar data only (horizontal range and bearing, no altitude)."
+    "zh": "数据链已并入「编队」页（第 4 屏）：连接开关、对端地址、节点 ID / 链路状态 / 端口。关掉就回到只看平面数据的旧逻辑——有方位和水平距离，没有高度差。",
+    "en": "Data link now lives on the FORMATION page (screen 4): switch, peer address, node id, link state and port. Turning it off falls back to planar data only - bearing and horizontal range, no height difference."
   },
   "row.wingSide": {
     "zh": "僚机侧位：选你在长机的哪一侧。左僚机 / 尾随 / 右僚机三个站位到长机的距离都是 400 m（左和右各偏 22°，横向 150 m、纵向 370 m）。多架僚机在同一局时必须各选不同侧位，否则会抢同一个站位。长机模式用不到这一项。",
