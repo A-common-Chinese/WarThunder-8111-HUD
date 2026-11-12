@@ -433,6 +433,11 @@ public static class L10n
         ["guide.lead.formation"] = ("编队完整", "FORMATION"),
         ["guide.lead.late"] = ("僚机掉队", "WINGMAN LATE"),
         // 长机看僚机自报（数据链第 11 段）：带槽位号，三人编队能直接点名
+        // 长机 HUD 的僚机表：只有状态词，标签单独一列
+        ["guide.wing.ok"] = ("到位", "ON STATION"),
+        ["guide.wing.behind"] = ("掉队 {0}m", "BEHIND {0}m"),
+        ["guide.wing.ahead"] = ("冲出 {0}m", "AHEAD {0}m"),
+        ["guide.wing.off"] = ("偏离站位", "OFF STATION"),
         ["guide.lead.wingBehind"] = ("{0} 掉队 {1}m", "{0} BEHIND {1}m"),
         ["guide.lead.wingAhead"] = ("{0} 冲出 {1}m", "{0} AHEAD {1}m"),
         ["guide.lead.wingOff"] = ("{0} 偏离站位", "{0} OFF STATION"),

@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 33,
+  "_version": 34,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -477,7 +477,7 @@
     "en": "Wingman (third level): finding the lead (type only when the link is down, manual node id), station gates (tolerance, hold deadbands), vertical guidance (gate, climb cap, far-range exception), follow gains (Kp/KpNear/Ki/Kv/blend/tau), turn-ahead terms and speed feedforward limits, and the lead-turn warning threshold. Wingman-only - the lead page has none of these. Check each row's HELP before changing anything."
   },
   "page.formationLead": {
-    "zh": "长机参数（三级）：锁定航向、全向跟随、设定马赫、转向辅助（目标 G / 容差 / 按键 / 广播），最后一行是僚机自报的站位 —— 谁掉队、掉多少。★ 长机不跑跟随环，所以这一页没有任何增益；那些都在僚机页里。",
+    "zh": "长机参数（三级）：锁定航向、全向跟随、设定马赫、转向辅助（目标 G / 容差 / 按键 / 广播），最后一行是僚机自报的站位汇总 —— 谁掉队、掉多少（HUD 上按槽位列成表）。★ 长机不跑跟随环，所以这一页没有任何增益；那些都在僚机页里。",
     "en": "Lead (third level): locked heading, omni follow, set Mach, turn assist (target G / tolerance / key / broadcast), and a live line of wingmen's self-reported stations - who is behind and by how much. The lead runs no follow loop, so there are no gains here; they belong to the wingman page."
   },
   "row.leadHeading": {
@@ -517,8 +517,8 @@
     "en": "Link status: on the data-link page this row is both a live readout and an entry - the value on the right is the current state (off / no partner / linked #ID); press confirm for API health, own role, online nodes, wing positions and port. The same entry sits at the top of DIAG, so a half-started 8111 can be chased without detouring."
   },
   "row.dataLinkWings": {
-    "zh": "每架僚机自报的站位：`W1 ok` = 在槽位上，`W2 掉队 480m` = 比槽位远了 480 m，`W3 冲出 320m` = 冲到了槽位前面，`偏离站位` = 距离差不多但方位不对。★ 判定在僚机那一端做（只有它知道自己的槽位），长机只负责显示，所以两边不会各说各话。长机 HUD 上只显示最严重的那一架（第二架起放副行），这一行是落地复盘用的。老版本僚机不发这一段，显示 `-`。",
-    "en": "Each wingman's self-reported station: `W1 ok` on station, `W2 behind 480m` 480 m further out than the slot, `W3 ahead 320m` past the slot, `off station` right range but wrong bearing. The judgement happens on the wingman (only it knows its slot); the lead just displays it, so the two ends cannot disagree. The lead HUD shows the worst one (the rest go on the sub line); this row is for the debrief. Older wingmen do not send this field and show `-`."
+    "zh": "每架僚机自报的站位：`W1 ok` = 在槽位上，`W2 掉队 480m` = 比槽位远了 480 m，`W3 冲出 320m` = 冲到了槽位前面，`偏离站位` = 距离差不多但方位不对。★ 判定在僚机那一端做（只有它知道自己的槽位），长机只负责显示，所以两边不会各说各话。长机 HUD 上是一张逐架的表（`W1 到位` / `W2 掉队 480m` / `W3 偏离站位`），最多四行；这一行是落地复盘用的。老版本僚机不发这一段，显示 `-`。",
+    "en": "Each wingman's self-reported station: `W1 ok` on station, `W2 behind 480m` 480 m further out than the slot, `W3 ahead 320m` past the slot, `off station` right range but wrong bearing. The judgement happens on the wingman (only it knows its slot); the lead just displays it, so the two ends cannot disagree. On the lead HUD the same data becomes a per-wing table (`W1 on station`, `W2 behind 480m`, `W3 off station`), up to four rows; this row is for the debrief. Older wingmen do not send this field and show `-`."
   },
   "row.dataLinkNodes": {
     "zh": "在线节点一览，格式 `#节点ID 角色 高度 包龄`：角色 L = 自称长机、W = 自称僚机、? = 老版本没发角色。包龄是「最后一包到现在」的毫秒数，一直往上涨说明那个节点在丢包或已经掉线。联调时这一行比状态行更有用。",

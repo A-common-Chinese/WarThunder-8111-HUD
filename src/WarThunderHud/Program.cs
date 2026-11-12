@@ -551,6 +551,43 @@ public static class Program
                 0, WtHud.Telemetry.DataLink.LinkRole.Wing, 0,
                 WtHud.Telemetry.DataLink.WingState.Behind, -1, 100)) == "#424242");
 
+        // ---- 长机僚机表：按槽位排序、过滤未知、状态词带数字 ----
+        var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
+            WtHud.Telemetry.DataLink.WingState.Behind, 2, 480);
+        var wt2 = new WtHud.Telemetry.DataLink.LinkNode(22, 3000, 0, 0, 0, null, null, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
+            WtHud.Telemetry.DataLink.WingState.InPosition, 0, 0);
+        var wt3 = new WtHud.Telemetry.DataLink.LinkNode(33, 3000, 0, 0, 0, null, null, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Lead, 5,
+            WtHud.Telemetry.DataLink.WingState.Unknown, -1, 0);
+        var tableRows = WingTable(new[] { wt1, wt2, wt3 });
+        Check("wing table keeps only reporting wings", tableRows.Count == 2);
+        Check("wing table sorts by slot", tableRows[0].Id == 22 && tableRows[1].Id == 11);
+        Check("wing table tolerates null", WingTable(null).Count == 0);
+        Check("state text says behind with metres", WingStateText(wt1).Contains("480"));
+        Check("state text says on station", WingStateText(wt2).Length > 0
+            && WingStateText(wt2) != "guide.wing.ok");
+        Check("state text empty for unknown",
+            WingStateText(wt3).Length == 0);
+
+        // ---- 长机按僚机自报槽位算期望距离 ----
+        var slotNodes = new[]
+        {
+            new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
+                0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
+                WtHud.Telemetry.DataLink.WingState.InPosition, 2, 0),
+        };
+        Check("lead uses the reported slot",
+            LeadWingSlot(new int?[] { 0 }, slotNodes, 0, -1) == 2);
+        Check("lead falls back when the wing is unmapped",
+            LeadWingSlot(new int?[] { null }, slotNodes, 0, 1) == 1);
+        Check("lead falls back on a bad index",
+            LeadWingSlot(new int?[] { 0 }, slotNodes, 5, 1) == 1);
+        Check("lead falls back when the node has no slot",
+            LeadWingSlot(new int?[] { 0 },
+                new[] { wt3 }, 0, 0) == 0);
+
         // ---- 站位偏差：站在槽位上指向角为 0，横向偏出去必须明显大于容差 ----
         Check("aim zero when parked in the slot", Math.Abs(WingAimDeg(180, 400, 0, 0, 400)) < 1.0);
         Check("aim grows when offset sideways", Math.Abs(WingAimDeg(180, 400, 0, 50, 400)) > 5.0);
@@ -3067,6 +3104,7 @@ public static class Program
         opt.Guide = null;
         opt.LeadStatusMain = "";
         opt.LeadStatusSub = "";
+        opt.LeadWingRows.Clear();
         opt.LeadSpeedBar = null;       // 长机的速度条数据，只有长机分支会填
         opt.TargetHeadingDeg = null;   // 航向带上的琥珀三角，只有确定目标航向时才画
         opt.FormationNotice = "";      // 每帧重置，只有状态机判定「刚到位」时才置上
@@ -3203,7 +3241,19 @@ public static class Program
                     // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
                     // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
                     // 长机没有「站位」这回事，方位传 0 = 永远对齐，行为与之前一致
-                    UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg);
+                    // ★ 期望距离必须用**僚机自报的槽位**算：长机自己的槽位和僚机选的可能不是一个，
+                    //   三机时按自己的算会永远对不上（长机 slot 0 = 400 m，僚机 2 号位 1030 m）。
+                    //   拿不到自报（老版本/没配对）才退回自己的槽位，与以前一致。
+                    int wingSlot = -1;
+                    var onlineNodes = dataLink?.Snapshot();
+                    if (onlineNodes is { Length: > 0 })
+                    {
+                        double tol = 50.0 / Math.Max(2000.0, Math.Max(sizeX, sizeY));
+                        var nodeForFriendly = WtHud.Telemetry.DataLink.MatchNodeIndex(friendPos, onlineNodes, tol);
+                        wingSlot = LeadWingSlot(nodeForFriendly, onlineNodes,
+                                                NearestFriendlyIndex(opt.Friendlies), -1);
+                    }
+                    UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg, wingSlot);
 
                     if (wing.RangeM < 200)
                     {
@@ -3221,20 +3271,21 @@ public static class Program
                     }
                 }
 
-                // ★ 有僚机自报时以自报为准：它带节点身份和槽位，而且不依赖 map_obj。
-                //   「最近那架」只能说明有一架离得近，说不出是谁掉了 —— 三人编队这是硬伤。
+                // ★ 有僚机自报时以自报为准：主行只说整体，具体谁掉了看下面那张表。
+                //   表是逐架的（到位 / 掉队 480m / 偏离站位），最多四行。
+                var wingRows = WingTable(dataLink?.OnlineNodes());
                 var wingReports = WingReports(dataLink?.OnlineNodes());
                 if (wingReports.Count > 0)
                 {
-                    main = WingReportText(wingReports[0]);
+                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
                     warn = true;
                 }
+                foreach (var n in wingRows)
+                    opt.LeadWingRows.Add((WingLabel(n), WingStateText(n),
+                                          n.Wing != WtHud.Telemetry.DataLink.WingState.InPosition));
 
                 // 副状态：姿态偏差（只报方向，不给数字）
-                // 第二架起放副行（最多再报两架，再多就挤满屏幕了）
                 var subs = new System.Collections.Generic.List<string>();
-                for (int i = 1; i < wingReports.Count && i < 3; i++)
-                    subs.Add(WingReportText(wingReports[i]));
 
                 // 全向跟随时基准就是长机实时航向，不再提示「转回设定航向」；马赫检查照旧保留
                 if (!cfg.FormationOmniFollow
@@ -3277,6 +3328,7 @@ public static class Program
             }
             opt.LeadStatusMain = "";
             opt.LeadStatusSub = "";
+            opt.LeadWingRows.Clear();
             opt.TurnAssist = null;
             // 切回僚机就退出辅助：状态留着会在下次当长机时凭空亮起来
             if (turnAssist.Stage != TurnAssistStage.Off)
@@ -4136,6 +4188,52 @@ public static class Program
         return list;
     }
 
+    /// <summary>长机 HUD 上的僚机表：只要自报过站位的节点，按槽位排序（没有槽位的排最后）。</summary>
+    internal static List<WtHud.Telemetry.DataLink.LinkNode> WingTable(
+        IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? nodes)
+    {
+        var list = new List<WtHud.Telemetry.DataLink.LinkNode>();
+        if (nodes is null) return list;
+        foreach (var n in nodes)
+            if (n.Wing != WtHud.Telemetry.DataLink.WingState.Unknown) list.Add(n);
+        list.Sort((a, b) =>
+        {
+            int sa = a.Slot >= 0 ? a.Slot : int.MaxValue;
+            int sb = b.Slot >= 0 ? b.Slot : int.MaxValue;
+            return sa != sb ? sa.CompareTo(sb) : a.Id.CompareTo(b.Id);
+        });
+        return list;
+    }
+
+    /// <summary>表里那一格的状态词：到位 / 掉队 480m / 冲出 320m / 偏离站位。</summary>
+    internal static string WingStateText(WtHud.Telemetry.DataLink.LinkNode n)
+    {
+        var alerts = WtHud.UI.LangScope.Alerts;
+        return n.Wing switch
+        {
+            WtHud.Telemetry.DataLink.WingState.InPosition => WtHud.UI.L10n.Get(alerts, "guide.wing.ok"),
+            WtHud.Telemetry.DataLink.WingState.Behind => string.Format(
+                WtHud.UI.L10n.Get(alerts, "guide.wing.behind"), Math.Abs(n.ErrM)),
+            WtHud.Telemetry.DataLink.WingState.Ahead => string.Format(
+                WtHud.UI.L10n.Get(alerts, "guide.wing.ahead"), Math.Abs(n.ErrM)),
+            WtHud.Telemetry.DataLink.WingState.OffStation => WtHud.UI.L10n.Get(alerts, "guide.wing.off"),
+            _ => "",
+        };
+    }
+
+    /// <summary>
+    /// 长机侧：最近那架友机对应的数据链节点报了哪个槽位。拿不到就返回 <paramref name="fallback"/>。
+    /// </summary>
+    internal static int LeadWingSlot(IReadOnlyList<int?> nodeForFriendly,
+                                     IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode> nodes,
+                                     int friendlyIndex, int fallback)
+    {
+        if (friendlyIndex < 0 || friendlyIndex >= nodeForFriendly.Count) return fallback;
+        if (nodeForFriendly[friendlyIndex] is not int idx) return fallback;
+        if (idx < 0 || idx >= nodes.Count) return fallback;
+        return nodes[idx].Slot >= 0 ? nodes[idx].Slot : fallback;
+    }
+
     /// <summary>僚机的显示名：有槽位就叫 W1/W2，没有就用节点号。</summary>
     internal static string WingLabel(WtHud.Telemetry.DataLink.LinkNode n)
         => n.Slot >= 0 ? "W" + (n.Slot + 1).ToString() : "#" + n.Id.ToString();
@@ -4404,12 +4502,19 @@ public static class Program
     internal static double FormationRangeErrorPct(double rangeM, double targetM)
         => targetM <= 1.0 ? 0.0 : Math.Abs(rangeM - targetM) / targetM * 100.0;
 
-    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg)
+    /// <param name="slotIndex">
+    /// 期望距离用哪个槽位算。-1 = 用本机配置的槽位（僚机侧就是自己的）；
+    /// 长机侧要传**僚机自报的槽位** —— 否则三机时按长机自己的槽位算，永远对不上。
+    /// </param>
+    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg,
+                                             int slotIndex = -1)
     {
         if (formationStage == FormationStage.Disabled) return;
 
         // 按槽位斜距的百分比判定：同一套松紧在 400 m 和 1545 m 的槽位上都成立
-        double err = FormationRangeErrorPct(rangeM, WtHud.Hud.FormationGeometry.Current(cfg).RangeM);
+        int slot = slotIndex >= 0 ? slotIndex : cfg.FormationSlot;
+        double slotRange = WtHud.Hud.FormationGeometry.Slot(cfg.FormationShape, slot, cfg).RangeM;
+        double err = FormationRangeErrorPct(rangeM, slotRange);
 
         // 站位：距离对上但没站在槽位上，不算「编队完成」。阈值和 Hold 用同一个配置，
         // 脱离时放宽一倍 —— 否则在门槛上会反复切换「完成 / 收敛」。
@@ -5054,6 +5159,18 @@ public static class Program
                         opt.LeadSpeedBar = (lc, lt, lt - lc);
                         snap = WithTas(snap, lc);
                     }
+                }
+            }
+
+            // 僚机表样张：WT_PREVIEW_WINGS="W1:到位:0|W2:掉队 480m:1|W3:偏离站位:1"
+            var wingsSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_WINGS");
+            if (!string.IsNullOrWhiteSpace(wingsSpec))
+            {
+                foreach (var part in wingsSpec.Split('|'))
+                {
+                    var cells = part.Split(':');
+                    if (cells.Length < 2) continue;
+                    opt.LeadWingRows.Add((cells[0], cells[1], cells.Length > 2 && cells[2] == "1"));
                 }
             }
         }

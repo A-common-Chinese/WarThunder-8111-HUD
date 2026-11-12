@@ -133,6 +133,13 @@ public sealed class HudOptions
     /// </summary>
     public string LeadStatusMain { get; set; } = "";
 
+    /// <summary>
+    /// 长机的僚机表：每行「W1 / 到位」「W2 / 掉队 480m」。空 = 不画。
+    /// <para>主行只说整体（编队完整 / 僚机掉队），具体谁怎么样看这张表 ——
+    /// 三人编队时一句话说不清，列表才能一眼扫完。</para>
+    /// </summary>
+    public List<(string Label, string State, bool Warn)> LeadWingRows { get; } = new();
+
     /// <summary>长机模式的副状态行（姿态偏差），空则不画。</summary>
     public string LeadStatusSub { get; set; } = "";
 
@@ -791,6 +798,36 @@ public sealed class HudGeometry
                     FontSize = fontSmall * 1.3, Color = _opt.WarnColor,
                     Points = { (cx, cy + 8.7 * pxDeg) },
                 });
+            }
+
+            // 僚机表：贴在速度带右侧、状态行下方。最多四行 —— 具名队形也就三个槽位。
+            if (_opt.LeadWingRows.Count > 0)
+            {
+                // 从主状态下方起：8.0° 是「大字下沿（8.2）- 半行」，再往下三行到 10.4°，
+                // 仍在速度条那一行的左边，不会压上去。
+                double rowY = cy + 8.0 * pxDeg;
+                double labelX = cx - 10.6 * pxDeg;
+                double stateX = cx - 10.2 * pxDeg;
+                int shown = 0;
+                foreach (var row in _opt.LeadWingRows)
+                {
+                    if (shown++ >= 4) break;
+                    prims.Add(new HudPrim
+                    {
+                        Kind = HudPrimKind.Text, Text = row.Label, Align = HudAlign.Right,
+                        FontSize = fontSmall * 0.95, Color = Fade(_opt.Color, 0.85),
+                        Points = { (labelX, rowY) },
+                    });
+                    prims.Add(new HudPrim
+                    {
+                        Kind = HudPrimKind.Text, Text = row.State, Align = HudAlign.Left,
+                        // 到位用绿色，掉队/冲出/偏离用琥珀：一眼分出「谁不用管」
+                        FontSize = fontSmall * 0.95,
+                        Color = row.Warn ? _opt.WarnColor : Fade(_opt.Color, 0.9),
+                        Points = { (stateX, rowY) },
+                    });
+                    rowY += 1.2 * pxDeg;
+                }
             }
 
             // 长机也画速度条：一句 ADD POWER 说不清「差多少、到哪停」，
