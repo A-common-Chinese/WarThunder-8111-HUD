@@ -130,13 +130,27 @@ internal sealed class KeyCapturePage : MfdPageBase
         _ => k.ToString().ToUpperInvariant(),
     };
 
+    /// <summary>
+    /// 键名列。★ OEM 键必须映射成符号：`Keys.Oemtilde.ToString()` 是 <c>Oemtilde</c>，
+    /// 存进配置后 <see cref="WtHud.Input.KeyBinding.NameToVk"/> 认不出来，会静默退回默认键 ——
+    /// 用户看到的是「按 ` 能录进去，但游戏里不生效」，改别的键就好了。
+    /// </summary>
     private static string KeyName(Keys k) => k switch
     {
         >= Keys.D0 and <= Keys.D9 => ((char)('0' + (k - Keys.D0))).ToString(),
         >= Keys.NumPad0 and <= Keys.NumPad9 => "NUM" + (k - Keys.NumPad0),
         >= Keys.A and <= Keys.Z => ((char)('A' + (k - Keys.A))).ToString(),
-        Keys.OemPeriod => ".",
+        Keys.Oemtilde => "~",
         Keys.OemMinus => "-",
+        Keys.Oemplus => "=",
+        Keys.OemOpenBrackets => "[",
+        Keys.OemCloseBrackets => "]",
+        Keys.OemPipe => "\\",
+        Keys.OemSemicolon => ";",
+        Keys.OemQuotes => "'",
+        Keys.Oemcomma => ",",
+        Keys.OemPeriod => ".",
+        Keys.OemQuestion => "/",
         _ => k.ToString().ToUpperInvariant(),
     };
 }

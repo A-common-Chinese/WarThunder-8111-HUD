@@ -83,6 +83,24 @@ public readonly struct KeyBinding
             "LSHIFT" or "SHIFT" => 0x10,
             "LCTRL" or "CTRL" => 0x11,
             "LALT" or "ALT" => 0x12,
+
+            // ---- OEM 键（符号键）----
+            // 以前这里没有它们：捕获页把 ` 存成 "OEMTILDE"，解析时落进 `_ => 0`，
+            // 于是静默退回默认键 —— 表现就是「按 ` 能录进去，但游戏里不生效」。
+            // 符号和 WinForms 名字都收，WPF 风格的 OEM1..OEM7 也收，免得两种来源各写一套。
+            "`" or "~" or "OEMTILDE" or "OEM3" => 0xC0,
+            "-" or "OEMMINUS" => 0xBD,
+            "=" or "OEMPLUS" => 0xBB,
+            "[" or "OEMOPENBRACKETS" or "OEM4" => 0xDB,
+            "]" or "OEMCLOSEBRACKETS" or "OEM6" => 0xDD,
+            "\\" or "OEMPIPE" or "OEM5" or "OEMBACKSLASH" => 0xDC,
+            ";" or "OEMSEMICOLON" or "OEM1" => 0xBA,
+            "'" or "OEMQUOTES" or "OEM7" => 0xDE,
+            "," or "OEMCOMMA" => 0xBC,
+            "." or "OEMPERIOD" => 0xBE,
+            "/" or "OEMQUESTION" or "OEM2" => 0xBF,
+            "OEM8" => 0xDF,
+            "OEM102" => 0xE2,
             _ => 0,
         };
     }

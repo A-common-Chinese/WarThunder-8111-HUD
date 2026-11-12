@@ -495,6 +495,32 @@ public static class Program
         Check("peer rejects bracket without colon",
             !WtHud.Telemetry.DataLink.TryParsePeer("[::1]48017", out _));
 
+        // ---- 按键名解析：OEM 符号键（` ~ [ ] 等）以前落进默认分支，静默退回默认键 ----
+        Check("vk tilde by symbol", WtHud.Input.KeyBinding.NameToVk("~") == 0xC0);
+        Check("vk tilde by wpf name", WtHud.Input.KeyBinding.NameToVk("OEM3") == 0xC0);
+        Check("vk tilde by winforms name", WtHud.Input.KeyBinding.NameToVk("OEMTILDE") == 0xC0);
+        Check("vk backtick alias", WtHud.Input.KeyBinding.NameToVk("`") == 0xC0);
+        Check("vk oem symbols",
+            WtHud.Input.KeyBinding.NameToVk("[") == 0xDB
+            && WtHud.Input.KeyBinding.NameToVk("]") == 0xDD
+            && WtHud.Input.KeyBinding.NameToVk("/") == 0xBF
+            && WtHud.Input.KeyBinding.NameToVk(";") == 0xBA
+            && WtHud.Input.KeyBinding.NameToVk("'") == 0xDE
+            && WtHud.Input.KeyBinding.NameToVk(",") == 0xBC
+            && WtHud.Input.KeyBinding.NameToVk(".") == 0xBE
+            && WtHud.Input.KeyBinding.NameToVk("-") == 0xBD
+            && WtHud.Input.KeyBinding.NameToVk("=") == 0xBB
+            && WtHud.Input.KeyBinding.NameToVk("\\") == 0xDC);
+        var kbTilde = WtHud.Input.KeyBinding.Parse("~", 0x70, "F1");
+        Check("parse tilde keeps vk",
+            kbTilde.VirtualKey == 0xC0 && kbTilde.Text == "~" && !kbTilde.Shift);
+        var kbShiftTilde = WtHud.Input.KeyBinding.Parse("SHIFT+~", 0x70, "F1");
+        Check("parse shift+tilde", kbShiftTilde.VirtualKey == 0xC0 && kbShiftTilde.Shift);
+        Check("old saved oem name still works",
+            WtHud.Input.KeyBinding.Parse("OEMTILDE", 0x70, "F1").VirtualKey == 0xC0);
+        Check("unknown key falls back",
+            WtHud.Input.KeyBinding.Parse("NOPE", 0x70, "F1").VirtualKey == 0x70);
+
         // ---- 面板那一行文本 ↔ 配置里的列表（F1 数据链模块里直接改地址） ----
         string peerText = HudConfig.PeersToText(new[] { "172.16.5.23:48017", "10.0.0.5" });
         Check("peers to text", peerText == "172.16.5.23:48017, 10.0.0.5");
