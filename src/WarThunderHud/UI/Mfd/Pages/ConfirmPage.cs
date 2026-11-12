@@ -54,6 +54,18 @@ internal sealed class ConfirmPage : MfdPageBase
         });
     }
 
+    /// <summary>确认行命中：0 = 确认、1 = 取消、-1 = 没命中。矩形与 Draw 同源。</summary>
+    public int HitRow(PointF p)
+    {
+        for (var i = 0; i < 2; i++)
+        {
+            var row = _layout.ListRowRect(0, 2 + i);
+            row.Inflate(6 * _layout.Scale, 0);       // 高亮条左右各宽 6*s
+            if (row.Contains(p)) return i;
+        }
+        return -1;
+    }
+
     public void Select(int index) => Selected = Math.Clamp(index, 0, 1);
 
     public void Move(int delta) => Selected = (Selected + delta + 2) % 2;

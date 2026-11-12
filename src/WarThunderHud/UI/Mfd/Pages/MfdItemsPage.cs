@@ -94,18 +94,7 @@ internal sealed class MfdItemsPage : MfdPageBase
     }
 
     /// <summary>屏幕 10 格的命中测试，返回格号（0..9）；没命中的 -1。</summary>
-    public int HitCell(PointF p)
-    {
-        var s = _layout.Scale;
-        if (!_layout.Glass.Contains(p)) return -1;
-        for (var i = 0; i < 10; i++)
-        {
-            // 横向外扩 6*s 给高亮块留量（绘制时也是 x-6 .. 宽+12）
-            var hit = RectangleF.Inflate(_layout.ListRowRect(i % 2, i / 2), 6 * s, 0);
-            if (hit.Contains(p)) return i;
-        }
-        return -1;
-    }
+    public int HitCell(PointF p) => _layout.TryHitListCell(p, 10, out var cell) ? cell : -1;
 
     /// <summary>按下确认：交给表单去开页/改值。</summary>
     public void ActivateSelected()

@@ -74,6 +74,25 @@ internal sealed class NumberEditPage : MfdPageBase
         if (Buffer.Length > 0) Buffer = Buffer[..^1];
     }
 
+    /// <summary>
+    /// 三个选项行的命中（0 = 确认、1 = 取消、2 = 手动指定机型），-1 = 没命中。
+    /// ★ 矩形必须与 DrawChoiceRow 的 ListRowRect 同源。以前表单自己算：右列起点写成
+    /// <c>+7*s</c>（绘制是 +18*s）、行高写成 44（布局是 40），右列右侧和每行底部都点不到。
+    /// </summary>
+    public int HitOption(PointF p)
+    {
+        var s = _layout.Scale;
+        foreach (var (sideKey, choice) in OptionRows)
+        {
+            var row = _layout.ListRowRect(sideKey < 5 ? 0 : 1, sideKey % 5);
+            row.Inflate(6 * s, 0);
+            if (row.Contains(p)) return choice;
+        }
+        return -1;
+    }
+
+    private static readonly (int SideKey, int Choice)[] OptionRows = { (2, 0), (3, 1), (7, 2) };
+
     public void Select(int index) => Choice = index < 0 ? Choice : Math.Clamp(index, 0, 2);
 
     public override bool Handle(MfdCommand cmd)

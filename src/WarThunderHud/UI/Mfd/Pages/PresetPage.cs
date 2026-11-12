@@ -48,6 +48,10 @@ internal sealed class PresetPage : MfdPageBase
         }
     }
 
+    /// <summary>命中色板格号；只认到 Presets.Length，下面的空格不算。</summary>
+    public int HitRow(PointF p) =>
+        _layout.TryHitListCell(p, MfdTheme.Presets.Length, out var cell) ? cell : -1;
+
     public void Select(int index) => Selected = Math.Clamp(index, 0, MfdTheme.Presets.Length - 1);
 
     public void Move(int delta) =>

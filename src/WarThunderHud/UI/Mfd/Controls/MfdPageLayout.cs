@@ -51,6 +51,24 @@ internal sealed class MfdPageLayout
         return new RectangleF(x, btn.Y + btn.Height / 2 - h / 2, colW, h);
     }
 
+    /// <summary>
+    /// 两列列表的命中测试，返回格号（列优先，与 <see cref="ListRowRect"/> 同源）。
+    /// 横向外扩 6*s 是给高亮块留的量 —— 绘制时高亮也是 x-6 .. 宽+12。
+    /// <para>★ 命中必须走这里。以前每个页面自己算一遍坐标，PickVehicle 的右列写成
+    /// <c>+7*s</c> 而绘制是 <c>+18*s</c>，那一列右边一小块点了没反应。</para>
+    /// </summary>
+    public bool TryHitListCell(PointF p, int cellCount, out int cell)
+    {
+        cell = -1;
+        if (!Glass.Contains(p)) return false;
+        for (var i = 0; i < cellCount; i++)
+        {
+            var hit = RectangleF.Inflate(ListRowRect(i % 2, i / 2), 6 * _s, 0);
+            if (hit.Contains(p)) { cell = i; return true; }
+        }
+        return false;
+    }
+
     /// <summary>Rectangle of a screen button, resolved from its logical slot.</summary>
     public RectangleF RectFor(VirtualButton button) => button.Kind == VirtualButtonKind.Action && button.Slot >= 20
         ? BottomRect(button.Slot - 20)

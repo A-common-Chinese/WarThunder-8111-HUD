@@ -464,67 +464,39 @@ public sealed class MfdFrameForm : Form
     {
         base.OnMouseDown(e);
 
-        // 编辑页：点击 确认 / 取消 / 手动指定机型 三个选项
-        if (!_work.Mfd.RealisticKeys && _mode == Mode.EditNumber)
+        // 编辑页：命中由页面给出（三个选项行的矩形与它自己的绘制同源）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.EditNumber
+            && _editPage is { } editPage
+            && editPage.HitOption(new PointF(e.X, e.Y)) is int choiceIdx && choiceIdx >= 0)
         {
-            var sScale = _layout.Width / 1330f;
-            var rowH = 44 * sScale;
-            var colW = (_layout.Glass.Width - 18 * sScale * 2) / 2 - 34 * sScale;
-            var rows = new (int Btn, int Choice)[] { (2, 0), (3, 1), (7, 2) };
-            foreach (var (btnIdx, choice) in rows)
-            {
-                var btn = _layout.SideButtons[btnIdx];
-                var x = btnIdx < 5
-                    ? _layout.Glass.Left + 18 * sScale
-                    : _layout.Glass.Left + _layout.Glass.Width / 2 + 7 * sScale;
-                var y = btn.Y + btn.Height / 2 - rowH / 2;
-                if (e.X < x - 6 * sScale || e.X > x + colW + 6 * sScale) continue;
-                if (e.Y < y || e.Y > y + rowH) continue;
-
-                var againC = IsRepeatClick("number", choice, 500);
-                _editPage?.Select(choice);
-                if (againC || e.Clicks >= 2) Confirm();
-                Invalidate();
-                return;
-            }
+            var againC = IsRepeatClick("number", choiceIdx, 500);
+            editPage.Select(choiceIdx);
+            if (againC || e.Clicks >= 2) Confirm();
+            Invalidate();
+            return;
         }
 
-        // 选机型页：非拟真模式下点击行即选中（同一行 400ms 内再点一次 = 指定）
-        if (!_work.Mfd.RealisticKeys && _mode == Mode.PickVehicle)
+        // 选机型页：命中由页面给出（与它自己的绘制同一个 ListRowRect）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.PickVehicle
+            && _pickPageUI is { } pickPage
+            && pickPage.HitRow(new PointF(e.X, e.Y)) is int pickCell && pickCell >= 0)
         {
-            var count = WtHud.Hud.AirframeDb.All.Count + 1;   // +1 = 「全局」项
-            var sScale = _layout.Width / 1330f;
-            var colW = (_layout.Glass.Width - 18 * sScale * 2) / 2 - 34 * sScale;
-            var rowH = 40 * sScale;
-            for (var i = 0; i < 10; i++)
-            {
-                var item = (_pickPageUI?.PageIndex ?? 0) * 10 + i;
-                if (item >= count) break;
-                var col = i % 2;
-                var row = i / 2;
-                var btn = _layout.SideButtons[col * 5 + row];
-                var x0 = col == 0
-                    ? _layout.Glass.Left + 18 * sScale
-                    : _layout.Glass.Left + _layout.Glass.Width / 2 + 7 * sScale;
-                var y0 = btn.Y + btn.Height / 2 - rowH / 2;
-                if (e.X < x0 - 6 * sScale || e.X > x0 + colW + 6 * sScale) continue;
-                if (e.Y < y0 || e.Y > y0 + rowH) continue;
-
-                var again = IsRepeatClick("pick", item, 400);
-                _pickPageUI?.SelectCell(i);
-                if (again || e.Clicks >= 2) _pickPageUI?.Handle(MfdCommand.Of("confirm.ok"));
-                Invalidate();
-                return;
-            }
+            var item = pickPage.PageIndex * 10 + pickCell;
+            var again = IsRepeatClick("pick", item, 400);
+            pickPage.SelectCell(pickCell);
+            if (again || e.Clicks >= 2) pickPage.Handle(MfdCommand.Of("confirm.ok"));
+            Invalidate();
+            return;
         }
 
         // 快照列表：单击选中，同一行 400ms 内再点 = 进入恢复确认（与选机型页一致）
-        if (!_work.Mfd.RealisticKeys && _mode == Mode.Snapshots &&
-            RowHitTest(new PointF(e.X, e.Y), out var snapCell))
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Snapshots
+            && _snapPageUI is { } snapPage
+            && snapPage.HitRow(new PointF(e.X, e.Y)) is int snapCell && snapCell >= 0)
         {
             var againS = IsRepeatClick("snapshot", snapCell, 400);
-            _snapPageUI?.SelectCell(snapCell);
-            if (againS || e.Clicks >= 2) _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+            snapPage.SelectCell(snapCell);
+            if (againS || e.Clicks >= 2) snapPage.Handle(MfdCommand.Of("confirm.ok"));
             Invalidate();
             return;
         }
@@ -598,31 +570,26 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
-        // 拟真按键模式：屏幕行不接受鼠标，只能用实体按键/方向键
-        if (!_work.Mfd.RealisticKeys &&
-            RowHitTest(new PointF(e.X, e.Y), out var rowCell))
+        // 色板页：命中由页面给出，只认到 Presets.Length，下面的空格不算
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Preset
+            && _presetPage is { } presetPage
+            && presetPage.HitRow(new PointF(e.X, e.Y)) is int presetCell && presetCell >= 0)
         {
-            if (_mode == Mode.Preset)
-            {
-                if (rowCell < MfdTheme.Presets.Length)
-                {
-                    var againP = IsRepeatClick("preset", rowCell, 400);
-                    _presetPage?.Select(rowCell);
-                    if (againP || e.Clicks >= 2) _presetPage?.Handle(MfdCommand.Of("confirm.ok"));
-                    Invalidate();
-                }
-                return;
-            }
+            var againP = IsRepeatClick("preset", presetCell, 400);
+            presetPage.Select(presetCell);
+            if (againP || e.Clicks >= 2) presetPage.Handle(MfdCommand.Of("confirm.ok"));
+            Invalidate();
+            return;
+        }
 
+        // 主菜单行：命中同样走布局，这里只剩「格号 → 模块索引」这一步
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.Menu
+            && RowHitTest(new PointF(e.X, e.Y), out var rowCell))
+        {
             if (rowCell >= _pages.Count) { ClearRepeatClick(); return; }     // 空单元格：不选也不确认
-
             var repeated = IsRepeatClick("menu", rowCell, 400);
-
-            if (_mode == Mode.Menu)
-            {
-                _menuSel = rowCell;
-                if (repeated || e.Clicks >= 2) EnterPage();
-            }
+            _menuSel = rowCell;
+            if (repeated || e.Clicks >= 2) EnterPage();
             Invalidate();
             return;
         }
@@ -647,57 +614,21 @@ public sealed class MfdFrameForm : Form
         Invalidate();
     }
 
-    /// <summary>Hit test for the ten screen cells (used for click-to-select).</summary>
-    private bool RowHitTest(PointF p, out int cell)
-    {
-        cell = -1;
-        if (!_layout.Glass.Contains(p)) return false;
-        var s = _layout.Width / 1330f;
-        var pageLayout = new MfdPageLayout(_layout, s);
-
-        for (var i = 0; i < 10; i++)
-        {
-            // 与绘制同源；横向多放 6*s 是给高亮块的外扩量（绘制时也是 x-6 .. +12 宽）
-            var row = pageLayout.ListRowRect(i % 2, i / 2);
-            var hit = System.Drawing.RectangleF.Inflate(row, 6 * s, 0);
-            if (hit.Contains(p))
-            {
-                cell = i;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// 二级确认页的两行（0 = 确认、1 = 取消）命中测试。矩形与 <c>ConfirmPage.Draw</c> 用的是同一个
-    /// <see cref="MfdPageLayout.ListRowRect(int,int)"/>，所以画在哪里就能点在哪里。
-    /// </summary>
-    private bool ConfirmRowHitTest(PointF p, out int option)
-    {
-        option = -1;
-        var s = _layout.Width / 1330f;
-        var pageLayout = new MfdPageLayout(_layout, s);
-        for (var i = 0; i < 2; i++)
-        {
-            var row = pageLayout.ListRowRect(0, 2 + i);
-            row.Inflate(6 * s, 0);          // 高亮条比行矩形左右各宽 6*s
-            if (row.Contains(p)) { option = i; return true; }
-        }
-        return false;
-    }
+    /// <summary>主菜单行的命中（一页最多 10 个模块）。矩形由布局统一给出。</summary>
+    private bool RowHitTest(PointF p, out int cell) =>
+        new MfdPageLayout(_layout, _layout.Width / 1330f).TryHitListCell(p, 10, out cell);
 
     /// <summary>确认页行的点击处理（OnMouseDown 与预览钩子共用）：单击选中，双击执行。</summary>
     private bool TryClickConfirmRow(PointF point, int clicks)
     {
-        if (!ConfirmRowHitTest(point, out var option)) return false;
+        if (_confirmPage is not { } page) return false;
+        int option = page.HitRow(point);         // 矩形由页面自己算，与 Draw 同源
+        if (option < 0) return false;
 
         var repeated = IsRepeatClick("confirm", option, 400);
-
-        _confirmPage?.Select(option);
-
+        page.Select(option);
         if (repeated || clicks >= 2)
-            _confirmPage?.Handle(MfdCommand.Of(option == 0 ? "confirm.ok" : "confirm.cancel"));
+            page.Handle(MfdCommand.Of(option == 0 ? "confirm.ok" : "confirm.cancel"));
         return true;
     }
 

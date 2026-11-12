@@ -74,6 +74,9 @@ internal sealed class SnapshotsPage : MfdPageBase
     public void Move(int delta) => Selected = Math.Clamp(Selected + delta, 0, LastIndex);
 
     /// <summary>侧键/点击选中某一格（0-9）；空单元格或越界忽略。</summary>
+    /// <summary>命中格号（0..9）；矩形与 Draw 同源。</summary>
+    public int HitRow(PointF p) => _layout.TryHitListCell(p, 10, out var cell) ? cell : -1;
+
     public void SelectCell(int cell)
     {
         if (cell is < 0 or > 9) return;

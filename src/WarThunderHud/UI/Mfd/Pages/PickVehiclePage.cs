@@ -51,6 +51,18 @@ internal sealed class PickVehiclePage : MfdPageBase
 
     public void Move(int delta) => Selected = Math.Clamp(Selected + delta, 0, Math.Max(0, _list.Count - 1));
 
+    /// <summary>
+    /// 命中格号。★ 必须走 ListRowRect —— 以前这里用自算的矩形，右列起点比绘制早 11*s，
+    /// 那一列右侧一小块点了没反应。
+    /// </summary>
+    public int HitRow(PointF p)
+    {
+        // 只认本页真正有内容的格子：末页下面几行是空的，点了不该有反应
+        int count = Math.Clamp(_list.Count - PageIndex * 10, 0, 10);
+        if (count == 0) return -1;
+        return _layout.TryHitListCell(p, count, out var cell) ? cell : -1;
+    }
+
     public void SelectCell(int cell)
     {
         var index = PageIndex * 10 + cell;
