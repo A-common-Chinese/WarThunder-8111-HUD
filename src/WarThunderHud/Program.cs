@@ -448,6 +448,10 @@ public static class Program
             Math.Abs(FormationRangeErrorPct(1545 * 1.1, 1545) - 10.0) < 1e-9);
         Check("range error pct guards zero target", FormationRangeErrorPct(500, 0) == 0);
 
+        // ---- 站位偏差：站在槽位上指向角为 0，横向偏出去必须明显大于容差 ----
+        Check("aim zero when parked in the slot", Math.Abs(WingAimDeg(180, 400, 0, 0, 400)) < 1.0);
+        Check("aim grows when offset sideways", Math.Abs(WingAimDeg(180, 400, 0, 50, 400)) > 5.0);
+
         // ---- 远距例外：爬升阶段的距离行只看「够不够远」，门槛 0 = 关掉 ----
         Check("far range hidden just under gate", !RevealRangeWhileClimbing(1999.9, 2000));
         Check("far range shown at gate", RevealRangeWhileClimbing(2000, 2000));
@@ -3085,7 +3089,8 @@ public static class Program
                     double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
                     // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
                     // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
-                    UpdateFormationStage(wing.RangeM, snap.ElapsedSeconds, cfg);
+                    // 长机没有「站位」这回事，方位传 0 = 永远对齐，行为与之前一致
+                    UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg);
 
                     if (wing.RangeM < 200)
                     {
@@ -3271,6 +3276,12 @@ public static class Program
                 FormationAction action = FormationAction.None;
                 double deltaKmh = 0;
 
+                // 站位偏差：从当前视线指向理想槽位的角度，站准时为 0。
+                // ★ 只判距离会出现「正后方 500 m」和「左后 45° 500 m」都算到位 ——
+                //   后者压根不在槽位上。这个角就是判「位置」的那一维，油门和转向共用同一个数。
+                double aimDeg = WingAimDeg(lead.RelBearingDeg, lead.RangeM, leadHdgDelta,
+                                           slot.SideM, slot.BackM);
+
                 // 偏角大时先转向，不给油门建议：斜着几十度去修速度没有意义。
                 // 爬升阶段整段跳过：横向引导还没开始，PID 积分不该在场外偷偷累积。
                 if (opt.Vertical is not { Priority: true } && Math.Abs(lead.RelBearingDeg) < 50)
@@ -3333,7 +3344,9 @@ public static class Program
                         bool wasHold = guideActionPrev == FormationAction.Hold;
                         double holdErr = wasHold ? 140 : 100;
                         double holdClosing = wasHold ? 12 : 8;
-                        if (Math.Abs(err) <= holdErr && Math.Abs(closing) < holdClosing)
+                        double holdAim = Math.Max(0.5, cfg.FormationAlignDeg) * (wasHold ? 1.6 : 1.0);
+                        if (Math.Abs(err) <= holdErr && Math.Abs(closing) < holdClosing
+                            && Math.Abs(aimDeg) <= holdAim)
                             action = FormationAction.Hold;
                     }
                 }
@@ -3348,8 +3361,7 @@ public static class Program
                 // leadHdgDelta / leadRate 已在上方（PID 之前）算好，油门前馈与转弯提前量共用
 
                 // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
-                double guideTurn = WingAimDeg(lead.RelBearingDeg, lead.RangeM,
-                                              leadHdgDelta, slot.SideM, slot.BackM);
+                double guideTurn = aimDeg;
                 // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
                 // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
                 double leadRateShown = 0;
@@ -3386,7 +3398,7 @@ public static class Program
                     action = FormationAction.None;
 
                 // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
-                UpdateFormationStage(lead.RangeM, snap.ElapsedSeconds, cfg);
+                UpdateFormationStage(lead.RangeM, aimDeg, snap.ElapsedSeconds, cfg);
 
                 // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
                 // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
@@ -4203,15 +4215,22 @@ public static class Program
     internal static double FormationRangeErrorPct(double rangeM, double targetM)
         => targetM <= 1.0 ? 0.0 : Math.Abs(rangeM - targetM) / targetM * 100.0;
 
-    private static void UpdateFormationStage(double rangeM, double nowS, HudConfig cfg)
+    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg)
     {
         if (formationStage == FormationStage.Disabled) return;
 
         // 按槽位斜距的百分比判定：同一套松紧在 400 m 和 1545 m 的槽位上都成立
         double err = FormationRangeErrorPct(rangeM, WtHud.Hud.FormationGeometry.Current(cfg).RangeM);
+
+        // 站位：距离对上但没站在槽位上，不算「编队完成」。阈值和 Hold 用同一个配置，
+        // 脱离时放宽一倍 —— 否则在门槛上会反复切换「完成 / 收敛」。
+        double alignDeg = Math.Max(0.5, cfg.FormationAlignDeg);
+        bool aligned = Math.Abs(aimDeg) <= alignDeg;
+        bool badlyAligned = Math.Abs(aimDeg) > alignDeg * 2.0;
+
         if (formationStage == FormationStage.Converge)
         {
-            if (err <= cfg.FormationDonePct)
+            if (err <= cfg.FormationDonePct && aligned)
             {
                 if (formationDoneSince < 0) formationDoneSince = nowS;
                 else if (nowS - formationDoneSince >= Math.Max(0.1, cfg.FormationDoneHoldS))
@@ -4224,7 +4243,8 @@ public static class Program
             }
             else formationDoneSince = -1;
         }
-        else if (formationStage == FormationStage.Maintain && err > cfg.FormationDropPct)
+        else if (formationStage == FormationStage.Maintain
+                 && (err > cfg.FormationDropPct || badlyAligned))
         {
             formationStage = FormationStage.Converge;
             formationStageSince = nowS;

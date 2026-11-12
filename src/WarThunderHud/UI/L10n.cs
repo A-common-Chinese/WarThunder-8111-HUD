@@ -310,6 +310,7 @@ public static class L10n
         ["row.fWingOffset"] = ("侧位横偏", "WING OFFSET"),
         ["row.fStationBack"] = ("侧位后距", "STATION BACK"),
         ["row.fDonePct"] = ("完成误差 %", "DONE BAND %"),
+        ["row.fAlignDeg"] = ("站位容差", "ALIGN TOL"),
         ["row.fDoneHold"] = ("完成保持", "DONE HOLD"),
         ["row.fDropPct"] = ("掉出门槛 %", "DROP BAND %"),
         ["row.fSteadyDeg"] = ("保持死区角", "STEADY DEG"),

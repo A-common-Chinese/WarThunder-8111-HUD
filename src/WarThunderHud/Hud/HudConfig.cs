@@ -281,6 +281,14 @@ public sealed class HudConfig
     [JsonPropertyName("formationDropPct")] public double FormationDropPct { get; set; } = 30;
 
     /// <summary>
+    /// 站位方位容差（度）：距离对上、速度也对，但站歪了同样不算到位。
+    /// <para>★ 只看距离会出现「正后方 500 m」和「左后 45° 500 m」都判到位 ——
+    /// 前者压根没在槽位上。这个角是「当前视线」到「理想站位」的夹角，
+    /// 站准时为 0，所以它同时是完成判定和「保持」判定的第二个维度。</para>
+    /// </summary>
+    [JsonPropertyName("formationAlignDeg")] public double FormationAlignDeg { get; set; } = 5;
+
+    /// <summary>
     /// 保持阶段的转向死区（度）：偏差小于它就按「已对准」显示，指针不再动。默认 5。
     /// <para>400 m 上 5° ≈ 35 m 横向。</para>
     /// </summary>

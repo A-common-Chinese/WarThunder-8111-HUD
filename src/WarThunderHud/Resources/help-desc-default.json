@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 30,
+  "_version": 31,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -579,6 +579,10 @@
   "row.fDonePct": {
     "zh": "「编队完成」的距离误差门槛，单位是**槽位斜距的百分比**，默认 10%。400 m 槽位上是 40 m，梯队第 3 位（1545 m）上是 154 m —— 同一个百分比在每个槽位松紧一致。★ 2026-11-12 从绝对米数改成百分比，老配置里的米数不再生效。",
     "en": "Distance band for FORMATION SET, as a percentage of the slot's slant range. Default 10%: 40 m at a 400 m slot, 154 m at echelon slot 3 (1545 m) - the same tightness everywhere. Changed from absolute metres on 2026-11-12; old metre values no longer apply."
+  },
+  "row.fAlignDeg": {
+    "zh": "站位容差（度）：除了距离和速度差，还要看有没有真的站在槽位上。判据是「当前视线」到「理想站位」的夹角，站准时为 0。默认 5° —— 在 400 m 槽位上大约对应 35 m 的横向偏差。★ 只看距离时，「正后方 500 m」和「左后 45° 500 m」都会被判成到位，后者其实压根没进编队。设为 0 可关掉这一维（退回只看距离）。",
+    "en": "Station tolerance in degrees: distance and speed being right is not enough - the aircraft has to be in its slot. The measure is the angle from the current line of sight to the ideal station, zero when parked there. Default 5 deg, roughly 35 m of lateral error at a 400 m slot. With distance alone, \"500 m straight behind\" and \"500 m at 45 deg left-rear\" both count as on station; the second one is not in formation at all. Set 0 to ignore this dimension."
   },
   "row.fDropPct": {
     "zh": "掉出「保持」、退回「收敛」的误差门槛，同样是槽位斜距的百分比，默认 30%。必须明显大于「完成误差 %」，否则会在门槛附近来回切换状态（提示闪烁）。",

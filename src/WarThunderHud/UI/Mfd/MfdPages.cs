@@ -529,6 +529,8 @@ internal static class MfdPages
             Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
             // ---- 状态机判定与保持死区（改站位时这几个要跟着看） ----
             Number("row.fDonePct", c => c.FormationDonePct, (c, v) => c.FormationDonePct = v, 1, 1, 50, "%"),
+            // 站位容差：距离对上但站歪了，同样不算到位
+            Number("row.fAlignDeg", c => c.FormationAlignDeg, (c, v) => c.FormationAlignDeg = v, 1, 0, 45, "°"),
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),
             Number("row.fDropPct", c => c.FormationDropPct, (c, v) => c.FormationDropPct = v, 5, 5, 100, "%"),
             Number("row.fSteadyDeg", c => c.FormationSteadyDeg, (c, v) => c.FormationSteadyDeg = v, 0.5, 0, 20, "°"),
