@@ -1,5 +1,5 @@
 {
-  "_version": 19,
+  "_version": 20,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -503,5 +503,33 @@
   "page.snapshots": {
     "zh": "回归快照：把当前配置存成一条带名字的记录，用来对比改动前后。选中一条按 CONFIRM 进入二次确认再恢复；列表由页面自己绘制，不走普通的两列设置布局。",
     "en": "Snapshots: saves the current config as a named record so changes can be compared before and after. Select one and CONFIRM to restore, with a second confirmation. The list is drawn by the page itself, not the usual two-column layout."
+  },
+  "row.formationShapeMenu": {
+    "zh": "队形：进下一级页选形状（自定义 / 梯队 / 纵队 / 菱形）与槽位。值列显示当前队形和位置，例如「梯队 · 2」。编队共 30 项，其中 8 项在这一页下面。",
+    "en": "Formation shape: opens the sub-page for shape (custom / echelon / column / diamond) and slot. The value column shows the current pair, e.g. \"ECHELON · 2\". Eight of the formation's thirty rows live below this line."
+  },
+  "row.fShape": {
+    "zh": "队形形状。自定义 = 用下面的尾随距离 / 侧位横偏 / 侧位后距手工描述站位；梯队 = 每架再靠后 450 m、再偏左 250 m；纵队 = 正后方每架间隔 400 m；菱形 = 左后 / 右后 / 正后三个位置。★ 换形状会把槽位重置到第 1 个。",
+    "en": "Formation shape. CUSTOM uses the three distances below to describe the slot by hand; ECHELON steps each aircraft 450 m further back and 250 m further left; COLUMN stacks them 400 m apart straight astern; DIAMOND gives left-rear / right-rear / astern. Changing shape resets the slot to 1."
+  },
+  "row.fSlot": {
+    "zh": "第几个位置（1 起）。同一局里多架僚机必须各选不同槽位，否则会全挤在同一个点上。自定义队形只有一个位置，这一行会变灰。",
+    "en": "Which slot (1-based). Several wingmen in one sortie must pick different slots or they will all converge on the same point. CUSTOM has a single slot, so this row greys out."
+  },
+  "row.fSlant": {
+    "zh": "这个槽位到长机的斜距（水平面内），由形状与槽位算出，只读。★ 到位判定与速度前馈都用它 —— 梯队第 2 位是 515 m、第 3 位 1545 m，跟尾随位的 400 m 完全不同，所以「完成误差」按绝对值给会显得越来越严。",
+    "en": "Slant range from this slot to the lead, computed from shape and slot; read-only. The completion band and the speed feedforward both use it - echelon slot 2 sits at 515 m and slot 3 at 1545 m, nothing like the 400 m trail slot, so an absolute done-band gets relatively stricter as you move out."
+  },
+  "row.fSideM": {
+    "zh": "槽位相对长机的横向偏移（右为正）。只读，由形状与槽位算出。",
+    "en": "Lateral offset of the slot from the lead, right positive. Read-only, derived from shape and slot."
+  },
+  "row.fBackM": {
+    "zh": "槽位相对长机的纵向位置（负值 = 在长机后方）。只读，由形状与槽位算出。",
+    "en": "Longitudinal position of the slot (negative means behind the lead). Read-only, derived from shape and slot."
+  },
+  "page.formationShape": {
+    "zh": "队形几何：选形状与槽位，下面三行只读值告诉你这个位置到底在哪（斜距 / 横向 / 纵向）。三个手工距离只在「自定义」时可改。",
+    "en": "Formation geometry: pick a shape and slot; the three read-only rows below show exactly where that slot sits (slant / lateral / longitudinal). The three manual distances are editable only under CUSTOM."
   }
 }

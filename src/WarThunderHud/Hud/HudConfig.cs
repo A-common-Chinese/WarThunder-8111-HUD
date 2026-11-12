@@ -224,6 +224,19 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationStationBackM")] public double FormationStationBackM { get; set; } = 370;
 
+    // ---- 队形（2026-11-12）----
+    // 具名队形的槽位几何在 FormationGeometry 里；这里只存「选了哪个队形、第几个位置」。
+
+    /// <summary>
+    /// 队形：custom（自定义，用下面三个距离）/ echelon（梯队）/ column（纵队）/ diamond（菱形）。
+    /// <para>custom 之外，三个距离字段只作为显示与自定义队形的输入，不再参与制导 ——
+    /// 制导读的是 <see cref="WtHud.Hud.FormationGeometry.Current"/> 给出的槽位。</para>
+    /// </summary>
+    [JsonPropertyName("formationShape")] public string FormationShape { get; set; } = "custom";
+
+    /// <summary>槽位序号（0 起）。超出该队形槽位数时按最后一个算。</summary>
+    [JsonPropertyName("formationSlot")] public int FormationSlot { get; set; } = 0;
+
     // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
 
     /// <summary>
@@ -249,6 +262,26 @@ public sealed class HudConfig
 
     /// <summary>保持阶段的速度死区（km/h）：偏差小于它就显示「保持」。默认 20。</summary>
     [JsonPropertyName("formationSteadyKmh")] public double FormationSteadyKmh { get; set; } = 20;
+
+    // ---- 长机转向辅助（2026-11-12）----
+    // 长机按一下键，HUD 按「预定 G」给出目标坡度；再按一下关掉。
+    // 只提示不控杆：它把「该压多少度」数字化，平滑仍然取决于人的输入。
+
+    /// <summary>转向辅助开关的按键。默认 CTRL+SHIFT+T（与解除引导的 CTRL+SHIFT+F 分开）。</summary>
+    [JsonPropertyName("formationTurnAssistKey")] public string FormationTurnAssistKey { get; set; } = "CTRL+SHIFT+T";
+
+    /// <summary>
+    /// 目标过载（G）。默认 3.0，范围 1.2–9.0。
+    /// <para>换算成目标坡度 φ = acos(1/n) 与目标转向率 ω = g·√(n²−1)/V：
+    /// 坡度只跟 G 有关，转向率还跟速度有关。所以主提示给坡度，转向率只作副行。</para>
+    /// </summary>
+    [JsonPropertyName("formationTurnTargetG")] public double FormationTurnTargetG { get; set; } = 3.0;
+
+    /// <summary>容差（G）：实际过载与目标的差在这个范围内就显示「保持」。默认 0.3。</summary>
+    [JsonPropertyName("formationTurnTolG")] public double FormationTurnTolG { get; set; } = 0.3;
+
+    /// <summary>把目标坡度通过数据链广播给僚机（僚机可据此提前预判长机要转多少）。默认开。</summary>
+    [JsonPropertyName("formationTurnBroadcast")] public bool FormationTurnBroadcast { get; set; } = true;
 
     /// <summary>
     /// 僚机速度前馈的上限（相对长机真空速的倍数）。外圈路径更长，按 |ω|·(r_w−ρ) 补速。

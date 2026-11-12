@@ -192,13 +192,47 @@ public static class Program
         Check("lead pursuit too slow", LeadPursuitDeg(10, 400, 170, 45) == 0);
 
         // ---- 固定站位：站位随长机航向转、左右镜像、居中时对准 ----
-        Check("station aligned when centered", Math.Abs(WingAimDeg(0, 400, 0, 0, 150, 400, 370)) < 1e-9);
+        Check("station aligned when centered", Math.Abs(WingAimDeg(0, 400, 0, 0, -400)) < 1e-9);
         Check("station responds to lead heading",
-            Math.Abs(WingAimDeg(0, 400, +1, 30, 150, 400, 370) - WingAimDeg(0, 400, +1, 0, 150, 400, 370)) > 5);
+            Math.Abs(WingAimDeg(0, 400, 30, 150, -370) - WingAimDeg(0, 400, 0, 150, -370)) > 5);
         Check("station left/right mirror at zero delta",
-            Math.Abs(WingAimDeg(0, 400, -1, 0, 150, 400, 370) + WingAimDeg(0, 400, +1, 0, 150, 400, 370)) < 1e-9);
+            Math.Abs(WingAimDeg(0, 400, 0, -150, -370) + WingAimDeg(0, 400, 0, 150, -370)) < 1e-9);
         Check("station center shifts with rel",
-            Math.Abs(WingAimDeg(30, 400, 0, 0, 150, 400, 370) - WingAimDeg(0, 400, 0, 0, 150, 400, 370)) > 5);
+            Math.Abs(WingAimDeg(30, 400, 0, 0, -400) - WingAimDeg(0, 400, 0, 0, -400)) > 5);
+        // ---- 队形槽位几何：具名队形按真实斜距，自定义沿用历史口径（三站位同目标距离） ----
+        var shapeCfg = new HudConfig { FormationShape = WtHud.Hud.FormationGeometry.ShapeEchelon };
+        var e1 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("echelon slot1 geometry",
+            e1.SideM == -250 && e1.BackM == -450 && Math.Abs(e1.RangeM - 514.78) < 0.1);
+        shapeCfg.FormationSlot = 2;
+        var e3 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("echelon slot3 geometry",
+            e3.SideM == -750 && e3.BackM == -1350 && Math.Abs(e3.RangeM - 1544.3) < 0.2);
+        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeColumn;
+        shapeCfg.FormationSlot = 1;
+        var c2 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("column slot2 geometry", c2.SideM == 0 && c2.BackM == -800 && Math.Abs(c2.RangeM - 800) < 0.01);
+        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeDiamond;
+        shapeCfg.FormationSlot = 2;
+        var d3 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("diamond slot3 geometry", d3.SideM == 0 && d3.BackM == -600 && Math.Abs(d3.RangeM - 600) < 0.01);
+        shapeCfg.FormationSlot = 0;
+        var d1 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("diamond slot1 is left side", d1.SideM == -300 && d1.SideSign == -1);
+        // 自定义：左右侧位真实斜距 399.25，但目标距离按历史口径取 400
+        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+        shapeCfg.FormationWingSide = -1;
+        var leg = WtHud.Hud.FormationGeometry.Current(shapeCfg);
+        Check("custom keeps legacy target range",
+            leg.SideM == -150 && leg.BackM == -370 && Math.Abs(leg.RangeM - 400) < 0.001);
+        shapeCfg.FormationWingSide = 0;
+        Check("custom trail slot",
+            Math.Abs(WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM - 400) < 0.001);
+        // 未知形状按自定义处理，不能崩也不能给空站位
+        shapeCfg.FormationShape = "nonsense";
+        Check("unknown shape falls back to custom",
+            WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM == 400);
+
         Check("inside turn right/right", IsInsideTurn(+1, +10));
         Check("outside turn right/left", !IsInsideTurn(-1, +10));
         Check("inside turn left/left", IsInsideTurn(-1, -10));
@@ -513,8 +547,10 @@ public static class Program
             else Console.WriteLine("WT_SIM_RATES ignored: need 3 values, first must be 0");
         }
         string[] scenarios = { "STRAIGHT", $"TURN R {rates[1]:0} deg/s", $"TURN L {Math.Abs(rates[2]):0} deg/s" };
-        int[] wings = { 0, -1, +1 };
         var cfg = new HudConfig();
+        // 遍历哪些站位：自定义队形 = 原来三个（尾随/左/右），具名队形 = 它的槽位表。
+        // 这样 1G/2G 的历史数据和以前逐字可比，同时新队形也能跑同一套仿真。
+        var simSlots = WtHud.Hud.FormationGeometry.SimSlots(cfg);
         // 控制器选择：默认站位点追踪（现有产品行为）；WT_SIM_MODE=vector 切到「速度矢量匹配」实验分支
         bool vectorMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "vector";
         // WT_SIM_MODE=omega：角速度控制 —— ω_W = ω_L + k·(LOS 误差)，对应现实编队的「姿态跟随」
@@ -571,9 +607,10 @@ public static class Program
         {
             tracks[si] = new List<(double, double)>[3];
             double omega = rates[si];
-            for (int wi = 0; wi < wings.Length; wi++)
+            for (int wi = 0; wi < simSlots.Count; wi++)
             {
-                int wing = wings[wi];
+                var (geo, wingSideSign, slotLabel) = simSlots[wi];
+                int wing = wingSideSign;
                 ResetGuideState();
                 double psiL = 0, lx = 0, ly = 0;   // 长机：V 型顶点，在原点中央
                 // V 型起点：左右僚机在斜后方（±150, −370 ≈ 400 m 间距），
@@ -591,10 +628,10 @@ public static class Program
                 }
                 else
                 {
-                    wx = wing < 0 ? -cfg.FormationWingOffsetM : wing > 0 ? cfg.FormationWingOffsetM : 0;
-                    wy = wing == 0
-                        ? (startFar ? -600 : -cfg.FormationRangeM)
-                        : -cfg.FormationStationBackM;
+                    wx = geo.SideM;
+                    // ★ 远起点只对尾随位生效：老代码里 side≠0 一律用站位后距，
+                    // 把 startFar 套到全部槽位会让左右僚机凭空多退 230 m（仿真实测 R 394→400 之外还会改 swAt）。
+                    wy = startFar && wing == 0 ? -600 : geo.BackM;
                     psiW0 = 0; vW0Kmh = vKmh;
                 }
                 double psiW = psiW0;
@@ -644,7 +681,7 @@ public static class Program
                     // 掉到 120 m 以外 → 退回 CONVERGE。迟滞 50:120，避免在边界来回切。
                     if (stagedMode)
                     {
-                        double rangeErrNow = Math.Abs(R - cfg.FormationRangeM);
+                        double rangeErrNow = Math.Abs(R - geo.RangeM);
                         if (linkLost && inMaintain)
                         {
                             // 断链：拿不到 ω_L，角速度前馈失效 → 立刻回落，别在保持模式里瞎飞
@@ -678,8 +715,8 @@ public static class Program
                         // 目标不是「指向某个点」，而是让 LOS 角稳定在站位对应的值上：
                         //   ω_W = ω_L + k·(rel − targetRel)
                         // 第一项是前馈（长机转多少我跟多少，即时），第二项才是偏差修正。
-                        double sideW = wing * cfg.FormationWingOffsetM;
-                        double backW = wing == 0 ? -cfg.FormationRangeM : -cfg.FormationStationBackM;
+                        double sideW = geo.SideM;
+                        double backW = geo.BackM;
                         double stBrg = Math.Atan2(sideW, backW) * 180.0 / Math.PI;      // 站位点相对长机（机体系）
                         double targetRel = NormalizeDeg(stBrg + 180.0 + (psiL - psiW)); // 长机相对我方的目标方位
                         double errAng = NormalizeDeg(rel - targetRel);
@@ -697,9 +734,8 @@ public static class Program
                         // （实测直线都漂到 421 m）；但速度这一路用站位点速度的模更准 ——
                         // 站位点自带切向分量 ω×r，外圈该加速、内圈该减速是几何直接给出的。
                         double aheadV = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
-                        guide = NormalizeDeg(WingAimDeg(rel, R, wing,
-                            NormalizeDeg(psiL - psiW), cfg.FormationWingOffsetM,
-                            cfg.FormationRangeM, cfg.FormationStationBackM) + aheadV);
+                        guide = NormalizeDeg(WingAimDeg(rel, R,
+                            NormalizeDeg(psiL - psiW), geo.SideM, geo.BackM) + aheadV);
                         ahead0 = aheadV;
 
                         double om = omegaNow * Math.PI / 180.0;                    // rad/s，正 = 右转
@@ -732,8 +768,7 @@ public static class Program
                         else
                         {
                             double ahead = FormationLeadAheadDeg(omegaNow, R, vKmh, 45, wing);
-                            guide = NormalizeDeg(WingAimDeg(rel, R, wing, hdgErr, cfg.FormationWingOffsetM,
-                            cfg.FormationRangeM, cfg.FormationStationBackM) + ahead);
+                            guide = NormalizeDeg(WingAimDeg(rel, R, hdgErr, geo.SideM, geo.BackM) + ahead);
                             if (i == 0) ahead0 = ahead;
                         }
                     }
@@ -755,7 +790,7 @@ public static class Program
                     bool chasing = R > 450 || (!useOmega && aligning);
                     if (omegaMode || Math.Abs(rel) < 50 || chasing)
                     {
-                        double err = R - cfg.FormationRangeM;
+                        double err = R - geo.RangeM;
                         double pdt = guideIntegralLastT > 0
                             ? Math.Clamp(nowS - guideIntegralLastT, 0, 0.5) : 0;
                         guideIntegralLastT = nowS;
@@ -802,7 +837,7 @@ public static class Program
                     wingTrack.Add((wx, wy));
 
                     // 调试打点（仅尾随位、每 5 s）：定位「为什么给不足加速」
-                    if (wing == 0 && i % (int)(5.0 / dt) == 0)
+                    if (wi == 0 && i % (int)(5.0 / dt) == 0)
                         summary.AppendLine($"# dbg t={nowS:F0} R={R:F0} dKmh={deltaKmh:F0} "
                             + $"closing={closing:F1} vW={vW * 3.6:F0} want?={(Math.Abs(rel) < 50 ? "pid" : "gate")}");
 
@@ -840,7 +875,7 @@ public static class Program
 
                 if (wi == 0) leaders[si] = leadTrack;
                 tracks[si][wi] = wingTrack;
-                string wname = wing == 0 ? "0" : wing < 0 ? "L" : "R";
+                string wname = slotLabel;
                 summary.AppendLine($"{scenarios[si]} wing={wname} inside={(IsInsideTurn(wing, omega) ? "Y" : "N")} "
                     + $"ahead={ahead0:F1} finalRel={finalRel:F1} R={finalR:F0} "
                     + $"along={finalAlong:F0} cross={finalCross:F0} crossed={(maxAlong > 0 ? "YES" : "no")}"
@@ -2701,6 +2736,10 @@ public static class Program
 
                 double closing = UpdateClosingRate(lead.RangeM, snap.ElapsedSeconds);
 
+                // 本机要飞的站位（形状 + 槽位）。后面所有站位几何、到位判定、速度前馈都读它，
+                // 避免出现「引导按新队形算、油门还按旧距离算」的分叉。
+                var slot = WtHud.Hud.FormationGeometry.Current(cfg);
+
                 FormationAction action = FormationAction.None;
                 double deltaKmh = 0;
 
@@ -2709,7 +2748,7 @@ public static class Program
                 {
                     // 级联 PID：外环 PI 把距离误差换成"期望接近率"，内环 P 把接近率之差换成油门。
                     // 三个增益都在 hud-config.json 里（formationKp / formationKi / formationKv）。
-                    double err = lead.RangeM - cfg.FormationRangeM;
+                    double err = lead.RangeM - slot.RangeM;
 
                     double nowS = snap.ElapsedSeconds;
                     double dt = guideIntegralLastT > 0
@@ -2738,7 +2777,7 @@ public static class Program
                     // 纯反馈 PID 要等距离拉大才动作，天然滞后。前馈与反馈一起过低通避免突变。
                     double tasRef = Math.Max(50, snap.TasKmh);
                     double feed = FormationFeedKmh(leadRate, lead.RangeM, snap.TasKmh,
-                        cfg.FormationWingSide, lead.RelBearingDeg, leadHdgDelta,
+                        slot.SideSign, lead.RelBearingDeg, leadHdgDelta,
                         cfg.FormationWingMinRatio, cfg.FormationWingMaxRatio);
                     // 总增量按长机真空速倍数上下限收窄：外圈不许超速、内圈不许失速
                     deltaKmh = Math.Clamp(SmoothGuideDelta(dvRaw + feed, nowS, cfg.FormationGuideTauS),
@@ -2781,9 +2820,7 @@ public static class Program
 
                 // 侧位设定：瞄准点从「长机本体」移到「长机侧后方」；0 = 正后方，保持旧行为
                 double guideTurn = WingAimDeg(lead.RelBearingDeg, lead.RangeM,
-                                              cfg.FormationWingSide, leadHdgDelta,
-                                              cfg.FormationWingOffsetM, cfg.FormationRangeM,
-                                              cfg.FormationStationBackM);
+                                              leadHdgDelta, slot.SideM, slot.BackM);
                 // 提前量只在开关打开且转向率过门槛时叠加；但 leadRate 本身保留 ——
                 // 「超载提示」要独立判断：关了提前量不等于就不该提醒「转弯过急」。
                 double leadRateShown = 0;
@@ -2791,7 +2828,7 @@ public static class Program
                 {
                     guideTurn += FormationLeadAheadDeg(leadRate, lead.RangeM, snap.TasKmh,
                                                        Math.Max(5, cfg.FormationLeadMaxDeg),
-                                                       cfg.FormationWingSide);
+                                                       slot.SideSign);
                     guideTurn = NormalizeDeg(guideTurn);
                     leadRateShown = leadRate;   // 只有真叠了提前量，才需要解释"数值为什么比目视大"
                 }
@@ -3425,7 +3462,7 @@ public static class Program
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        double err = Math.Abs(rangeM - cfg.FormationRangeM);
+        double err = Math.Abs(rangeM - WtHud.Hud.FormationGeometry.Current(cfg).RangeM);
         if (formationStage == FormationStage.Converge)
         {
             if (err <= cfg.FormationDoneM)
@@ -3477,14 +3514,14 @@ public static class Program
     private const double AimForwardMinM = 200;
 
     /// <summary>
-    /// 固定站位瞄准：站位钉在**长机机体坐标系**里（左右 ±150 / 后 370、尾随后 400），
+    /// 固定站位瞄准：站位钉在**长机机体坐标系**里（横向 sideM、后距 backM，由队形槽位给出），
     /// 用 leadHeadingDeltaDeg（长机航向 − 本机航向）把站位转到本机航向系，取 atan2 作为该转的方位。
     /// <para>站位随长机航向一起转，长机转弯后 V 队形跟着转回来；delta = 0（无链路 / 航向一致）
-    /// 退化为本机航向系。站位点斜距都 ≈ 400 m，与 PID 目标间距一致，引导与油门不打架。</para>
+    /// 退化为本机航向系。★ 斜距不再假设相等：梯队/纵队/菱形的槽位斜距各不相同，
+    /// 到位判定读的是 <see cref="WtHud.Hud.FormationSlotSpec.RangeM"/>。</para>
     /// </summary>
-    private static double WingAimDeg(double relBearingDeg, double rangeM, int wingSide,
-                                     double leadHeadingDeltaDeg,
-                                     double wingOffsetM, double targetRangeM, double stationBackM)
+    private static double WingAimDeg(double relBearingDeg, double rangeM,
+                                     double leadHeadingDeltaDeg, double sideM, double backM)
     {
         double rad = relBearingDeg * Math.PI / 180.0;
         double delta = leadHeadingDeltaDeg * Math.PI / 180.0;
@@ -3493,8 +3530,8 @@ public static class Program
         // 长机机体系的「右」「前」在本机航向系的方向
         double rx = Math.Cos(delta), ry = -Math.Sin(delta);
         double fx = Math.Sin(delta), fy = Math.Cos(delta);
-        double side = wingSide * wingOffsetM;
-        double back = wingSide == 0 ? -targetRangeM : -stationBackM;
+        double side = sideM;
+        double back = backM;
         double sx = lx + side * rx + back * fx;
         double sy = ly + side * ry + back * fy;
         // 僚机接近站位时 sy→0，atan2(sx, sy) 在原点附近是病态的：t=0 实测 sx=sy=0
@@ -3954,6 +3991,7 @@ public static class Program
                 if (item >= 0) form.PreviewOpen(pageIdx, Math.Max(0, item));
             }
             else if (view == "help") { form.PreviewHelp(0); }
+            else if (view == "shape") { form.PreviewOpen(1, 3); form.PreviewSub(3); }   // 编队 → 队形（三级页）
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }

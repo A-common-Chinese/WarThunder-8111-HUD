@@ -18,6 +18,9 @@ internal enum ItemKind
     Preset,
     Detail,
     ReadOnly,
+
+    /// <summary>通往下一级页面的一行。值列显示子页摘要（如「梯队 · 2」），不显示具体数值。</summary>
+    Submenu,
 }
 
 /// <summary>One cell of a page (two columns x five rows, filled row-major).</summary>
@@ -58,6 +61,12 @@ internal sealed class MfdItem
     /// <summary>不可用时右侧显示的文本（替掉 ValueText）。null = 只把整行变灰，不解释原因。</summary>
     public Func<HudConfig, string>? DisabledText { get; init; }
 
+    /// <summary>下一级页面的构造函数（只对 <see cref="ItemKind.Submenu"/> 有效）。每次进入都新建定义，实例由表单按 Key 缓存。</summary>
+    public Func<MfdPage>? SubPage { get; init; }
+
+    /// <summary>子页摘要，显示在值列（例如「梯队 · 2」）。null = 只显示一个箭头。</summary>
+    public Func<HudConfig, string>? SubSummary { get; init; }
+
     /// <summary>当前是否可用。绘制与命令分派都从这里取，避免两处判断不一致。</summary>
     public bool IsEnabled(HudConfig cfg) => EnabledWhen?.Invoke(cfg) ?? true;
 
@@ -81,6 +90,8 @@ internal sealed class MfdItem
             }
             case ItemKind.Action:
                 return "▶";
+            case ItemKind.Submenu:
+                return (SubSummary?.Invoke(cfg) ?? "") + " ›";
             case ItemKind.Detail:
                 return "";
             case ItemKind.Preset:
@@ -132,6 +143,14 @@ internal sealed class MfdPage
     public required string TitleKey { get; init; }
     public required string MenuKey { get; init; }
     public required string MenuHintKey { get; init; }
+
+    /// <summary>页面标识，用于缓存渲染实例（保留选中位置）。空 = 用 TitleKey。</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>下一级页面填父页标题，标题行会显示「父 › 子」。null = 顶层模块。</summary>
+    public string? ParentTitleKey { get; init; }
+
+    public string CacheKey => Key.Length > 0 ? Key : TitleKey;
     public List<MfdItem> Items { get; init; } = new();
 
     /// <summary>首页显示的数量：动态页面（如回归快照）用它替代 <see cref="Items"/>.Count。</summary>
@@ -171,6 +190,11 @@ internal static class MfdPages
             ToastAfterRun = toast, EnabledWhen = enabledWhen,
         };
 
+    /// <summary>通往下一级页面。summary 给值列用（不填只有箭头）。</summary>
+    private static MfdItem Submenu(string label, Func<MfdPage> build,
+                                   Func<HudConfig, string>? summary = null) =>
+        new() { LabelKey = label, Kind = ItemKind.Submenu, SubPage = build, SubSummary = summary };
+
     private static MfdItem Info(string label, Func<HudConfig, string> text,
                                 Func<HudConfig, bool>? enabledWhen = null) =>
         new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text, EnabledWhen = enabledWhen };
@@ -206,11 +230,13 @@ internal static class MfdPages
         new() { LabelKey = label, Kind = ItemKind.Text, GetText = get, SetText2 = set, EnabledWhen = enabledWhen };
 
     private static MfdItem Enum(string label, string[] choices, Func<HudConfig, int> get, Action<HudConfig, int> set,
-                                Func<HudConfig, bool>? enabledWhen = null) =>
+                                Func<HudConfig, bool>? enabledWhen = null, string? disabledKey = null) =>
         new()
         {
             LabelKey = label, Kind = ItemKind.Enum, Choices = choices,
             GetChoice = get, SetChoice = set, EnabledWhen = enabledWhen,
+            // 不可用时值列改说原因（比如「仅自定义队形」），比只变灰更好懂
+            DisabledText = disabledKey is null ? null : _ => L10n.Get(LangScope.Screen, disabledKey),
         };
 
     /// <summary>
@@ -386,6 +412,67 @@ internal static class MfdPages
         },
     };
 
+    /// <summary>入口行摘要：队形名 + 槽位（自定义时不带槽位号）。</summary>
+    private static string FormationShapeSummary(HudConfig cfg)
+    {
+        var shape = WtHud.Hud.FormationGeometry.IsKnownShape(cfg.FormationShape)
+            ? cfg.FormationShape : WtHud.Hud.FormationGeometry.ShapeCustom;
+        var name = L10n.Get(LangScope.Screen, "opt.shape" + char.ToUpperInvariant(shape[0]) + shape[1..]);
+        if (shape == WtHud.Hud.FormationGeometry.ShapeCustom) return name;
+        var slots = WtHud.Hud.FormationGeometry.SlotCount(shape);
+        var idx = Math.Clamp(cfg.FormationSlot, 0, slots - 1) + 1;
+        return name + " · " + idx;
+    }
+
+    /// <summary>
+    /// 队形（三级页）：选形状与槽位，几何由 <see cref="WtHud.Hud.FormationGeometry"/> 推导。
+    /// <para>下面三个距离只在「自定义」时可改 —— 具名队形的槽位是算出来的，手改没有意义，
+    /// 所以它们跟着形状变灰（EnabledWhen），而不是藏起来：藏起来会让人以为设置丢了。</para>
+    /// </summary>
+    private static MfdPage FormationShapePage() => new()
+    {
+        Key = "formation.shape",
+        TitleKey = "page.formationShape",
+        ParentTitleKey = "page.formationTune",
+        MenuKey = "page.formationShape",
+        MenuHintKey = "menu.hint.formationShape",
+        Items =
+        {
+            // 形状：改形状时把槽位收回到第 1 个，否则会停在一个该队形没有的位置上
+            Enum("row.fShape", new[] { "opt.shapeCustom", "opt.shapeEchelon", "opt.shapeColumn", "opt.shapeDiamond" },
+                 c => ShapeIndex(c.FormationShape),
+                 (c, i) =>
+                 {
+                     c.FormationShape = WtHud.Hud.FormationGeometry.ShapeIds[i];
+                     c.FormationSlot = 0;
+                 }),
+            Enum("row.fSlot", new[] { "slot.1", "slot.2", "slot.3" },
+                 c => Math.Clamp(c.FormationSlot, 0, 2),
+                 (c, i) => c.FormationSlot = i,
+                 c => c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom,
+                 "hint.shapeCustomOnly"),
+            // 派生几何：只读，改了形状/槽位立刻跟着变，用来看「这个站位到底在哪」
+            Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Current(c).RangeM:0} m"),
+            Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Current(c).SideM:0} m"),
+            Info("row.fBackM", c => $"{WtHud.Hud.FormationGeometry.Current(c).BackM:0} m"),
+            // 自定义队形的三块砖（原样保留，默认形状就是自定义，行为不变）
+            Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m",
+                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
+            Number("row.fWingOffset", c => c.FormationWingOffsetM, (c, v) => c.FormationWingOffsetM = v, 10, 0, 600, "m",
+                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
+            Number("row.fStationBack", c => c.FormationStationBackM, (c, v) => c.FormationStationBackM = v, 10, 200, 1200, "m",
+                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
+            // 自定义队形的左右选择（就是原来的「僚机侧位」）
+            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
+                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1,
+                 c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom,
+                 "hint.shapeCustomOnly"),
+        },
+    };
+
+    private static int ShapeIndex(string shape) =>
+        Math.Max(0, Array.IndexOf(WtHud.Hud.FormationGeometry.ShapeIds, shape));
+
     /// <summary>
     /// 编队调参页：僚机的制导增益与包线。
     /// <para>这些数**不该经常动**，所以单独一页、不混在常用设置里。改动前先看面板 HELP
@@ -403,16 +490,13 @@ internal static class MfdPages
                    (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
             Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
-            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
-                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1),
+            // 队形几何（原「僚机侧位」+ 三个距离）搬进三级页：这些数只跟队形有关，
+            // 混在增益和判定里既占屏又容易被误改。入口行显示当前队形 + 槽位。
+            Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
             Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
-            // ---- 站位间距（改这三个要在一起看：150² + 370² ≈ 400² 是刻意凑的） ----
-            Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m"),
-            Number("row.fWingOffset", c => c.FormationWingOffsetM, (c, v) => c.FormationWingOffsetM = v, 10, 0, 600, "m"),
-            Number("row.fStationBack", c => c.FormationStationBackM, (c, v) => c.FormationStationBackM = v, 10, 200, 1200, "m"),
             // ---- 状态机判定与保持死区（改站位时这几个要跟着看） ----
             Number("row.fDoneM", c => c.FormationDoneM, (c, v) => c.FormationDoneM = v, 5, 10, 200, "m"),
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),

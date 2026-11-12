@@ -43,6 +43,12 @@ public sealed class MfdFrameForm : Form
     private Pages.PickVehiclePage? _pickPageUI;
     private Pages.SnapshotsPage? _snapPageUI;
     private int _page;
+    // 三级页面：只在 _mode == Mode.Items 时有意义。_subPage 是定义，_subPageUI 是渲染实例
+    // （按 Key 缓存 → 退出再进时选中位置还在）。
+    private MfdPage? _subPage;
+    private Pages.MfdItemsPage? _subPageUI;
+    private readonly Dictionary<string, Pages.MfdItemsPage> _subCache = new();
+    private MfdPageLayout? _itemLayout;      // 与一级模块同一套布局，造子页实例时要用
     private int _menuSel;
     private int _menuPageIdx;              // 主菜单页号（每页 10 个模块，与模块内页号独立）
     private MfdItem? _pendingAction;
@@ -117,6 +123,7 @@ public sealed class MfdFrameForm : Form
 
         // 一级模块页对象：几何与配置都用委托/共享实例，页面自己不会去碰别的东西。
         var pageLayout = new MfdPageLayout(_layout, _layout.Width / 1330f);
+        _itemLayout = pageLayout;
         foreach (var data in _pages)
         {
             var itemsPage = new Pages.MfdItemsPage(data, () => _work, pageLayout, Activate);
@@ -135,11 +142,43 @@ public sealed class MfdFrameForm : Form
         return new Bitmap(stream);
     }
 
-    private MfdPage? CurrentPage => _page >= 0 && _page < _pages.Count ? _pages[_page] : null;
+    /// <summary>
+    /// 当前页定义：三级页优先，否则是当前模块。
+    /// <para>★ 所有读 CurrentPage 的地方（激活分派、命中、特判）都自动支持三级页，
+    /// 不需要各自判断「现在在第几层」。</para>
+    /// </summary>
+    private MfdPage? CurrentPage => _subPage ?? (_page >= 0 && _page < _pages.Count ? _pages[_page] : null);
 
     /// <summary>当前模块的页面对象 —— 绘制、命中、选中、翻页都问它。</summary>
-    private Pages.MfdItemsPage? ItemsPage =>
-        _page >= 0 && _page < _itemPages.Count ? _itemPages[_page] : null;
+    private Pages.MfdItemsPage? ItemsPage => _subPage != null
+        ? _subPageUI
+        : _page >= 0 && _page < _itemPages.Count ? _itemPages[_page] : null;
+
+    /// <summary>进入下一级页面。实例按 Key 缓存，退出再进来选中位置不变。</summary>
+    private void EnterSubPage(MfdPage page)
+    {
+        if (!_subCache.TryGetValue(page.CacheKey, out var ui))
+        {
+            ui = new Pages.MfdItemsPage(page, () => _work, _itemLayout!, Activate);
+            ui.Build();
+            _subCache[page.CacheKey] = ui;
+        }
+        _subPage = page;
+        _subPageUI = ui;
+        _mode = Mode.Items;
+        _toast = null;
+        Invalidate();
+    }
+
+    /// <summary>从三级页退回到进入它的那一页（模块页或上一级）。</summary>
+    private void LeaveSubPage()
+    {
+        _subPage = null;
+        _subPageUI = null;
+        _toast = null;
+        SyncDiagProbe();
+        Invalidate();
+    }
 
     /// <summary>当前占着面板的二级页面（没有就是 null）。</summary>
     private Pages.MfdPageBase? ActivePage => _mode switch
@@ -311,6 +350,9 @@ public sealed class MfdFrameForm : Form
             _ => ActivePage?.TitleKey ?? CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
+        // 三级页标题显示「父 › 子」：只有一层箭头，但足够回答「我在哪」。
+        if (_mode == Mode.Items && _subPage?.ParentTitleKey is { } parentKey)
+            title = L10n.Get(LangScope.Screen, parentKey) + " › " + title;
         if (_mode is Mode.EditNumber)      // 只有编辑页需要说明正在改哪一层
         {
             var scopeText = WtHud.Hud.EditScope.HeaderText;
@@ -403,13 +445,26 @@ public sealed class MfdFrameForm : Form
             var page = _pages[i];
             g.DrawString(L10n.Get(LangScope.Screen, page.MenuKey), name, fgBrush, x + 16 * s, y + 5 * s,
                          StringFormat.GenericTypographic);
-            var countText = (page.LiveCount?.Invoke() ?? page.Items.Count)
+            var countText = CountItems(page)
                             + (L10n.Screen == Lang.Zh ? " 项" : " ITEMS");
             var hw = g.MeasureString(countText, hintF).Width;
             g.DrawString(countText, hintF, fgBrush, x + colW - hw, y + 12 * s, StringFormat.GenericTypographic);
         }
     }
 
+
+    /// <summary>
+    /// 模块的实际条目数：三级页的子项算进去，入口行本身不算 ——
+    /// 否则加了子菜单后「编队 34 项」会变成 35，数字和内容对不上。
+    /// </summary>
+    private static int CountItems(MfdPage page)
+    {
+        if (page.LiveCount is { } live) return live();
+        var total = 0;
+        foreach (var item in page.Items)
+            total += item.SubPage is { } build ? CountItems(build()) : 1;
+        return total;
+    }
 
     /// <summary>HELP 键：进入帮助页（再按一次退出）。页面的内容/翻页/选中都在 HelpPage 里。</summary>
     private void EnterHelp()
@@ -421,7 +476,8 @@ public sealed class MfdFrameForm : Form
         _helpPrevPage = _page;
         _helpPrevItemSel = ItemsPage?.Selected ?? 0;
         _helpPageUI = new Pages.HelpPage(
-            pages: () => _pages,
+            // 三级页 HELP 只列出这一页：整棵模块树里没有它，混进去会显示成同级模块。
+            pages: () => _subPage != null ? new List<MfdPage> { _subPage } : _pages,
             cfg: () => _cfg,
             onClose: LeaveHelp,
             layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
@@ -962,6 +1018,9 @@ public sealed class MfdFrameForm : Form
             case ItemKind.Text:
                 EnterTextEdit(item);
                 return;
+            case ItemKind.Submenu:
+                if (item.SubPage is { } build) EnterSubPage(build());
+                return;
             case ItemKind.Detail:
                 EnterDetail(item);
                 return;
@@ -1322,6 +1381,9 @@ public sealed class MfdFrameForm : Form
             case Mode.Confirm:
                 _confirmPage?.Handle(MfdCommand.Of("nav.back"));
                 break;
+            case Mode.Items when _subPage != null:
+                LeaveSubPage();          // 三级页：退一层，仍在 Items
+                break;
             case Mode.Items:
                 _menuSel = _page;
                 _menuPageIdx = _menuSel / 10;
@@ -1518,6 +1580,14 @@ public sealed class MfdFrameForm : Form
             items.GoTo(absoluteItem / 10, 0);
             items.SelectRaw(Math.Max(0, absoluteItem));
         }
+    }
+
+    /// <summary>Preview helper: 选中某行并进入它的下一级页面（出图用）。</summary>
+    public void PreviewSub(int itemIndex)
+    {
+        if (CurrentPage?.Items.ElementAtOrDefault(itemIndex)?.SubPage is { } build)
+            EnterSubPage(build());
+        Invalidate();
     }
 
     /// <summary>Preview helper: switch the module's item page (0-based, 10 cells per page).</summary>
