@@ -999,12 +999,12 @@ public sealed class HudGeometry
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = range, Align = HudAlign.Right, FontSize = fontSmall * 1.25,
-            Color = Fade(col, 0.85), Points = { (cx - gapPx, cy + 12.2 * pxDeg) },
+            Color = Fade(col, 0.85), Points = { (cx - gapPx, cy + 10.4 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text, Text = "\u2192 " + target, Align = HudAlign.Left, FontSize = fontSmall * 1.25,
-            Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 12.2 * pxDeg) },
+            Color = Fade(col, 0.6), Points = { (cx + gapPx, cy + 10.4 * pxDeg) },
         });
 
         // ---- 3) 油门：加/减速给数值，稳定时给"保持" ----
@@ -1026,7 +1026,7 @@ public sealed class HudGeometry
                     Text = (dvShow > 0 ? "+" : "-") + Math.Abs(dvShow).ToString() + " km/h",
                     Align = HudAlign.Left, FontSize = fontSmall * 1.05,
                     Color = Fade(_opt.WarnColor, 0.9),
-                    Points = { (cx + 4.4 * pxDeg, cy + 11.4 * pxDeg) },
+                    Points = { (cx + 4.4 * pxDeg, cy + 9.6 * pxDeg) },
                 });
             }
 
@@ -1034,7 +1034,7 @@ public sealed class HudGeometry
             {
                 Kind = HudPrimKind.Text, Text = act, Align = HudAlign.Center,
                 FontSize = fontSmall * 1.15, Color = hold ? col : _opt.WarnColor,
-                Points = { (cx, cy + 11.4 * pxDeg) },
+                Points = { (cx, cy + 9.6 * pxDeg) },
             });
         }
     }
