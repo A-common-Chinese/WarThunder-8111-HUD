@@ -24,13 +24,24 @@
 | 步骤 | 操作 | 判据 |
 |---|---|---|
 | 1 | 装蒲公英客户端，登录**同一个账号**（或让对方接受邀请加入同一网络） | 网络列表里能看到**两台**设备，状态都是「在线」 |
-| 2 | 记下本机虚拟 IP（`16.x` / `17.x` 开头，不是 `192.168.x`） | 两台各记一个，别记反 |
-| 3 | `ipconfig` 确认虚拟网卡是「已连接」 | 有默认网关或至少有一个 `16.x` 地址 |
+| 2 | 记下本机虚拟 IP：**看网卡名，不要看网段** | 网卡名含 `Oray` / `蒲公英` / `VpnEnt`，那一行的 IPv4 就是 |
+| 3 | 确认虚拟网卡是「已连接」 | 该网卡有地址（不要求有网关） |
 
-然后在一台上 ping 另一台：
+查本机地址用这条，一眼能看出哪块网卡是蒲公英：
 
 ```powershell
-ping <对端虚拟IP>
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object IPAddress, InterfaceAlias
+```
+
+> ★ 本机实测：`OrayBoxVpnEnt` 拿到的是 **`172.16.1.229`**。
+> 蒲公英按组网模式可能给 `16.x`、`17.x`，也可能给 `172.16.x` ——
+> 和 VMware / 家用路由器的私有段长得很像，**只能靠网卡名认**。
+> `datalink-test.ps1` 会自动把带 Oray 的网卡标出来。
+
+然后在一台上 ping 另一台（换成对方的虚拟 IP）：
+
+```powershell
+ping 172.16.1.69
 ```
 
 | 结果 | 判断 |
@@ -61,24 +72,53 @@ New-NetFirewallRule -DisplayName "WtHud DataLink" -Direction Inbound -Protocol U
 
 ## 3. 第一枪：链路通不通（不用游戏、不用 HUD 界面）
 
-### 3.A 推荐先做：两个小脚本，一轮测双向（共 8 KB，不用传 exe）
+### 3.A 推荐先做：一条命令，一轮测双向（共 13 KB，不用传 exe）
 
-两端各开**两个** PowerShell 窗口。发送端不占 48017，所以「收」和「发」可以在同一台机器上同时跑：
+**先 cd 到脚本所在的文件夹**，否则会报「.ps1 不存在」：
+
+```powershell
+cd "$env:USERPROFILE\Desktop\WtHud-数据链联调"
+```
+
+然后（`172.16.1.69` 换成对方的虚拟 IP，**不要带尖括号**）：
+
+```powershell
+.\datalink-test.ps1 -Peer 172.16.1.69
+```
+
+它会先列出本机所有 IPv4 并标出蒲公英那块网卡，再开两个窗口：一个收、一个发。
+两端都跑这一条，**A→B 和 B→A 就在同一轮里验完了**。
+
+加 `-Seconds 300` 就是五分钟稳定性；加 `-DryRun` 只打印命令不开窗口。
+
+<details>
+<summary>不想用一键脚本？手动开两个窗口（等价）</summary>
 
 ```powershell
 # 窗口 1：收（占住 48017）
-powershell -ExecutionPolicy Bypass -File .\fakedatalink-recv.ps1 -Seconds 120
+.\fakedatalink-recv.ps1 -Seconds 120
 
 # 窗口 2：发给对方
-powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚拟IP>:48017 -Seconds 120
+.\fakedatalink.ps1 -Target 172.16.1.69:48017 -Seconds 120
 ```
 
-两边都这么跑，**一轮就把 A→B 和 B→A 同时测了** —— 不用来回换角色。
+发送端不占 48017，所以收和发能在同一台机器上同时跑。
+如果提示「无法加载文件，因为在此系统上禁止运行脚本」，改成：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\fakedatalink-recv.ps1 -Seconds 120
+powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target 172.16.1.69:48017 -Seconds 120
+```
+
+</details>
+
+★ PowerShell 里 `<` 是重定向符号。看到 `“<”运算符是为将来使用而保留的`，
+就是把占位符的尖括号一起抄进去了 —— 地址只能写数字和点。
 
 两边窗口各出现这种行就通了：
 
 ```
-  14:02:11.337  from 16.12.7.9:52311        id=777777  alt= 3012m  vy=  10.0  hdg= 184  turn=   0.0  bank=     -  pos=0.52000,0.50000
+  14:02:11.337  from 172.16.1.69:52311        id=777777  alt= 3012m  vy=  10.0  hdg= 184  turn=   0.0  bank=     -  pos=0.52000,0.50000
 ```
 
 判据（**两边各自**都要满足）：
@@ -122,11 +162,10 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚�
 
 ### 4.2 五分钟
 
-两边同时跑（还是 3.A 那两个窗口，把 `-Seconds` 改成 300）：
+两边同时跑（就是 3.A 那条命令，把时长改成 300）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\fakedatalink-recv.ps1 -Seconds 300
-powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚拟IP>:48017 -Seconds 300
+.\datalink-test.ps1 -Peer 172.16.1.69 -Seconds 300
 ```
 
 | 指标 | 期望 | 门槛 |
@@ -147,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚�
 | 行 | 填什么 |
 |---|---|
 | 使用数据互联 | 开 |
-| 对端地址 | `<对端虚拟IP>:48017`（多个用逗号分隔；留空 = 广播，跨省一定不通） |
+| 对端地址 | `172.16.1.69:48017`（多个用逗号分隔；留空 = 广播，跨省一定不通） |
 | 发送目标 | 自动变成 `1 target(s)`；显示 `1 ok / 1 bad` 说明地址格式写错了 |
 
 改完**立即生效**，不用重启。然后按这张表逐项打勾：
