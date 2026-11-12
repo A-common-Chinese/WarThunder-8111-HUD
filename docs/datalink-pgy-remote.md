@@ -59,30 +59,29 @@ New-NetFirewallRule -DisplayName "WtHud DataLink" -Direction Inbound -Protocol U
 
 ---
 
-## 3. 第一枪：单向收包（不用游戏、不用 HUD 界面）
+## 3. 第一枪：链路通不通（不用游戏、不用 HUD 界面）
 
-**B 机（接收）**：
+### 3.A 推荐先做：两个小脚本，一轮测双向（共 8 KB，不用传 exe）
 
-```powershell
-cd "C:\Users\<你>\Desktop\WtHud-数据链联调"
-.\WtHud.exe dlprobe 120
-```
-
-窗口停在 `listening on udp 48017 for 120s`。**别关，也别同时开 HUD**（抢同一个端口）。
-
-**A 机（发送）**：只需要 `fakedatalink.ps1` 这一个 4 KB 脚本，不用拷 72 MB 的 exe。
+两端各开**两个** PowerShell 窗口。发送端不占 48017，所以「收」和「发」可以在同一台机器上同时跑：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <B的虚拟IP>:48017 -Seconds 120
+# 窗口 1：收（占住 48017）
+powershell -ExecutionPolicy Bypass -File .\fakedatalink-recv.ps1 -Seconds 120
+
+# 窗口 2：发给对方
+powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚拟IP>:48017 -Seconds 120
 ```
 
-**看 B 的窗口**，出现这种行就通了：
+两边都这么跑，**一轮就把 A→B 和 B→A 同时测了** —— 不用来回换角色。
+
+两边窗口各出现这种行就通了：
 
 ```
-  14:02:11.337  from 16.12.7.9:52311   id=777777  alt= 3012m  vy= 10.0  hdg= 184  bank=-    pos=0.52000,0.50000
+  14:02:11.337  from 16.12.7.9:52311        id=777777  alt= 3012m  vy=  10.0  hdg= 184  turn=   0.0  bank=     -  pos=0.52000,0.50000
 ```
 
-120 秒后自动打印统计。判据：
+判据（**两边各自**都要满足）：
 
 | `rx`（120 s，期望 480） | 结论 |
 |---|---|
@@ -91,16 +90,31 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <B的虚拟I
 | 0 | 不通，跳到第 6 节 |
 | `bad > 0` | 包到了但解析失败 —— 报文被中间设备改写了，把原始行贴出来 |
 
+### 3.B 更接近真实：用 HUD 自己的解析器（需要 exe）
+
+脚本的解析规则是照着 `DataLink.TryParsePayload` 抄的，但毕竟是两份代码。
+想用真家伙验一遍时，把收的那一端换成 `dlprobe`：
+
+```powershell
+.\WtHud.exe dlprobe 120
+```
+
+窗口停在 `listening on udp 48017 for 120s`。**别关，也别同时开 HUD**（抢同一个端口）。
+
+另一端照旧用 `fakedatalink.ps1` 发。判据与 3.A 相同。
+★ 这一路是**单向**的，换方向要交换角色再跑一遍。
+
 > ★ UDP 没有「连接」概念，**不能用 telnet / `Test-NetConnection -Port` 测**（那是 TCP）。
 > 唯一可靠的判据就是 `rx` 计数在涨。
 
 ---
 
-## 4. 第二枪：反向 + 五分钟稳定性
+## 4. 第二枪：五分钟稳定性
 
-### 4.1 反向必须单独测
+### 4.1 反向别省
 
-交换角色再跑一遍（A 收、B 发）。
+用 3.A（两边同时收发）时，双向已经在同一轮里验过了，可以跳过这一条。
+只走了 3.B（`dlprobe` 单向）的，**必须交换角色再跑一遍**。
 
 ★ NAT 打洞有可能**只通一个方向**：A 发的包能到 B，B 发的包到不了 A。
 这时候单向 `rx` 正常、双向就废 —— 编队里表现是「我看见他、他看不见我」，
@@ -108,8 +122,11 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <B的虚拟I
 
 ### 4.2 五分钟
 
+两边同时跑（还是 3.A 那两个窗口，把 `-Seconds` 改成 300）：
+
 ```powershell
-.\WtHud.exe dlprobe 300
+powershell -ExecutionPolicy Bypass -File .\fakedatalink-recv.ps1 -Seconds 300
+powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <对端虚拟IP>:48017 -Seconds 300
 ```
 
 | 指标 | 期望 | 门槛 |
@@ -118,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target <B的虚拟I
 | 连续丢包 | 0 | **≤ 11 包**（3 s 超时 = 12 包，超了 HUD 会闪 `no partner`） |
 | `nodes` | 1 | 恒为 1；忽 0 忽 1 说明丢包已经踩线 |
 
-连续丢包怎么数：B 窗口每行都有毫秒时间戳，相邻两行的间隔
+连续丢包怎么数：收端每行都有毫秒时间戳，相邻两行的间隔
 `> 750 ms`（3 个周期）就记一次异常，`> 3000 ms` 就是一次掉线。
 
 ---
