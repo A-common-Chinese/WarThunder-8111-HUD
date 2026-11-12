@@ -448,6 +448,17 @@ public static class Program
             Math.Abs(FormationRangeErrorPct(1545 * 1.1, 1545) - 10.0) < 1e-9);
         Check("range error pct guards zero target", FormationRangeErrorPct(500, 0) == 0);
 
+        // ---- 主菜单侧键：注册名与按下时发出的名字必须是同一个（物理键 ↔ 格子两套编号）----
+        bool menuSideOk = true;
+        for (int cell = 0; cell < 10; cell++)
+        {
+            int key = WtHud.UI.Mfd.Controls.MfdPageLayout.SideKeyFromCell(cell);
+            int back = WtHud.UI.Mfd.Controls.MfdPageLayout.CellFromSideKey(key);
+            if (back != cell) menuSideOk = false;
+            if (WtHud.UI.Mfd.MfdFrameForm.MenuSideSlotName(cell) != "SIDE" + back) menuSideOk = false;
+        }
+        Check("menu side key names round-trip", menuSideOk);
+
         // ---- 面板分页：键漏了不会报错，屏幕上会直接印出键名（曾经出现过 val.roleWing）----
         var modules = WtHud.UI.Mfd.MfdPages.Build();
         Check("menu has 10 modules", modules.Count == 10);
@@ -5187,6 +5198,7 @@ public static class Program
             else if (view == "diag") { form.PreviewOpen(9, 0); }                        // 诊断（顶部数据链入口）
             else if (view == "diagstatus") { form.PreviewOpen(9, 0); form.PreviewSub(0); }  // 诊断 → 链路状态（同一个页）
             else if (view == "dlfromform") { form.PreviewOpen(1, 8); form.PreviewSub(8); }  // 编队 → 数据链（跳板）
+            else if (view == "sidekey") { form.PreviewSideKey(Math.Clamp(item, 0, 9)); }   // 主菜单按第 N 个侧键
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }

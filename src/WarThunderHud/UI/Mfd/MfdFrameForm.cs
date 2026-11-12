@@ -1272,7 +1272,11 @@ public sealed class MfdFrameForm : Form
             // 鼠标点任何位置都只能选中第 0 个；侧键则是 SIDE{全局索引}，也和画面错位。
             var column = cell % 2;
             var row = cell / 2;
-            var slotName = "SIDE" + (column * 5 + row);
+            // ★ 侧键名用**格子号**，不是物理键号：SidePressed 收到的是物理键 0-9，
+            //   先 CellFromSideKey 换算成格子再发 "SIDE{格子}"，所以注册也必须按格子来。
+            //   原来写成 column*5+row（物理键名），结果按左列第二个键会打开左列第三个模块 ——
+            //   两套编号互逆，除了 0 号键每一个都错位，点下去直接进错页面。
+            var slotName = MenuSideSlotName(cell);
             _menuPage.Buttons.Add(new VirtualButton($"menu{i}", VirtualButtonKind.Action)
             {
                 ParentId = "menu",
@@ -1287,6 +1291,14 @@ public sealed class MfdFrameForm : Form
         }
         _menuRouter.SetButtons(_menuPage.Buttons);
     }
+
+    /// <summary>
+    /// 主菜单某个格子注册的侧键名。**按格子号**，不是物理键号 ——
+    /// 侧键按下时先 <see cref="MfdPageLayout.CellFromSideKey"/> 换成格子再发这个名字。
+    /// <para>★ 抽出来是为了能断言：这两套编号互逆，写错时除了 0 号键全部错位，
+    /// 而且不报错、只是进错模块 —— 一度就是这样。</para>
+    /// </summary>
+    internal static string MenuSideSlotName(int cell) => "SIDE" + cell;
 
     private void EnterPage()
     {
