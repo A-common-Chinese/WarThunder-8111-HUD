@@ -1014,8 +1014,21 @@ public sealed class HudGeometry
             string act = L10n.Get(LangScope.Alerts, hold ? "guide.hold"
                 : g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
 
-            // 数值不再重复：速度带上已经有琥珀三角标出目标位置，
-            // 再写一遍「+640」既占地方又容易和带子上的数对不上（一个 TAS 一个取整差值）。
+            // 数值单独定位，放在高度带左侧（本机高度那个框的左边）：
+            // 拼进上面那句在渲染里连续空格会被压掉，两块分开画才排得开。
+            // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。
+            int dvShow = (int)(Math.Round(g.DeltaKmh / 10.0) * 10);
+            if (!hold && dvShow != 0)
+            {
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text,
+                    Text = (dvShow > 0 ? "+" : "-") + Math.Abs(dvShow).ToString() + " km/h",
+                    Align = HudAlign.Left, FontSize = fontSmall * 1.05,
+                    Color = Fade(_opt.WarnColor, 0.9),
+                    Points = { (cx + 4.4 * pxDeg, cy + 11.4 * pxDeg) },
+                });
+            }
 
             prims.Add(new HudPrim
             {
@@ -1351,9 +1364,11 @@ public sealed class HudGeometry
         double accLen = Math.Clamp(Math.Abs(_opt.AccelMs2) * 0.50 * pxDeg, 0, 5.0 * pxDeg);   // 0-10 m/s^2 maps to 0-5 deg
         double accBarX = x + 1.3 * pxDeg;   // between the tape and the readouts
         double accW = line * accelScale;
+        // 零位基准用琥珀：绿色在这套界面统一表示「实际值」，基准是「该待的地方」，
+        // 用同一根绿线画出来就等于告诉飞行员「现在正好在基准上」。
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Line, Width = accW, Color = Fade(col, 0.55),
+            Kind = HudPrimKind.Line, Width = accW, Color = Fade(_opt.WarnColor, 0.9),
             Points = { (accBarX - 0.25 * pxDeg, cy), (accBarX + 0.25 * pxDeg, cy) },
         });
         if (accLen > 0.15 * pxDeg)
