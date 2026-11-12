@@ -593,6 +593,9 @@ public static class Program
         var cfg = new HudConfig();
         // 遍历哪些站位：自定义队形 = 原来三个（尾随/左/右），具名队形 = 它的槽位表。
         // 这样 1G/2G 的历史数据和以前逐字可比，同时新队形也能跑同一套仿真。
+        // WT_SIM_SHAPE=echelon|column|diamond 让仿真跑具名队形（默认仍是自定义三站位）
+        if (Environment.GetEnvironmentVariable("WT_SIM_SHAPE") is { Length: > 0 } simShape)
+            cfg.FormationShape = simShape;
         var simSlots = WtHud.Hud.FormationGeometry.SimSlots(cfg);
         // 控制器选择：默认站位点追踪（现有产品行为）；WT_SIM_MODE=vector 切到「速度矢量匹配」实验分支
         bool vectorMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "vector";
@@ -674,7 +677,8 @@ public static class Program
                     wx = geo.SideM;
                     // ★ 远起点只对尾随位生效：老代码里 side≠0 一律用站位后距，
                     // 把 startFar 套到全部槽位会让左右僚机凭空多退 230 m（仿真实测 R 394→400 之外还会改 swAt）。
-                    wy = startFar && wing == 0 ? -600 : geo.BackM;
+                    wy = startFar && wing == 0 && cfg.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom
+                        ? -600 : geo.BackM;
                     psiW0 = 0; vW0Kmh = vKmh;
                 }
                 double psiW = psiW0;
@@ -830,7 +834,10 @@ public static class Program
                     //   同时解除 |rel|<50 的门（背向切入时偏角大，但那不是「该不该给油」的依据）。
                     // 对齐阶段也允许加速：只摆方向不补速度的话，平行飞追不上（尾随被甩到 566 m 就是这原因）
                     // 阈值 450：525 时会在 476 m 处「刚好掉出追赶」，闭环推力不足以继续收敛，卡住不动
-                    bool chasing = R > 450 || (!useOmega && aligning);
+                    // ★ 门槛按槽位斜距给，不能写死 450：梯队第 2 位斜距 1030 m，
+                    //   写死值会让它一直判定「掉队」并加速冲到长机身边（实测 R 1030 → 305）。
+                    //   自定义队形的 400 m 槽位：400+50=450，与原值逐字相同。
+                    bool chasing = R > geo.RangeM + 50 || (!useOmega && aligning);
                     if (omegaMode || Math.Abs(rel) < 50 || chasing)
                     {
                         double err = R - geo.RangeM;
@@ -853,7 +860,7 @@ public static class Program
                         //   （实测 t=115 R=666、closing=54 时给出 −22，然后距离又拉开，来回振荡卡在 566）。
                         //   下限按距离给，只做保底，不替代闭环。
                         if (chasing)
-                            dvRaw = Math.Max(dvRaw, Math.Clamp((R - 420) * 0.8, 0,
+                            dvRaw = Math.Max(dvRaw, Math.Clamp((R - geo.RangeM - 20) * 0.8, 0,
                                 vKmh * (cfg.FormationWingMaxRatio - 1)));
                         // 与产品 UpdateNavigation 同一套前馈 + 上下限
                         double feed = (vectorMode || omegaMode)
