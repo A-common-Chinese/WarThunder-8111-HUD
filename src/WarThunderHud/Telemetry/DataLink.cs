@@ -37,6 +37,11 @@ namespace WtHud.Telemetry;
 /// 后几段都是后加的：老版本只发 4 段、也只读 4 段，双方仍能互通（只是没有转向率可用）。
 /// 坐标两段同样是追加的，老读端会忽略，不影响高度；角色（1 长机 / 2 僚机）是第 10 段。
 /// <para>
+/// ★ 坐标拿不到时第 7、8 段留**空**（<c>||||</c>），段位不挪：角色/站位照发，
+/// 长机才知道这架是僚机、只是没有位置，从而显示「数据错误」而不是当它不存在。
+/// 第 11 段是站位 <c>槽位,状态,误差m</c>，状态 <c>-1</c> = 在编队里但本帧无判定。
+/// </para>
+/// <para>
 /// 套接字是**双栈**的（IPv6Any + DualMode）：同一个端口同时收 IPv4 和 IPv6。
 /// 两边宽带都给 IPv6 时可以直接填对方的 v6 地址，不需要任何组网软件；
 /// 没有 v6 的环境里 v4 走 v4-mapped 地址，行为与以前完全一致。
@@ -501,9 +506,12 @@ internal sealed class DataLink : IDisposable
         => BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, null);
 
     /// <summary>
-    /// 完整报文：基础 6 段 + 坐标 2 段 + 目标坡度 1 段（度 ×10，带符号）。
+    /// 完整报文：基础 6 段 + 坐标 2 段 + 目标坡度 1 段（度 ×10，带符号）+ 角色 + 站位。
     /// <para>★ 目标坡度是**追加**段：老读端按前 8 段解析，不会因为多一段而失败；
     /// 新读端遇到 8 段报文就把目标坡度当未知。</para>
+    /// <para>★ 坐标未知（自己的 map_obj 还没给出自机图标）时**不能提前截断**：留两个空段占位，
+    /// 角色和站位照发。否则长机收到的只是一包「有高度、没身份」的数据，连这架是不是僚机都认不出，
+    /// 只能当它不存在 —— 「数据错误」也就无从显示。</para>
     /// </summary>
     internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
                                         double? xn, double? yn, double? targetBankDeg,
@@ -511,16 +519,28 @@ internal sealed class DataLink : IDisposable
                                         int slot = -1, WingState wing = WingState.Unknown, int errM = 0)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
-        if (xn is not double x || yn is not double y) return head;   // 坐标未知 → 仍是 6 段
+        bool hasPos = xn is double && yn is double;
 
-        int ix = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * CoordinateScale);
-        int iy = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * CoordinateScale);
+        // 既没坐标又没身份：保持与旧版完全一致的 6 段（纯高度包）
+        if (!hasPos && role == LinkRole.Unknown) return head;
 
-        string tail = $"{head}|{ix}|{iy}";
+        double x = xn ?? 0.0, y = yn ?? 0.0;
+        string tail;
+        if (hasPos)
+        {
+            int ix = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * CoordinateScale);
+            int iy = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * CoordinateScale);
+            tail = $"{head}|{ix}|{iy}";
+        }
+        else
+        {
+            // 空段占位：段位不能挪，role 必须永远落在第 10 段
+            tail = $"{head}||";
+        }
+
         if (targetBankDeg is double bank)
             tail += "|" + (int)Math.Round(Math.Clamp(bank, -90.0, 90.0) * 10.0);
-        // ★ 第 10 段（角色）只在坐标存在时追加：坐标那两段是配对用的，缺了它整包已经不可用，
-        //   再塞个 role 只会让报文更难读。role=Unknown 时不追加以保持与旧版完全一致的 9 段。
+        // ★ 第 10 段（角色）：只要身份已知就发，与坐标是否存在无关。
         if (role != LinkRole.Unknown)
         {
             // 坡度段缺失时用空段占位，保证 role 永远落在第 10 段 —— 解析端按位置取值
@@ -530,8 +550,9 @@ internal sealed class DataLink : IDisposable
             // 第 11 段：僚机自报站位 `槽位,状态,误差m`。
             // ★ 三个数挤在一段里用逗号分开，而不是再占三段：段位越往后越容易和别处的
             //   解析约定打架，聚成一段之后老读端忽略整段就行，报文也还看得懂。
-            //   只有开了编队辅助、认得出自己槽位的僚机才发 —— 长机发这个没有意义。
-            if (wing != WingState.Unknown && slot >= 0)
+            // ★ 槽位已知就发，哪怕状态是 Unknown（=-1）：那表示「我在编队里，但这一帧算不出
+            //   自己在哪」—— 长机靠这一点显示「数据错误」。不发等于让长机以为这架没参加编队。
+            if (slot >= 0)
                 tail += $"|{slot},{(int)wing},{Math.Clamp(errM, -9999, 9999)}";
         }
         return tail;
@@ -644,12 +665,14 @@ internal sealed class DataLink : IDisposable
 
         // 站位（第 11 段）：`槽位,状态,误差m`。任何一段不合法就整段当未知 ——
         // 但**不因此丢掉整包**：高度和角色仍然有效，长机不该因为一个脏子段就看不见这架飞机。
+        // ★ 状态允许 -1（Unknown）：那是「我在编队里，但这一帧算不出位置」，长机据此显示
+        //   「数据错误」。和「整段缺失」（= 这架没开编队）必须区分开，靠的就是槽位有没有来。
         if (parts.Length >= 11)
         {
             var st = parts[10].Split(',');
             if (st.Length == 3
                 && int.TryParse(st[0], out int slotVal) && slotVal >= 0 && slotVal <= 8
-                && int.TryParse(st[1], out int wingVal) && wingVal >= 0 && wingVal <= 3
+                && int.TryParse(st[1], out int wingVal) && wingVal >= -1 && wingVal <= 3
                 && int.TryParse(st[2], out int errVal) && errVal >= -9999 && errVal <= 9999)
             {
                 slot = slotVal;

@@ -800,7 +800,9 @@ public sealed class HudGeometry
                 });
             }
 
-            // 僚机表：贴在速度带右侧、状态行下方。最多四行 —— 具名队形也就三个槽位。
+            // 僚机表：贴在速度带右侧、状态行下方。
+            // ★ 不设行数上限：具名队形三槽位，但四人以上、外加「数据错误」行时截断会静默少报。
+            //   超出屏幕的部分由渲染目标自然裁掉（Screen 上根本画不到那里）。
             if (_opt.LeadWingRows.Count > 0)
             {
                 // 从主状态下方起：8.0° 是「大字下沿（8.2）- 半行」，再往下三行到 10.4°，
@@ -808,10 +810,8 @@ public sealed class HudGeometry
                 double rowY = cy + 8.0 * pxDeg;
                 double labelX = cx - 10.6 * pxDeg;
                 double stateX = cx - 10.2 * pxDeg;
-                int shown = 0;
                 foreach (var row in _opt.LeadWingRows)
                 {
-                    if (shown++ >= 4) break;
                     prims.Add(new HudPrim
                     {
                         Kind = HudPrimKind.Text, Text = row.Label, Align = HudAlign.Right,

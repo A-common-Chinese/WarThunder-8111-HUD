@@ -516,6 +516,26 @@ public static class Program
                 out int slotBad, out var wingBad, out _)
             && slotBad == -1 && wingBad == WtHud.Telemetry.DataLink.WingState.Unknown);
 
+        // ---- 没有坐标：身份和站位必须照发，段位不挪 ----
+        // ★ 这是「长机显示数据错误」的前提：旧实现整包提前截断，长机连这架是僚机都认不出。
+        var pNoPos = WtHud.Telemetry.DataLink.BuildPayload(
+            654321, 3000, 0, 90, 0, null, null, 0,
+            WtHud.Telemetry.DataLink.LinkRole.Wing, 2,
+            WtHud.Telemetry.DataLink.WingState.Unknown, 0);
+        var pnp = pNoPos.Split('|');
+        Check("no position keeps the field layout", pnp.Length == 11
+            && pnp[6] == "" && pnp[7] == "" && pnp[9] == "2" && pnp[10] == "2,-1,0");
+        Check("no position still parses role and slot",
+            WtHud.Telemetry.DataLink.TryParsePayload(pNoPos, out _, out _, out _, out _, out _,
+                                                     out var xNp, out var yNp, out _, out var roleNp,
+                                                     out int slotNp, out var wingNp, out _)
+            && xNp is null && yNp is null
+            && roleNp == WtHud.Telemetry.DataLink.LinkRole.Wing
+            && slotNp == 2 && wingNp == WtHud.Telemetry.DataLink.WingState.Unknown);
+        // 既没坐标又没身份：回到 6 段纯高度包，老读端看到的和以前一样
+        Check("no position and no role stays 6 fields",
+            WtHud.Telemetry.DataLink.BuildPayload(1, 100, 0, 0, 0, null, null).Split('|').Length == 6);
+
         // ---- 站位状态判定：与状态机脱离 MAINTAIN 同一条线 ----
         var wc = new HudConfig { FormationDropPct = 30, FormationAlignDeg = 5 };
         Check("200 m over a 400 m slot is behind",
@@ -580,7 +600,7 @@ public static class Program
             tMap.Source == FormationSource.Map && tMap.HasHorizontal
             && tMap.RangeM == 400 && tMap.RelBearingDeg == 12);
 
-        // ---- 长机僚机表：按槽位排序、过滤未知、状态词带数字 ----
+        // ---- 长机僚机表：按槽位排序、含「数据错误」行、状态词带数字 ----
         var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
             0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
             WtHud.Telemetry.DataLink.WingState.Behind, 2, 480);
@@ -590,15 +610,39 @@ public static class Program
         var wt3 = new WtHud.Telemetry.DataLink.LinkNode(33, 3000, 0, 0, 0, null, null, 0,
             0, WtHud.Telemetry.DataLink.LinkRole.Lead, 5,
             WtHud.Telemetry.DataLink.WingState.Unknown, -1, 0);
+        // 在编队里、但没有坐标/判定：这一行必须还在，状态写「数据错误」
+        var wt4 = new WtHud.Telemetry.DataLink.LinkNode(44, 3000, 0, 0, 0, null, null, 0,
+            0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
+            WtHud.Telemetry.DataLink.WingState.Unknown, 3, 0);
         var tableRows = WingTable(new[] { wt1, wt2, wt3 });
         Check("wing table keeps only reporting wings", tableRows.Count == 2);
         Check("wing table sorts by slot", tableRows[0].Id == 22 && tableRows[1].Id == 11);
         Check("wing table tolerates null", WingTable(null).Count == 0);
+        Check("data-error wing stays in the table",
+            WingTable(new[] { wt1, wt2, wt3, wt4 }).Count == 3);
         Check("state text says behind with metres", WingStateText(wt1).Contains("480"));
         Check("state text says on station", WingStateText(wt2).Length > 0
             && WingStateText(wt2) != "guide.wing.ok");
-        Check("state text empty for unknown",
-            WingStateText(wt3).Length == 0);
+        Check("unknown state is spelled out as a data error",
+            WingStateText(wt3).Length > 0
+            && WingStateText(wt3) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr"));
+
+        // ---- 完整性：数据错误那架不参与，但一架都没判定时不能算完整 ----
+        var mixOk = WingCompleteness(new[] { wt2, wt4 });          // 到位 + 数据错误
+        Check("data-error wing does not break completeness", mixOk.Judged == 1 && mixOk.AllInPosition);
+        Check("all data-error means nothing is judged", WingCompleteness(new[] { wt4 }).Judged == 0);
+        Check("a lagging wing still breaks completeness",
+            !WingCompleteness(new[] { wt1, wt2 }).AllInPosition);
+        Check("empty table judges nothing", WingCompleteness(null).Judged == 0);
+
+        // ---- 表不设行数上限：截断等于静默少报（四人以上 / 带数据错误行时正好踩到）----
+        var leadOpt = new HudOptions { LeadStatusMain = "X", FormationOnly = true };
+        for (int i = 0; i < 6; i++) leadOpt.LeadWingRows.Add(("W" + (i + 1), "到位", false));
+        var leadPrims = new HudGeometry(leadOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true }, default, 1920, 1080);
+        int drawnLabels = leadPrims.Count(p => p.Text is "W1" or "W2" or "W3" or "W4" or "W5" or "W6");
+        int drawnStates = leadPrims.Count(p => p.Text == "到位");
+        Check("wing table draws every row", drawnLabels == 6 && drawnStates == 6);
 
         // ---- 长机按僚机自报槽位算期望距离 ----
         var slotNodes = new[]
@@ -1585,7 +1629,8 @@ public static class Program
                 WtHud.Telemetry.DataLink.WingState.Behind => $"W{n.Slot + 1}=behind{n.ErrM}m",
                 WtHud.Telemetry.DataLink.WingState.Ahead => $"W{n.Slot + 1}=ahead{Math.Abs(n.ErrM)}m",
                 WtHud.Telemetry.DataLink.WingState.OffStation => $"W{n.Slot + 1}=off",
-                _ => "-",
+                // 有站位段但状态是 -1：在编队里、这一帧算不出（长机那边显示「数据错误」）
+                _ => n.Slot >= 0 ? $"W{n.Slot + 1}=err" : "-",
             };
             Console.WriteLine($"  {DateTime.Now:HH:mm:ss.fff}  from {from,-22} id={n.Id,-7} " +
                               $"role={role}  wing={wing,-14} alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
@@ -3164,14 +3209,28 @@ public static class Program
         if (snap.ElapsedSeconds < formationNoticeUntil)
             opt.FormationNotice = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
                 formationStage == FormationStage.Disabled ? "guide.formationOff" : "guide.formationDone");
-        if (!formationOn) ResetGuideState();
+        if (!formationOn)
+        {
+            ResetGuideState();
+            // 编队辅助关掉时不再有站位这回事：第 11 段整段不发，
+            // 否则长机那边会一直挂着一句关掉之前的「到位」。
+            ClearSelfWingReport();
+        }
 
         opt.GridText = "";
         opt.EdgeWarning = false;
         opt.NavFriendly = "";
         opt.NavEnemy = "";
 
-        if (map.Self is not { } self || !snap.Valid) return;
+        // 没有自机坐标（8111 半初始化 / 不在对局）：站位判定无从谈起。
+        // ★ 必须主动清掉上一帧的状态：否则本机一边报着「到位」、报文里却没有坐标，
+        //   长机看到的就是一句假话。保留槽位 → 长机显示「数据错误」。
+        if (map.Self is not { } self || !snap.Valid)
+        {
+            if (formationOn && !cfg.LeadMode) ClearSelfWingReport(cfg.FormationSlot);
+            else ClearSelfWingReport();
+            return;
+        }
 
         // Heading used for the bearing arrows: the aircraft compass when available, otherwise the
         // course over ground derived from map position changes (compass-less types like Rafale C).
@@ -3308,16 +3367,24 @@ public static class Program
                 }
 
                 // ★ 有僚机自报时以自报为准：主行只说整体，具体谁掉了看下面那张表。
-                //   表是逐架的（到位 / 掉队 480m / 偏离站位），最多四行。
-                //   「编队完整」= 所有报到的僚机都在位，少一架没报到也不算完整。
-                bool allInPosition = wingRows.Count > 0;
-                foreach (var n in wingRows)
-                    if (n.Wing != WtHud.Telemetry.DataLink.WingState.InPosition) allInPosition = false;
+                //   表是逐架的（到位 / 掉队 480m / 偏离站位 / 数据错误）。
+                //   ★ 完整性只看「有判定」的那些：一架数据错误不该把整队判成不完整
+                //     （他连自己在哪都不知道，凭什么拖累别人）；但一架都没判定出来时
+                //     也不能说「编队完整」—— 那同样是一句假话。
+                var (judgedCount, allJudgedInPosition) = WingCompleteness(wingRows);
                 if (wingRows.Count > 0)
                 {
-                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
-                                             allInPosition ? "guide.lead.formation" : "guide.lead.late");
-                    warn = !allInPosition;
+                    if (judgedCount == 0)
+                    {
+                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr");
+                        warn = true;
+                    }
+                    else
+                    {
+                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                                                 allJudgedInPosition ? "guide.lead.formation" : "guide.lead.late");
+                        warn = !allJudgedInPosition;
+                    }
                 }
                 foreach (var n in wingRows)
                     opt.LeadWingRows.Add((WingLabel(n), WingStateText(n),
@@ -3487,7 +3554,7 @@ public static class Program
                 {
                     opt.Guide = null;
                     opt.TargetHeadingDeg = null;
-                    ClearSelfWingReport();      // 没有水平量就没有站位误差，别发上一帧的残留
+                    ClearSelfWingReport(cfg.FormationSlot);   // 没有水平量就没有站位误差，别发上一帧的残留
                     opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noSelfPos");
                 }
                 else
@@ -3633,6 +3700,9 @@ public static class Program
                     if (formationStage == FormationStage.Disabled)
                     {
                         opt.Guide = null;
+                        // ★ 解除后不再判定：还发「到位」就是拿上一帧的结论骗长机。
+                        //   槽位保留 → 长机那一行变成「数据错误」，而不是凭空消失。
+                        ClearSelfWingReport(cfg.FormationSlot);
                     }
                     else if (opt.Vertical is { Priority: true })
                     {
@@ -3654,7 +3724,8 @@ public static class Program
             {
                 opt.Guide = null;
                 ResetGuideState();
-                ClearSelfWingReport();     // 没认到长机就没有槽位，别发上一帧的残留
+                // 没认到长机：同样发不出判定。保留槽位，长机显示「数据错误」而不是当这架不存在。
+                ClearSelfWingReport(cfg.FormationSlot);
 
                 // 找不到长机：分两种情况说清。长机模式有自己的状态行（guide.lead.none），不重复。
                 if (formationOn && !cfg.LeadMode)
@@ -4185,9 +4256,15 @@ public static class Program
     private static int selfWingErrM;
     private static WtHud.Telemetry.DataLink.WingState selfWingState = WtHud.Telemetry.DataLink.WingState.Unknown;
 
-    private static void ClearSelfWingReport()
+    /// <summary>
+    /// 清掉站位状态。
+    /// <para><paramref name="slot"/> &gt;= 0 时**保留槽位**、只把状态置为 Unknown —— 那是
+    /// 「我在编队里，但这一帧算不出自己在哪」。长机收到 <c>槽位,-1,0</c> 会显示「数据错误」，
+    /// 而不是以为这架没参加编队（那条路是整段不发）。</para>
+    /// </summary>
+    private static void ClearSelfWingReport(int slot = -1)
     {
-        selfWingSlot = -1;
+        selfWingSlot = slot >= 0 ? Math.Clamp(slot, 0, 8) : -1;
         selfWingErrM = 0;
         selfWingState = WtHud.Telemetry.DataLink.WingState.Unknown;
     }
@@ -4261,14 +4338,39 @@ public static class Program
         return byLink;
     }
 
-    /// <summary>长机 HUD 上的僚机表：只要自报过站位的节点，按槽位排序（没有槽位的排最后）。</summary>
+    /// <summary>
+    /// 长机主状态的判定输入：只看**有判定**的僚机。
+    /// <para>★ 数据错误（Wing = Unknown）的那架不参与完整性 —— 一个人数据错误不该把整队
+    /// 判成不完整；但 <c>Judged == 0</c> 时不能说「编队完整」，那也是一句假话，
+    /// 调用方要改说「数据错误」。</para>
+    /// </summary>
+    internal static (int Judged, bool AllInPosition) WingCompleteness(
+        IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? rows)
+    {
+        int judged = 0;
+        bool all = true;
+        if (rows is null) return (0, all);
+        foreach (var n in rows)
+        {
+            if (n.Wing == WtHud.Telemetry.DataLink.WingState.Unknown) continue;
+            judged++;
+            if (n.Wing != WtHud.Telemetry.DataLink.WingState.InPosition) all = false;
+        }
+        return (judged, all);
+    }
+
+    /// <summary>
+    /// 长机 HUD 上的僚机表：只要**发过第 11 段**的节点（槽位 &gt;= 0），按槽位排序。
+    /// <para>★ 入表条件不是「状态已知」：状态 Unknown 恰恰是「数据错误」那一档，必须列出来。
+    /// 没发第 11 段的节点是"没开编队辅助/老版本"，不属于这支编队，不进表。</para>
+    /// </summary>
     internal static List<WtHud.Telemetry.DataLink.LinkNode> WingTable(
         IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? nodes)
     {
         var list = new List<WtHud.Telemetry.DataLink.LinkNode>();
         if (nodes is null) return list;
         foreach (var n in nodes)
-            if (n.Wing != WtHud.Telemetry.DataLink.WingState.Unknown) list.Add(n);
+            if (n.Slot >= 0 && n.Role == WtHud.Telemetry.DataLink.LinkRole.Wing) list.Add(n);
         list.Sort((a, b) =>
         {
             int sa = a.Slot >= 0 ? a.Slot : int.MaxValue;
@@ -4278,7 +4380,11 @@ public static class Program
         return list;
     }
 
-    /// <summary>表里那一格的状态词：到位 / 掉队 480m / 冲出 320m / 偏离站位。</summary>
+    /// <summary>
+    /// 表里那一格的状态词：到位 / 掉队 480m / 冲出 320m / 偏离站位 / 数据错误。
+    /// <para>数据错误 = 僚机在编队里，但这一帧给不出判定（没自机坐标 / 没认出长机）。
+    /// 不是"没报"，也不是"掉队"：前者会让长机以为这架不存在，后者是凭空定罪。</para>
+    /// </summary>
     internal static string WingStateText(WtHud.Telemetry.DataLink.LinkNode n)
     {
         var alerts = WtHud.UI.LangScope.Alerts;
@@ -4290,7 +4396,7 @@ public static class Program
             WtHud.Telemetry.DataLink.WingState.Ahead => string.Format(
                 WtHud.UI.L10n.Get(alerts, "guide.wing.ahead"), Math.Abs(n.ErrM)),
             WtHud.Telemetry.DataLink.WingState.OffStation => WtHud.UI.L10n.Get(alerts, "guide.wing.off"),
-            _ => "",
+            _ => WtHud.UI.L10n.Get(alerts, "guide.wing.dataErr"),
         };
     }
 
