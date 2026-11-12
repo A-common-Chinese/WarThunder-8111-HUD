@@ -723,6 +723,24 @@ internal sealed class DataLink : IDisposable
                                           IReadOnlyList<LinkNode> nodes,
                                           double toleranceNorm)
     {
+        var idx = MatchNodeIndex(friendlies, nodes, toleranceNorm);
+        var alt = new int?[idx.Length];
+        for (int i = 0; i < idx.Length; i++)
+            if (idx[i] is int k) alt[i] = nodes[k].AltM;
+        return alt;
+    }
+
+    /// <summary>
+    /// 同 <see cref="MatchAltitudes"/>，但返回的是**节点下标**而不是高度。
+    /// <para>引导层要的是「地图上哪一架是数据链里的长机」，不是「它有多高」——
+    /// 三机以上时这一步决定了圈和转向指向谁。</para>
+    /// <para>贪心一对一：一架友机只配一个节点，先配近的。编队间距几百米，
+    /// 而容差是几十米，不会出现互相抢。</para>
+    /// </summary>
+    internal static int?[] MatchNodeIndex(IReadOnlyList<(double X, double Y)> friendlies,
+                                          IReadOnlyList<LinkNode> nodes,
+                                          double toleranceNorm)
+    {
         var result = new int?[friendlies.Count];
         if (friendlies.Count == 0 || nodes.Count == 0) return result;
 
@@ -746,7 +764,7 @@ internal sealed class DataLink : IDisposable
             if (best >= 0 && bestD2 <= tol2)
             {
                 used[best] = true;
-                result[i] = nodes[best].AltM;
+                result[i] = best;
             }
         }
 

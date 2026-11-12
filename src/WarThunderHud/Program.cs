@@ -598,6 +598,20 @@ public static class Program
                 new (double X, double Y)[] { (0.5000, 0.5000), (0.50001, 0.50001) },
                 new[] { twoNodes[0] }, 8e-4) is var oneNode && oneNode[0] == 3000 && oneNode[1] == null);
 
+        // ---- 多机：引导要锁「认出来的长机」，不是「最近的那架」 ----
+        // 场景：三机编队。友机列表按距离排过序，僚机 2 号比长机近 —— 旧逻辑会锁错人。
+        var pairIdx = WtHud.Telemetry.DataLink.MatchNodeIndex(
+            new (double X, double Y)[] { (0.50005, 0.50005), (0.50105, 0.50105) }, twoNodes, 8e-4);
+        Check("pair returns node indexes", pairIdx[0] == 0 && pairIdx[1] == 1);
+        Check("lead friendly found by pair",
+            LeadFriendlyIndex(pairIdx, 1, 9) == 1);      // 长机是节点 1 → 友机 1
+        Check("lead friendly falls back when unmatched",
+            LeadFriendlyIndex(pairIdx, 7, 0) == 0);      // 长机不在配对表里 → 退回最近
+        Check("lead friendly falls back with no lead",
+            LeadFriendlyIndex(pairIdx, -1, 0) == 0);
+        Check("lead friendly survives empty pair",
+            LeadFriendlyIndex(Array.Empty<int?>(), 0, 2) == 2);
+
         // ---- 长机航向来源：有链路用自报值，没有用本机航向近似 ----
         Check("lead heading prefers link", ResolveLeadHeading(275, 10) == 275);
         Check("lead heading falls back to own", ResolveLeadHeading(null, 10) == 10);
@@ -686,6 +700,19 @@ public static class Program
     /// 免得以后有人把「取列表第一个」改成别的顺序（列表默认是分析顺序，不是距离序）。</para>
     /// <para>返回 -1 表示没有可选目标（找不到长机，引导整段不画）。</para>
     /// </summary>
+    /// <summary>
+    /// 从配对结果里找出「长机是第几架友机」。<paramref name="leadNodeIndex"/> 是长机在节点快照里的下标，
+    /// 配不上（长机不在本机地图友机里、或位置超出容差）就退回 <paramref name="fallback"/>（最近的友机）。
+    /// <para>抽成纯函数是为了能断言：这一步错了，三机编队的圈会指向别人。</para>
+    /// </summary>
+    internal static int LeadFriendlyIndex(IReadOnlyList<int?> nodeForFriendly, int leadNodeIndex, int fallback)
+    {
+        if (leadNodeIndex >= 0)
+            for (int i = 0; i < nodeForFriendly.Count; i++)
+                if (nodeForFriendly[i] == leadNodeIndex) return i;
+        return fallback;
+    }
+
     internal static int NearestFriendlyIndex(System.Collections.Generic.IReadOnlyList<FriendlyContact> list)
     {
         int best = -1;
@@ -2755,6 +2782,7 @@ public static class Program
         opt.FormationAssist = formationOn;
         opt.FormationOnly = cfg.FormationOnly;
         opt.Friendlies.Clear();
+        friendPos.Clear();          // 与 opt.Friendlies 同序的归一化位置，配对用
         opt.Guide = null;
         opt.LeadStatusMain = "";
         opt.LeadStatusSub = "";
@@ -2814,6 +2842,9 @@ public static class Program
         // 敌人已在 MapData 里按 color 丢掉，这里只剩友军；只取最近的 4 架，避免糊成一片。
         if (formationOn)
         {
+            // 位置和方位要一起排序、一起截断：数据链配对靠位置，一旦两张表错位，
+            // 三机编队就会「圈指向 A、高度取 B」。所以这里先攒成元组再统一排序。
+            var contacts = new List<(FriendlyContact C, (double X, double Y) P)>();
             foreach (var f in map.Friendlies)
             {
                 double dEast = (f.X - self.X) * sizeX;
@@ -2825,10 +2856,15 @@ public static class Program
                 double rel = bearing - navHeading;
                 while (rel > 180) rel -= 360;
                 while (rel < -180) rel += 360;
-                opt.Friendlies.Add(new FriendlyContact(rel, range, f.Icon));
+                contacts.Add((new FriendlyContact(rel, range, f.Icon), (f.X, f.Y)));
             }
-            opt.Friendlies.Sort((a, b) => a.RangeM.CompareTo(b.RangeM));
-            while (opt.Friendlies.Count > 4) opt.Friendlies.RemoveAt(opt.Friendlies.Count - 1);
+            contacts.Sort((a, b) => a.C.RangeM.CompareTo(b.C.RangeM));
+            if (contacts.Count > 4) contacts.RemoveRange(4, contacts.Count - 4);
+            foreach (var c in contacts)
+            {
+                opt.Friendlies.Add(c.C);
+                friendPos.Add(c.P);
+            }
 
             // ================= 长机模式 =================
             // 长机不追人：只看自己有没有在设定航向 / 设定马赫上，僚机只当"状态"报，不给数字。
@@ -2986,7 +3022,20 @@ public static class Program
             if (opt.Friendlies.Count > 0)
             {
                 // 已按机型过滤 + 距离排序；这里再走一遍「取最近」把约定钉死在代码里
-                var lead = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
+                // 引导锁定谁：默认「最近的友机」；数据链认出长机、且它在地图友机里配得上，
+                // 就锁长机那架。★ 三机以上这是必须的 —— 否则圈指向最近的僚机，高度差却来自长机。
+                int leadIdx = NearestFriendlyIndex(opt.Friendlies);
+                if (dataLink != null && dataLink.TryGetLeadNode(out var leadNode))
+                {
+                    var nodes = dataLink.Snapshot();
+                    int nodeIdx = -1;
+                    for (int i = 0; i < nodes.Length; i++)
+                        if (nodes[i].Id == leadNode.Id) { nodeIdx = i; break; }
+                    double tol = 50.0 / Math.Max(2000.0, Math.Max(sizeX, sizeY));
+                    var nodeForFriendly = WtHud.Telemetry.DataLink.MatchNodeIndex(friendPos, nodes, tol);
+                    leadIdx = LeadFriendlyIndex(nodeForFriendly, nodeIdx, leadIdx);
+                }
+                var lead = opt.Friendlies[Math.Clamp(leadIdx, 0, opt.Friendlies.Count - 1)];
 
                 // 长机航向 / 转向率：油门前馈和转弯提前量共用，放在 PID 之前算好。
                 // 有数据链就用长机自报值，没有就用本机航向近似 / 本地估算（实测差别不大）。
@@ -3722,6 +3771,9 @@ public static class Program
 
     /// <summary>是否处在「先爬升」阶段（带迟滞）。编队重编时由状态机重置。</summary>
     private static bool altitudeStageActive;
+
+    /// <summary>与 <see cref="HudOptions.Friendlies"/> 同序的归一化位置，供数据链按位置配对。</summary>
+    private static readonly List<(double X, double Y)> friendPos = new();
 
     /// <summary>垂直环增益（1/s）。0.15 对应约 6.7 s 时间常数：120 m 用 18 s 左右收掉。</summary>
     internal const double VerticalGain = 0.15;
