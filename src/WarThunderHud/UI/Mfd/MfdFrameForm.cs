@@ -51,8 +51,7 @@ public sealed class MfdFrameForm : Form
     private bool _forceClose;
     private (ButtonKind Kind, int Index) _pressed = (ButtonKind.None, -1);
     private string? _toast;
-    private string _captureText = "";      // 键位捕获结果
-    private readonly HashSet<Keys> _heldKeys = new();   // 捕获时当前按住的键
+    private Pages.KeyCapturePage? _keyPage;   // 键位捕获页：有 Mode 也有页面类，但不进 _nav（它无按钮）
     private Mode _helpPrevMode = Mode.Menu;
     private int _helpPrevPage;
     private int _helpPrevItemSel;
@@ -308,7 +307,7 @@ public sealed class MfdFrameForm : Form
         var titleKey = _mode switch
         {
             Mode.Menu => "menu",
-            Mode.CaptureKey => "capture.title",              // 捕获页还没有页面类
+            Mode.CaptureKey => _keyPage?.TitleKey ?? "capture.title",
             _ => ActivePage?.TitleKey ?? CurrentPage?.TitleKey ?? "menu",
         };
         var title = L10n.Get(LangScope.Screen, titleKey);
@@ -343,7 +342,9 @@ public sealed class MfdFrameForm : Form
             case Mode.Confirm: _confirmPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.EditNumber: _editPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.TextEdit: _textPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
-            case Mode.CaptureKey: DrawCapturePage(g, s, glass, pad); break;
+            case Mode.CaptureKey:
+                _keyPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad });
+                break;
             case Mode.Preset: _presetPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Help: _helpPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
@@ -358,7 +359,7 @@ public sealed class MfdFrameForm : Form
         {
             Mode.Menu => "hint.menu",
             Mode.Items => "hint.item",
-            Mode.CaptureKey => "capture.hint",
+            Mode.CaptureKey => _keyPage?.HintKey ?? "capture.hint",
             _ => ActivePage?.HintKey ?? "hint.item",
         };
         var hintText = _toast ?? L10n.Get(LangScope.Screen, hintKey);
@@ -409,33 +410,6 @@ public sealed class MfdFrameForm : Form
         }
     }
 
-    /// <summary>Second-level page: live key capture.</summary>
-    private void DrawCapturePage(System.Drawing.Graphics g, float s, RectangleF glass, float pad)
-    {
-        using var title = MfdTheme.CjkAt(26f * s);
-        using var mono = MfdTheme.MonoBoldAt(44f * s);
-        using var hint = MfdTheme.CjkAt(18f * s);
-        using var green = new SolidBrush(MfdTheme.Green);
-        using var text = new SolidBrush(MfdTheme.Text);
-        using var muted = new SolidBrush(MfdTheme.Muted);
-
-        var name = L10n.Get(LangScope.Screen, SelectedItem?.LabelKey ?? "");
-        var cx = glass.Left + glass.Width / 2;
-
-        g.DrawString(name, title, muted, cx - g.MeasureString(name, title).Width / 2, glass.Top + 60 * s,
-                     StringFormat.GenericTypographic);
-
-        var prompt = L10n.Get(LangScope.Screen, "capture.prompt");
-        g.DrawString(prompt, hint, text, cx - g.MeasureString(prompt, hint).Width / 2,
-                     glass.Top + glass.Height * 0.26f, StringFormat.GenericTypographic);
-
-        var shown = string.IsNullOrEmpty(_captureText) ? "—" : _captureText;
-        var w = g.MeasureString(shown, mono).Width;
-        var by = glass.Top + glass.Height * 0.36f;
-        g.DrawString(shown, mono, green, cx - w / 2, by, StringFormat.GenericTypographic);
-
-        DrawDecisionRows(g, s);
-    }
 
     /// <summary>HELP 键：进入帮助页（再按一次退出）。页面的内容/翻页/选中都在 HelpPage 里。</summary>
     private void EnterHelp()
@@ -472,27 +446,6 @@ public sealed class MfdFrameForm : Form
     /// 键位捕获页底部的 确认 / 取消 两行（对应左侧第 3、4 个键）。捕获页没有「选中项」，
     /// 第一行恒为主动作，所以这里不再依赖任何遗留选中字段。
     /// </summary>
-    private void DrawDecisionRows(System.Drawing.Graphics g, float s)
-    {
-        var pageLayout = new MfdPageLayout(_layout, s);
-        using var big = MfdTheme.CjkAt(28f * s);
-
-        for (var i = 0; i < 2; i++)
-        {
-            // 侧键 2 / 3 = 左列第 3、4 行（与 ConfirmPage 的 ListRowRect(0, 2 + i) 完全同一处）
-            var row = pageLayout.ListRowRect(0, 2 + i);
-            var primary = i == 0;         // 第一行 = 主动作（确认），第二行只是取消键提示
-            if (primary)
-            {
-                using var hi = new SolidBrush(MfdTheme.Green);
-                g.FillRectangle(hi, row.X - 6 * s, row.Y, row.Width + 12 * s, row.Height);
-            }
-            using var fgBrush = new SolidBrush(primary ? MfdTheme.Dark : MfdTheme.Text);
-            var text = L10n.Get(LangScope.Screen, primary ? "confirm.ok" : "confirm.cancel");
-            g.DrawString(text, big, fgBrush, row.X + 20 * s, row.Y + 2 * s, StringFormat.GenericTypographic);
-        }
-    }
-
     // ---------------------------------------------------------------- input
 
     private ButtonKind HitTest(PointF p, out int index)
@@ -845,11 +798,8 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.CaptureKey)
         {
             e.Handled = true;
-            if (e.KeyCode == Keys.Escape) { _mode = Mode.Items; _captureText = ""; _heldKeys.Clear(); Invalidate(); return; }
-
-            if (_heldKeys.Count == 0) _captureText = "";   // 新一轮组合从空开始
-            _heldKeys.Add(e.KeyCode);
-            _captureText = FormatHeld();
+            if (e.KeyCode == Keys.Escape) { _mode = Mode.Items; _keyPage?.Reset(); Invalidate(); return; }
+            _keyPage?.KeyDown(e.KeyCode);
             Invalidate();
             return;
         }
@@ -875,44 +825,11 @@ public sealed class MfdFrameForm : Form
     {
         base.OnKeyUp(e);
         if (_mode != Mode.CaptureKey) return;
-        _heldKeys.Remove(e.KeyCode);
+        _keyPage?.KeyUp(e.KeyCode);
         // 全部松开后保持最后显示的文字（冻结），下次按下重新开始
         e.Handled = true;
         Invalidate();
     }
-
-    private static readonly Keys[] ModifierOrder = { Keys.ControlKey, Keys.ShiftKey, Keys.Menu };
-
-    private string FormatHeld()
-    {
-        var parts = new List<string>();
-        foreach (var mod in ModifierOrder)
-            if (_heldKeys.Contains(mod)) parts.Add(ModName(mod));
-        foreach (var key in _heldKeys.OrderBy(k => (int)k))
-        {
-            if (key is Keys.ControlKey or Keys.ShiftKey or Keys.Menu or Keys.LWin or Keys.RWin) continue;
-            parts.Add(KeyName(key));
-        }
-        return parts.Count == 0 ? "" : string.Join("+", parts);
-    }
-
-    private static string ModName(Keys k) => k switch
-    {
-        Keys.ControlKey => "CTRL",
-        Keys.ShiftKey => "SHIFT",
-        Keys.Menu => "ALT",
-        _ => k.ToString().ToUpperInvariant(),
-    };
-
-    private static string KeyName(Keys k) => k switch
-    {
-        >= Keys.D0 and <= Keys.D9 => ((char)('0' + (k - Keys.D0))).ToString(),
-        >= Keys.NumPad0 and <= Keys.NumPad9 => "NUM" + (k - Keys.NumPad0),
-        >= Keys.A and <= Keys.Z => ((char)('A' + (k - Keys.A))).ToString(),
-        Keys.OemPeriod => ".",
-        Keys.OemMinus => "-",
-        _ => k.ToString().ToUpperInvariant(),
-    };
 
     private static char KeyToDigit(Keys key) => key switch
     {
@@ -928,8 +845,7 @@ public sealed class MfdFrameForm : Form
     {
         _nav.Clear();
         _mode = Mode.Items;
-        _captureText = "";
-        _heldKeys.Clear();
+        _keyPage?.Reset();
         _toast = null;
     }
 
@@ -1060,14 +976,14 @@ public sealed class MfdFrameForm : Form
     /// <summary>Applies the captured key combination to the selected binding row.</summary>
     private void CommitCapture()
     {
-        if (SelectedItem is { } item && item.Kind == ItemKind.KeyBinding && !string.IsNullOrWhiteSpace(_captureText))
+        if (SelectedItem is { } item && item.Kind == ItemKind.KeyBinding && _keyPage?.Result is { } captured)
         {
-            item.SetText2?.Invoke(_work, _captureText);
+            item.SetText2?.Invoke(_work, captured);
             _dirty = true;
             WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
         }
         _mode = Mode.Items;
-        _captureText = "";
+        _keyPage = null;
         _toast = null;
     }
 
@@ -1224,8 +1140,9 @@ public sealed class MfdFrameForm : Form
     /// <summary>键位行 → 实时按键捕获页。</summary>
     private void EnterCaptureKey()
     {
-        _captureText = "";
-        _heldKeys.Clear();
+        _keyPage = new Pages.KeyCapturePage(
+            label: () => L10n.Get(LangScope.Screen, SelectedItem?.LabelKey ?? ""),
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f));
         _mode = Mode.CaptureKey;
     }
 
@@ -1760,7 +1677,7 @@ public sealed class MfdFrameForm : Form
     {
         PreviewOpen(pageIndex, itemIndex);
         if (SelectedItem is { } item) Activate(item);
-        _captureText = "CTRL+N";
+        _keyPage?.SetPreview("CTRL+N");
     }
 
     /// <summary>Preview helper: simulates "CANCEL with unsaved changes".</summary>
