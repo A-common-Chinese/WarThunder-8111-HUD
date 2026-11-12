@@ -769,10 +769,11 @@ public sealed class HudGeometry
                 AddSpeedBars(prims, cx, cy + 10.1 * pxDeg, pxDeg, fontSmall, curKmh, tgtKmh, dvKmh,
                              Math.Abs(dvKmh) >= 5);
 
-            // 转向辅助放在三格读数下面：读数主行 14.6°、单位行 15.7°，横带的标签从 17.9° 起，
-            // 留 1.6° 空隙。放在 17.6° 时右标签会和「航向 275 deg」压在一起（实测重叠）。
+            // 转向辅助挂在航向带下面：航向带 −12.5°、指针 +1.6°、航向数字 −10.2°，
+            // 横带放 −7.6°，标签顶到 −8.95°，与数字留 1.2° 空隙，往下也不碰 FPM。
+            // 「在航向指示下面」比放到屏幕下方更直观：两个都是「该往哪」的读数，视线不用来回找。
             if (_opt.TurnAssist is { } ta)
-                AddTurnAssistBand(prims, cx, cy + 19.2 * pxDeg, pxDeg, fontSmall, ta);
+                AddTurnAssistBand(prims, cx, cy - 7.6 * pxDeg, pxDeg, fontSmall, ta);
 
             return;
         }
