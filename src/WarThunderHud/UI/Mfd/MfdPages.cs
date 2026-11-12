@@ -161,7 +161,7 @@ internal static class MfdPages
 {
     public static List<MfdPage> Build() => new()
     {
-        HudDisplay(), Formation(), Attitude(), Alerts(), Keys(),
+        HudDisplay(), Formation(), DataLink(), Attitude(), Alerts(), Keys(),
         Panel(), Airframes(), Snapshots(), Diag(),
     };
 
@@ -481,7 +481,7 @@ internal static class MfdPages
     {
         Key = "formation.turnassist",
         TitleKey = "page.turnAssist",
-        ParentTitleKey = "page.formationTune",
+        ParentTitleKey = "page.formationLead",
         MenuKey = "page.turnAssist",
         MenuHintKey = "menu.hint.turnAssist",
         Items =
@@ -512,40 +512,79 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.formationTune",
         Items =
         {
-            // ---- 开关与角色：原先散在「显示」页第 2 屏，找编队要跳两个模块 ----
+            // ---- 角色与开关：两边都要看的留在这一页 ----
             Toggle("row.formation", c => c.FormationAssist,
                    (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
-            Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
+            // 长机模式决定你是哪一边，所以它必须在通用页：藏进角色页会让人找不到怎么换角色
             Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
-            // 队形几何（原「僚机侧位」+ 三个距离）搬进三级页：这些数只跟队形有关，
-            // 混在增益和判定里既占屏又容易被误改。入口行显示当前队形 + 槽位。
+
+            // 队形几何（形状 + 槽位 + 三个距离）：两边必须用同一个队形，放通用页
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
-            // 摘要不要再带箭头：ValueText 会给每个 Submenu 追加一个「›」
-            Submenu("row.turnAssistMenu", () => TurnAssistPage(), c =>
-                c.FormationTurnTargetG.ToString("F1") + "G"),
-            Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
-            Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
-            Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
-            Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
-            // ---- 状态机判定与保持死区（改站位时这几个要跟着看） ----
+
+            // ---- 完成与脱离判定：长机也要跑同一套状态机，所以是通用项 ----
             Number("row.fDonePct", c => c.FormationDonePct, (c, v) => c.FormationDonePct = v, 1, 1, 50, "%"),
-            // 站位容差：距离对上但站歪了，同样不算到位
-            Number("row.fAlignDeg", c => c.FormationAlignDeg, (c, v) => c.FormationAlignDeg = v, 1, 0, 45, "°"),
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),
             Number("row.fDropPct", c => c.FormationDropPct, (c, v) => c.FormationDropPct = v, 5, 5, 100, "%"),
+
+            // ---- 两个角色页：各自的专属参数，进去才看得到 ----
+            Submenu("row.fWingMenu", () => FormationWingPage(), WingPageSummary),
+            Submenu("row.fLeadMenu", () => FormationLeadPage(), LeadPageSummary),
+
+            // ---- 数据链跳板：编队要开数据链，但连接参数不在这页改 ----
+            Submenu("row.dlConnMenu", () => DataLinkConnectionPage("page.formationTune"), c =>
+                L10n.Get(LangScope.Screen, c.DataLinkEnabled ? "val.linkOn" : "val.linkOff")),
+        },
+    };
+
+    /// <summary>通用页上「僚机参数」那一行的摘要：槽位和站位容差是进去最常改的两个。</summary>
+    private static string WingPageSummary(HudConfig c)
+        => string.Format(L10n.Get(LangScope.Screen, "val.slotShort"), c.FormationSlot + 1) + " · " +
+           string.Format(L10n.Get(LangScope.Screen, "val.tolShort"), c.FormationAlignDeg.ToString("0"));
+
+    /// <summary>通用页上「长机参数」那一行的摘要：没设马赫就说没设，别显示 0.00。</summary>
+    private static string LeadPageSummary(HudConfig c)
+        => c.LeadMach > 0.05
+            ? string.Format(L10n.Get(LangScope.Screen, "val.machShort"), c.LeadMach.ToString("F2"))
+            : L10n.Get(LangScope.Screen, "val.noMach");
+
+    /// <summary>
+    /// 僚机页（三级）：只有僚机用得上的东西 —— 长机识别、站位判定、跟随增益、油门与提前量。
+    /// <para>这一页原来和长机参数混在编队页里，41 行、四屏；长机打开时那 20 行全是噪音。</para>
+    /// </summary>
+    private static MfdPage FormationWingPage() => new()
+    {
+        Key = "formation.wing",
+        TitleKey = "page.formationWing",
+        ParentTitleKey = "page.formationTune",
+        MenuKey = "page.formationWing",
+        MenuHintKey = "menu.hint.formationWing",
+        Items =
+        {
+            // ---- 认长机 ----
+            // 长机机型只在数据链失效时参与：收到节点后靠位置配对，更准
+            Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
+            // 长机节点 ID：0 = 自动。长机模式下强制 0（自己就是长机，这一项没意义）
+            Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
+                   (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
+                   1, 0, 999999, ""),
+
+            // ---- 站位判定：到位/保持/脱离三条线 ----
+            Number("row.fAlignDeg", c => c.FormationAlignDeg, (c, v) => c.FormationAlignDeg = v, 1, 0, 45, "°"),
             Number("row.fSteadyDeg", c => c.FormationSteadyDeg, (c, v) => c.FormationSteadyDeg = v, 0.5, 0, 20, "°"),
             Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h"),
-            // 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」
+
+            // ---- 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」----
             Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
             Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
             // 远距例外：超过这个距离，爬升阶段也放一行距离（0 = 关掉）
             Number("row.fFarRange", c => c.FormationFarRangeM, (c, v) => c.FormationFarRangeM = v, 100, 0, 20000, "m"),
+
+            // ---- 跟随增益（级联 PID）----
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头
             Number("row.fKp", c => c.FormationKp, (c, v) => c.FormationKp = v, 0.01, 0.01, 0.50, ""),
             // 近距离比例：进入 blend 距离后从 Kp 渐变到 KpNear，调大刹车更早
             Number("row.fKpNear", c => c.FormationKpNear, (c, v) => c.FormationKpNear = v, 0.01, 0.05, 1.00, ""),
-            // 积分：消除稳态误差，给大了会振荡
-            // 0.006 在两位小数里显示不出来，所以按千分之一为单位编辑（6 = 0.006）
+            // 积分：消除稳态误差，给大了会振荡。0.006 在两位小数里显示不出来，按千分之一编辑
             Number("row.fKi", c => c.FormationKi * 1000, (c, v) => c.FormationKi = v / 1000.0, 1, 1, 50, "‰"),
             // 接近率环增益
             Number("row.fKv", c => c.FormationKv, (c, v) => c.FormationKv = v, 0.1, 0.2, 3.0, ""),
@@ -553,16 +592,64 @@ internal static class MfdPages
             Number("row.fBlendM", c => c.FormationBlendM, (c, v) => c.FormationBlendM = v, 50, 100, 2000, "m"),
             // 油门指令的低通时间常数：调大更稳但更慢
             Number("row.fTau", c => c.FormationGuideTauS, (c, v) => c.FormationGuideTauS = v, 0.1, 0.2, 3.0, "s"),
-            // 转弯提前量总开关
+
+            // ---- 转弯提前量 ----
             Toggle("row.fLeadFeed", c => c.FormationLeadFeed, (c, v) => c.FormationLeadFeed = v),
-            // 提前量起作用的转向率门槛
             Number("row.fLeadMin", c => c.FormationLeadMinRate, (c, v) => c.FormationLeadMinRate = v, 0.1, 0.2, 5.0, "°/s"),
-            // 提前量上限
             Number("row.fLeadMax", c => c.FormationLeadMaxDeg, (c, v) => c.FormationLeadMaxDeg = v, 1, 5, 45, "°"),
-            // 速度前馈上下限（相对长机真空速的倍数）
+            // 长机转弯超过这个 G 就提示「跟不住」—— 是僚机侧的告警，所以放这一页
+            Number("row.formationWarnG", c => c.FormationWarnG, (c, v) => c.FormationWarnG = v, 0.1, 0.5, 5.0, "G"),
+
+            // ---- 速度前馈上下限（相对长机真空速的倍数）----
             Number("row.fMaxRatio", c => c.FormationWingMaxRatio, (c, v) => c.FormationWingMaxRatio = v, 0.05, 1.00, 2.00, "×"),
             Number("row.fMinRatio", c => c.FormationWingMinRatio, (c, v) => c.FormationWingMinRatio = v, 0.05, 0.50, 1.00, "×"),
-            // ---- 数据链：编队的高度差靠它，所以放在同一页而不是单独一个模块 ----
+        },
+    };
+
+    /// <summary>
+    /// 长机页（三级）：长机自己飞什么、喊什么。
+    /// <para>这里没有增益 —— 长机不跑跟随环。转向辅助是长机专属的三级页，挂在这一页下面。</para>
+    /// </summary>
+    private static MfdPage FormationLeadPage() => new()
+    {
+        Key = "formation.lead",
+        TitleKey = "page.formationLead",
+        ParentTitleKey = "page.formationTune",
+        MenuKey = "page.formationLead",
+        MenuHintKey = "menu.hint.formationLead",
+        Items =
+        {
+            Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
+            Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
+            Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
+            // 转向辅助（按键 / 目标 G / 容差 / 广播）：长机专属
+            Submenu("row.turnAssistMenu", () => TurnAssistPage(), c =>
+                c.FormationTurnTargetG.ToString("F1") + "G"),
+            // 僚机自报的站位：谁掉队、掉多少。长机在 HUD 上也能看到同一份
+            Info("row.dataLinkWings", _ => WtHud.Program.DataLinkWingText(), c => c.DataLinkEnabled),
+        },
+    };
+
+    /// <summary>
+    /// 数据链（二级模块）：只管连接。
+    /// <para>原来这 12 行塞在编队页里，其中 8 行是只读状态，把设置页挤成了四屏。
+    /// 现在设置归设置，状态归状态，两个入口（这里和诊断页）打开的是同一份行定义。</para>
+    /// </summary>
+    private static MfdPage DataLink() => DataLinkConnectionPage(null);
+
+    /// <summary>
+    /// 连接页。做两用：主菜单里的模块（<paramref name="parentKey"/> = null），
+    /// 以及编队通用页跳过来的三级页（带父标题）。行定义只有这一份。
+    /// </summary>
+    private static MfdPage DataLinkConnectionPage(string? parentKey) => new()
+    {
+        Key = parentKey is null ? "datalink.conn" : "datalink.conn." + parentKey,
+        TitleKey = "page.datalink",
+        ParentTitleKey = parentKey,
+        MenuKey = "page.datalink",
+        MenuHintKey = "menu.hint.datalink",
+        Items =
+        {
             Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
             // 对端地址：留空 = 广播（只能同一局域网）；填 ip:port = 单播，跨网段/组网必须填。
             // 改完立即生效 —— 联调时 IP 会变好几次，重启 HUD 太慢。
@@ -573,23 +660,42 @@ internal static class MfdPages
                     c.DataLinkPeers = HudConfig.TextToPeers(v);
                     WtHud.Program.ApplyDataLinkPeers(c);
                 }),
+            // 「发送目标」紧挨着地址：填完就能看实际发了几个，联调时这一步最常看
             Info("row.dataLinkPeerNow", _ => WtHud.Program.DataLinkPeerText()),
             Info("row.dataLinkId", c => c.DataLinkId == 0 ? "-" : c.DataLinkId.ToString(),
                  c => c.DataLinkEnabled),
-            // 本机角色：由「长机模式」推导，写进每一包，僚机端靠它认出谁是长机
-            Info("row.dataLinkRole", c => WtHud.UI.L10n.Get(LangScope.Panel,
-                     c.LeadMode ? "val.roleLead" : "val.roleWing"), c => c.DataLinkEnabled),
-            // 长机节点 ID：0 = 自动（唯一 role=1 → 单节点 → 最近活跃）
-            // 长机模式下强制显示 0（自动）：自己就是长机，这一项填什么都不生效，
-            // 显示原值会让人以为「填了就在用」。
-            Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
-                   (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
-                   1, 0, 999999, ""),
+            // 这一行既是实时状态又是入口：改地址时不用跳页就能看通没通，
+            // 想看节点和接口健康就按确认进去。★ 不要再单独放一行只读状态 ——
+            // 名字一样的两行「链路状态」，一行能按一行不能按，是最容易点错的那种设计。
+            Submenu("row.dlStatusMenu", () => DataLinkStatusPage("page.datalink"),
+                    _ => WtHud.Program.DataLinkStatusText()),
+        },
+    };
+
+    /// <summary>
+    /// 数据链状态（三级页，**两个入口共用**）：数据链页底部一行、诊断页顶部一行。
+    /// <para><paramref name="parentKey"/> 既决定标题栏的「父 › 子」，也进缓存键 ——
+    /// 两处各缓存一份，行定义是同一段代码，内容不会漂。</para>
+    /// </summary>
+    private static MfdPage DataLinkStatusPage(string parentKey) => new()
+    {
+        Key = "datalink.status." + parentKey,
+        TitleKey = "page.dataLinkStatus",
+        ParentTitleKey = parentKey,
+        MenuKey = "page.dataLinkStatus",
+        MenuHintKey = "menu.hint.dataLinkStatus",
+        Items =
+        {
             Info("row.apiHealth", _ => WtHud.Program.ApiHealthZh(WtHud.Program.ApiHealthNow)),
+            // 本机角色：由「长机模式」推导，写进每一包，僚机端靠它认出谁是长机
+            // ★ 这两个键在 Screen 表里，不在 Panel 表。用错作用域的表现就是屏幕上
+            //   直接印出 "val.roleWing" 这个键名 —— 不会报错，只是没人看得懂。
+            Info("row.dataLinkRole", c => WtHud.UI.L10n.Get(LangScope.Screen,
+                     c.LeadMode ? "val.roleLead" : "val.roleWing"), c => c.DataLinkEnabled),
+            Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkNodes", _ => WtHud.Program.DataLinkNodeText(), c => c.DataLinkEnabled),
             // 僚机自报的站位：谁掉队、掉多少。长机 HUD 也有同一份，这行用于复盘
             Info("row.dataLinkWings", _ => WtHud.Program.DataLinkWingText(), c => c.DataLinkEnabled),
-            Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkPort", _ => "48017 / UDP"),
             Info("row.dataLinkDesc", _ => WtHud.UI.L10n.Get(LangScope.Screen, "val.dataLinkDesc")),
         },
@@ -620,6 +726,10 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.diag",
         Items =
         {
+            // 数据链状态：和数据链页里那一行打开的是同一份行定义（同一个状态页），
+            // 标题按来路显示「诊断 › 链路状态」，返回也回到诊断页
+            Submenu("row.dlStatusMenu", () => DataLinkStatusPage("page.diag"),
+                    _ => WtHud.Program.DataLinkStatusText()),
             Info("row.diagState", _ => DiagProbe.StateText),
             Info("row.diagInd", _ => DiagProbe.IndicatorsText),
             Info("row.diagMap", _ => DiagProbe.MapText),

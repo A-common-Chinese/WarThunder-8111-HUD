@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 32,
+  "_version": 33,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -305,8 +305,12 @@
     "en": "Use data link: exchanges barometric altitude with another player on the same subnet (UDP broadcast at 4 Hz, altitude only, no positions). Off means planar data only. Windows Firewall may prompt once."
   },
   "page.datalink": {
-    "zh": "数据链已并入「编队」页（第 4 屏）：连接开关、对端地址、节点 ID / 链路状态 / 端口。关掉就回到只看平面数据的旧逻辑——有方位和水平距离，没有高度差。",
-    "en": "Data link now lives on the FORMATION page (screen 4): switch, peer address, node id, link state and port. Turning it off falls back to planar data only - bearing and horizontal range, no height difference."
+    "zh": "数据链连接：开关、对端地址、发送目标、节点 ID，最后一行「链路状态」同时是实时读数和入口 —— 不改地址也能看到通没通，按确认进去看节点、角色、接口健康。关掉就回到只看平面数据的旧逻辑：有方位和水平距离，没有高度差。★ 编队要开数据链，但这一页管的是「连接」，编队参数在「编队」模块里。",
+    "en": "Data-link connection: switch, peer address, targets, node id, and a LINK STATUS row that doubles as a live readout and an entry - see whether it is connected without leaving the page, press confirm for nodes, role and API health. Off falls back to planar data only: bearing and horizontal range, no height difference. Formation needs the link, but this page owns the connection; formation parameters live under FORMATION."
+  },
+  "page.dataLinkStatus": {
+    "zh": "链路状态的完整一页：接口健康、本机角色、链路状态、在线节点、僚机站位、端口、说明。和数据链连接页里的「链路状态」是同一份内容，从诊断页也能进来 —— 排查 8111 半初始化时不用先跳回数据链。全部只读，改不了任何东西。",
+    "en": "The full link-status page: API health, own role, link state, online nodes, wing positions, port, notes. Same content as the LINK STATUS row on the connection page, and reachable from DIAG as well - useful when chasing a half-started 8111 without jumping back to the data-link module. Read-only throughout."
   },
   "row.wingSide": {
     "zh": "僚机侧位：选你在长机的哪一侧。左僚机 / 尾随 / 右僚机三个站位到长机的距离都是 400 m（左和右各偏 22°，横向 150 m、纵向 370 m）。多架僚机在同一局时必须各选不同侧位，否则会抢同一个站位。长机模式用不到这一项。",
@@ -465,8 +469,16 @@
     "en": "Reads the airbrake and scoreboard bindings out of a War Thunder controls .blk so you do not have to type them. Opens a file dialog and reports what it found; nothing found usually means the wrong file or those actions are unbound."
   },
   "page.formationTune": {
-    "zh": "编队：僚机与长机的全部设置。开头是开关与角色（辅助开关、长机机型、长机模式、僚机侧位、锁定航向、全向跟随、设定马赫、转弯告警），接着是三个站位距离、五个判定阈值与保持死区、六个制导增益、三个提前量、两个包线，最后是数据链。",
-    "en": "Formation: everything for wingman and lead. Switches and role first (assist, lead type, lead mode, slot, locked heading, omni follow, set Mach, turn warning), then three slot distances, five stage thresholds and hold deadbands, six guidance gains, three lead-turn terms, two envelope limits, and the data link at the end."
+    "zh": "编队（通用）：两边都要用的都在这一页 —— 辅助开关、长机模式、队形、完成/掉队判定，外加三个入口：「僚机参数」放识别、站位、增益、油门与提前量；「长机参数」放航向、马赫、转向辅助；「数据链」放连接与状态。★ 长机模式是决定你是哪一边的开关，所以它留在通用页，不藏进角色页。",
+    "en": "Formation (shared): what both sides need - assist switch, lead mode, formation shape, done/drop gates - plus three entries: WINGMAN for identification, station keeping, gains, throttle and lead-turn terms; LEAD for heading, Mach and turn assist; DATA LINK for connection and status. LEAD MODE stays here on purpose: it decides which side you are, so hiding it inside a role page would make it hard to find."
+  },
+  "page.formationWing": {
+    "zh": "僚机参数（三级）：认长机（机型只在数据链失效时用、手填节点 ID）、站位判定（容差、保持死区）、垂直引导（门槛、升降率上限、远距例外）、跟随增益（Kp/KpNear/Ki/Kv/融合距离/低通）、转弯提前量与速度前馈上下限、长机转弯告警阈值。★ 这些是僚机独有的，长机页里没有；改之前先看每行的 HELP，都有实测依据。",
+    "en": "Wingman (third level): finding the lead (type only when the link is down, manual node id), station gates (tolerance, hold deadbands), vertical guidance (gate, climb cap, far-range exception), follow gains (Kp/KpNear/Ki/Kv/blend/tau), turn-ahead terms and speed feedforward limits, and the lead-turn warning threshold. Wingman-only - the lead page has none of these. Check each row's HELP before changing anything."
+  },
+  "page.formationLead": {
+    "zh": "长机参数（三级）：锁定航向、全向跟随、设定马赫、转向辅助（目标 G / 容差 / 按键 / 广播），最后一行是僚机自报的站位 —— 谁掉队、掉多少。★ 长机不跑跟随环，所以这一页没有任何增益；那些都在僚机页里。",
+    "en": "Lead (third level): locked heading, omni follow, set Mach, turn assist (target G / tolerance / key / broadcast), and a live line of wingmen's self-reported stations - who is behind and by how much. The lead runs no follow loop, so there are no gains here; they belong to the wingman page."
   },
   "row.leadHeading": {
     "zh": "长机锁定航向（度）：长机按它飞，僚机据此算前置。填 -1 = 不锁死，进入编队时把当时的航向锁存下来。打开「全向跟随」后这一项不起作用。",
@@ -487,6 +499,22 @@
   "row.apiHealth": {
     "zh": "8111 本地服务的健康度，只在飞行中判断。「正常」= 仪表和地图对象都有。「未就绪·请重启游戏」= 游戏启动时 8111 只起来一半：/state 有数据，但 /indicators 和 /map_obj.json 同时返回空，此时姿态会全部变成估算、编队也没有自机坐标，只有重启客户端能恢复（端口是通的，所以从外面看不出错）。「本机型无仪表」= 地图正常但没有航空电子数据，2.59 的部分新机型如此，属正常。「无地图对象」= 姿态正常但看不到友机位置。「不在对局」= 机库或主菜单，这一行不判断。",
     "en": "Health of the local 8111 service, judged in flight only. OK = instruments and map objects both present. HALF-READY / restart the game = the service came up only halfway: /state answers but /indicators and /map_obj.json both return empty, so attitude falls back to estimation and formation guidance has no own-ship position; only restarting the client clears it (the port answers, so nothing looks broken from outside). No indicators = map is fine but the airframe exposes no avionics data, normal for some 2.59 aircraft. No map objects = attitude is fine but friendly positions are missing. Not in battle = hangar or menu, not judged."
+  },
+  "row.fWingMenu": {
+    "zh": "僚机参数入口：识别长机、站位判定、跟随增益、油门与转弯提前量。摘要显示当前槽位和站位容差 —— 不进去也能核对你和队友是不是选了同一个槽位。",
+    "en": "Wingman entry: lead identification, station gates, follow gains, throttle and turn-ahead terms. The summary shows your slot and alignment tolerance, so you can check you and your wingman are not on the same slot without opening the page."
+  },
+  "row.fLeadMenu": {
+    "zh": "长机参数入口：锁定航向、全向跟随、设定马赫、转向辅助。摘要显示目标马赫；没设过就是「未设马赫」。",
+    "en": "Lead entry: locked heading, omni follow, set Mach, turn assist. The summary shows the target Mach, or NO MACH when none is set."
+  },
+  "row.dlConnMenu": {
+    "zh": "数据链入口：跳到连接页改开关和地址。摘要只显示开/关，实时的链路状态在数据链页里那一行。",
+    "en": "Data-link entry: jumps to the connection page for the switch and addresses. The summary only shows on/off; live link state is on the data-link page."
+  },
+  "row.dlStatusMenu": {
+    "zh": "链路状态：在数据链页里它是「实时读数 + 入口」—— 右边就是当前状态（off / no partner / linked #ID），按确认进去看接口健康、本机角色、在线节点、僚机站位、端口。诊断页顶部也有同一个入口，排查 8111 时不用绕回数据链。",
+    "en": "Link status: on the data-link page this row is both a live readout and an entry - the value on the right is the current state (off / no partner / linked #ID); press confirm for API health, own role, online nodes, wing positions and port. The same entry sits at the top of DIAG, so a half-started 8111 can be chased without detouring."
   },
   "row.dataLinkWings": {
     "zh": "每架僚机自报的站位：`W1 ok` = 在槽位上，`W2 掉队 480m` = 比槽位远了 480 m，`W3 冲出 320m` = 冲到了槽位前面，`偏离站位` = 距离差不多但方位不对。★ 判定在僚机那一端做（只有它知道自己的槽位），长机只负责显示，所以两边不会各说各话。长机 HUD 上只显示最严重的那一架（第二架起放副行），这一行是落地复盘用的。老版本僚机不发这一段，显示 `-`。",

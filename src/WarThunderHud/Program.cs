@@ -448,6 +448,24 @@ public static class Program
             Math.Abs(FormationRangeErrorPct(1545 * 1.1, 1545) - 10.0) < 1e-9);
         Check("range error pct guards zero target", FormationRangeErrorPct(500, 0) == 0);
 
+        // ---- 面板分页：键漏了不会报错，屏幕上会直接印出键名（曾经出现过 val.roleWing）----
+        var modules = WtHud.UI.Mfd.MfdPages.Build();
+        Check("menu has 10 modules", modules.Count == 10);
+        bool menuTitlesOk = true, rowLabelsOk = true;
+        foreach (var pg in modules)
+        {
+            if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, pg.TitleKey) == pg.TitleKey) menuTitlesOk = false;
+            if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, pg.MenuKey) == pg.MenuKey) menuTitlesOk = false;
+            if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, pg.MenuHintKey) == pg.MenuHintKey) menuTitlesOk = false;
+            // 行标签走 Screen 表（Panel 表只有面板按键那几个词）。
+            // 机型页的标签就是机型 id 本身，没有对应文案，跳过。
+            if (pg.TitleKey == "page.airframe") continue;
+            foreach (var it in pg.Items)
+                if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, it.LabelKey) == it.LabelKey) rowLabelsOk = false;
+        }
+        Check("every module title resolves", menuTitlesOk);
+        Check("every row label resolves", rowLabelsOk);
+
         // ---- 第 11 段：僚机自报站位 ----
         var pWingRep = WtHud.Telemetry.DataLink.BuildPayload(
             654321, 3000, 0, 90, 0, 0.5, 0.5, 0,
@@ -5160,8 +5178,15 @@ public static class Program
                 if (item >= 0) form.PreviewOpen(pageIdx, Math.Max(0, item));
             }
             else if (view == "help") { form.PreviewHelp(0); }
-            else if (view == "shape") { form.PreviewOpen(1, 3); form.PreviewSub(3); }   // 编队 → 队形（三级页）
-            else if (view == "turn") { form.PreviewOpen(1, 4); form.PreviewSub(4); }    // 编队 → 转向辅助
+            else if (view == "shape") { form.PreviewOpen(1, 2); form.PreviewSub(2); }   // 编队 → 队形（三级页）
+            else if (view == "turn") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 长机 → 转向辅助
+            else if (view == "wing") { form.PreviewOpen(1, 6); form.PreviewSub(6); }    // 编队 → 僚机参数
+            else if (view == "lead") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 长机参数
+            else if (view == "dl") { form.PreviewOpen(2, 0); }                          // 数据链模块
+            else if (view == "dlstatus") { form.PreviewOpen(2, 4); form.PreviewSub(4); } // 数据链 → 链路状态
+            else if (view == "diag") { form.PreviewOpen(9, 0); }                        // 诊断（顶部数据链入口）
+            else if (view == "diagstatus") { form.PreviewOpen(9, 0); form.PreviewSub(0); }  // 诊断 → 链路状态（同一个页）
+            else if (view == "dlfromform") { form.PreviewOpen(1, 8); form.PreviewSub(8); }  // 编队 → 数据链（跳板）
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
