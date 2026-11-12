@@ -516,8 +516,9 @@ internal static class MfdPages
             // 队形几何（原「僚机侧位」+ 三个距离）搬进三级页：这些数只跟队形有关，
             // 混在增益和判定里既占屏又容易被误改。入口行显示当前队形 + 槽位。
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
+            // 摘要不要再带箭头：ValueText 会给每个 Submenu 追加一个「›」
             Submenu("row.turnAssistMenu", () => TurnAssistPage(), c =>
-                c.FormationTurnTargetG.ToString("F1") + "G ›"),
+                c.FormationTurnTargetG.ToString("F1") + "G"),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),
