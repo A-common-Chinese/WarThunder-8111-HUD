@@ -181,6 +181,8 @@ public static class L10n
         ["row.leadHeading"] = ("长机航向", "LEAD HDG"),
         ["row.leadMach"] = ("长机马赫", "LEAD MACH"),
         ["row.dataLinkOn"] = ("使用数据互联", "USE DATA LINK"),
+        ["row.dataLinkPeer"] = ("对端地址", "PEER ADDR"),
+        ["row.dataLinkPeerNow"] = ("发送目标", "TARGETS"),
         ["row.dataLinkId"] = ("节点 ID", "NODE ID"),
         ["row.dataLinkState"] = ("链路状态", "LINK STATE"),
         ["row.dataLinkPort"] = ("端口", "PORT"),

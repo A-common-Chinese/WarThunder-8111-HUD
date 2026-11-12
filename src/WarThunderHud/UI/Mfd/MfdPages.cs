@@ -439,6 +439,16 @@ internal static class MfdPages
         Items =
         {
             Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
+            // 对端地址：留空 = 广播（只能同一局域网）；填 ip:port = 单播，跨网段/组网必须填。
+            // 改完立即生效 —— 联调时 IP 会变好几次，重启 HUD 太慢。
+            Text("row.dataLinkPeer",
+                c => HudConfig.PeersToText(c.DataLinkPeers),
+                (c, v) =>
+                {
+                    c.DataLinkPeers = HudConfig.TextToPeers(v);
+                    WtHud.Program.ApplyDataLinkPeers(c);
+                }),
+            Info("row.dataLinkPeerNow", _ => WtHud.Program.DataLinkPeerText()),
             new MfdItem
             {
                 LabelKey = "row.dataLinkId", Kind = ItemKind.ReadOnly,

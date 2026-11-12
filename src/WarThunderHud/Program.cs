@@ -279,6 +279,23 @@ public static class Program
         Check("peer rejects hostname", !WtHud.Telemetry.DataLink.TryParsePeer("example.com:48017", out _));
         Check("peer rejects bad port", !WtHud.Telemetry.DataLink.TryParsePeer("10.0.0.5:70000", out _));
 
+        // ---- 面板那一行文本 ↔ 配置里的列表（F1 数据链模块里直接改地址） ----
+        string peerText = HudConfig.PeersToText(new[] { "172.16.5.23:48017", "10.0.0.5" });
+        Check("peers to text", peerText == "172.16.5.23:48017, 10.0.0.5");
+        Check("peers text roundtrip",
+            HudConfig.TextToPeers(peerText) is var backPeers && backPeers.Count == 2
+            && backPeers[0] == "172.16.5.23:48017" && backPeers[1] == "10.0.0.5");
+        Check("peers text accepts comma semicolon space",
+            HudConfig.TextToPeers("1.1.1.1:48017; 2.2.2.2  3.3.3.3").Count == 3);
+        Check("peers text drops duplicates",
+            HudConfig.TextToPeers("1.1.1.1, 1.1.1.1 ,  2.2.2.2").Count == 2);
+        Check("empty peer text means broadcast", HudConfig.TextToPeers("   ").Count == 0);
+
+        // 面板上「发送目标」那行文字：三种状态各一条，免得只有真机才看得出对不对
+        Check("peer note broadcast", PeerNote(0, 0) == "broadcast");
+        Check("peer note single target", PeerNote(1, 0) == "1 target(s)");
+        Check("peer note mixed", PeerNote(2, 1) == "1 ok / 1 bad");
+
         // ---- 节点 ↔ 地图友机配对：给每架友机各自的高度 ----
         var twoNodes = new[]
         {
@@ -1290,11 +1307,8 @@ public static class Program
                               (dataLink.Listening ? "" : "  ** BIND FAILED - port busy or blocked **"));
 
             // 单播目标：跨网段/内网穿透必须填，广播 255.255.255.255 出不了路由器。
-            foreach (var bad in dataLink.SetPeers(cfg.DataLinkPeers))
-                Console.WriteLine($"data link: bad peer \"{bad}\" ignored (want ip:port)");
-            Console.WriteLine(cfg.DataLinkPeers.Count == 0
-                ? "data link: sending to broadcast (same subnet only)"
-                : $"data link: sending to {string.Join(", ", cfg.DataLinkPeers)}");
+            // 启动应用一次，面板里改完再应用一次（ApplyDataLinkPeers）。
+            ApplyDataLinkPeers(cfg);
         }
 
         WtHud.UI.L10n.LoadFromConfig(cfg.Language);
@@ -3510,6 +3524,47 @@ public static class Program
         if (!link.TryGetPartnerAltitude(out _, out _)) return "no partner";
         int n = link.NodeCount;
         return n > 1 ? $"linked x{n}" : "linked";
+    }
+
+    /// <summary>对端地址的现状（面板上单独一行显示）：broadcast / 2 target(s) / 1 ok / 1 bad。</summary>
+    private static string dataLinkPeerNote = "";
+
+    /// <summary>给面板用的对端现状文本。</summary>
+    public static string DataLinkPeerText()
+    {
+        if (dataLinkPeerNote.Length > 0) return dataLinkPeerNote;
+        return dataLink == null ? "off" : "-";
+    }
+
+    /// <summary>
+    /// 把配置里的对端地址应用到正在跑的链路上。启动时调一次、面板改完再调一次。
+    /// <para>★ 这是这行设置能放进面板的唯一理由：改完立即生效，不用重启 HUD ——
+    /// 联调时 IP 会变好几次，每次都要重开程序的话这行设置就没有意义了。</para>
+    /// </summary>
+    /// <summary>
+    /// 对端现状那一行的文字。抽成纯函数是为了能在 selftest 里断言 ——
+    /// 真实状态下这行走的是 UDP 链路，不太可能为了看文字去开两台机器。
+    /// </summary>
+    /// <param name="requested">配置里写了几个目标。</param>
+    /// <param name="bad">其中格式不对、被跳过的个数。</param>
+    internal static string PeerNote(int requested, int bad)
+    {
+        if (requested <= 0) return "broadcast";
+        int ok = requested - bad;
+        return bad <= 0 ? $"{ok} target(s)" : $"{ok} ok / {bad} bad";
+    }
+
+    internal static void ApplyDataLinkPeers(HudConfig cfg)
+    {
+        var link = dataLink;
+        if (link == null) { dataLinkPeerNote = "off"; return; }
+
+        var bad = link.SetPeers(cfg.DataLinkPeers);
+        dataLinkPeerNote = PeerNote(cfg.DataLinkPeers.Count, bad.Count);
+
+        foreach (var b in bad)
+            Console.WriteLine($"data link: bad peer \"{b}\" ignored (want ip:port)");
+        Console.WriteLine($"data link: targets -> {dataLinkPeerNote}");
     }
 
     private static string ViewName(int state) => state switch { 0 => "third person", 1 => "cockpit", 2 => "nose", _ => "?" };

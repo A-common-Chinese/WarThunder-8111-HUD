@@ -332,6 +332,26 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("dataLinkPeers")] public List<string> DataLinkPeers { get; set; } = new();
 
+    /// <summary>
+    /// 面板上的「对端地址」只有一行文本，配置里是列表 —— 这两个方法就是那层转换。
+    /// <para>分隔符接受逗号、分号、空格，重复项自动去掉；<c>null</c>/空串 = 清空 = 回到广播。
+    /// 抽成静态纯函数是为了能在 selftest 里断言往返一致，不用真的开面板。</para>
+    /// </summary>
+    internal static string PeersToText(IReadOnlyList<string> peers) => string.Join(", ", peers);
+
+    internal static List<string> TextToPeers(string? text)
+    {
+        var list = new List<string>();
+        if (string.IsNullOrWhiteSpace(text)) return list;
+        foreach (var part in text.Split(new[] { ',', ';', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string s = part.Trim();
+            if (s.Length == 0 || list.Contains(s)) continue;
+            list.Add(s);
+        }
+        return list;
+    }
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 
