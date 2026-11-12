@@ -51,6 +51,8 @@ public static class Program
             }
             case "selftest":
                 return SelfTest();
+            case "dlprobe":
+                return DataLinkProbe(args.Length > 1 ? args[1] : "");
             case "scopetest":
                 return ScopeTest();
             case "preview":
@@ -244,6 +246,56 @@ public static class Program
             !WtHud.Telemetry.DataLink.TryParsePayload("WTDL3|1|2|3", out _, out _, out _, out _, out _));
         Check("datalink rejects garbage",
             !WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|abc|1|2", out _, out _, out _, out _, out _));
+
+        // ---- 坐标段（2026-11-12 追加）：唯一用途是把数据链节点和 map_obj 里的友机认成同一架 ----
+        string wirePos = WtHud.Telemetry.DataLink.BuildPayload(123456, 1000, -2.5, 359.6, -12.34, 0.48213, 0.51234);
+        Check("datalink payload carries position", wirePos == "WTDL2|123456|1000|-25|0|-123|48213|51234");
+        Check("datalink position roundtrip",
+            WtHud.Telemetry.DataLink.TryParsePayload(wirePos, out _, out _, out _, out _, out _,
+                                                     out var dlX, out var dlY)
+            && dlX is double px2 && Math.Abs(px2 - 0.48213) < 1e-6
+            && dlY is double py2 && Math.Abs(py2 - 0.51234) < 1e-6);
+        // 不带坐标时仍是 6 段：老读端只取前 6 段，所以这次扩展不需要两边同时升级
+        Check("datalink without position stays 6 fields",
+            WtHud.Telemetry.DataLink.BuildPayload(1, 100, 0, 0, 0, null, null).Split('|').Length == 6);
+        // 坐标段坏了只丢坐标，高度照收
+        Check("datalink bad position keeps altitude",
+            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|7|1234|0|90|0|abc|5",
+                out _, out var badPosAlt, out _, out _, out _, out var badX, out _)
+            && badPosAlt == 1234 && badX == null);
+        // 越界坐标当无效：一个手滑的 999 不该把配对带到地图外面
+        Check("datalink out-of-range position dropped",
+            WtHud.Telemetry.DataLink.TryParsePayload("WTDL2|7|1234|0|90|0|999999|5",
+                out _, out _, out _, out _, out _, out var oorX, out _)
+            && oorX == null);
+
+        // ---- 单播目标：跨网段/内网穿透必须填，广播出不了路由器 ----
+        Check("peer ip:port",
+            WtHud.Telemetry.DataLink.TryParsePeer("192.168.16.7:48017", out var epA)
+            && epA.Address.ToString() == "192.168.16.7" && epA.Port == 48017);
+        Check("peer defaults to datalink port",
+            WtHud.Telemetry.DataLink.TryParsePeer("10.0.0.5", out var epB)
+            && epB.Port == WtHud.Telemetry.DataLink.Port);
+        Check("peer rejects hostname", !WtHud.Telemetry.DataLink.TryParsePeer("example.com:48017", out _));
+        Check("peer rejects bad port", !WtHud.Telemetry.DataLink.TryParsePeer("10.0.0.5:70000", out _));
+
+        // ---- 节点 ↔ 地图友机配对：给每架友机各自的高度 ----
+        var twoNodes = new[]
+        {
+            new WtHud.Telemetry.DataLink.LinkNode(111111, 3000, 0, 90, 0, 0.5000, 0.5000, 0),
+            new WtHud.Telemetry.DataLink.LinkNode(222222, 5000, 0, 90, 0, 0.5010, 0.5010, 0),
+        };
+        var matchedAlt = WtHud.Telemetry.DataLink.MatchAltitudes(
+            new (double X, double Y)[] { (0.50005, 0.50005), (0.50105, 0.50105) }, twoNodes, 8e-4);
+        Check("pair gives each friendly its own altitude", matchedAlt[0] == 3000 && matchedAlt[1] == 5000);
+        Check("pair leaves unmatched friendly null",
+            WtHud.Telemetry.DataLink.MatchAltitudes(
+                new (double X, double Y)[] { (0.9, 0.9) }, twoNodes, 8e-4)[0] == null);
+        // 一个节点只能配一次：两架挨得近的友机不能共用同一个高度
+        Check("pair never reuses a node",
+            WtHud.Telemetry.DataLink.MatchAltitudes(
+                new (double X, double Y)[] { (0.5000, 0.5000), (0.50001, 0.50001) },
+                new[] { twoNodes[0] }, 8e-4) is var oneNode && oneNode[0] == 3000 && oneNode[1] == null);
 
         // ---- 长机航向来源：有链路用自报值，没有用本机航向近似 ----
         Check("lead heading prefers link", ResolveLeadHeading(275, 10) == 275);
@@ -807,6 +859,55 @@ public static class Program
         return 0;
     }
 
+    /// <summary>
+    /// 纯数据链诊断：不开 HUD、不读游戏、不碰 8111，只听 48017 端口，收到什么打什么。
+    /// <para>跨机联调时这是最快的判断方式 —— 不用进游戏、不用看 HUD，一张嘴就能说清
+    /// 「包到底有没有到」。退出码 0 = 收到过包，1 = 一个都没收到，2 = 端口绑不上。</para>
+    /// </summary>
+    private static int DataLinkProbe(string arg)
+    {
+        int seconds = 30;
+        if (int.TryParse(arg, NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) && s > 0)
+            seconds = s;
+
+        using var link = new WtHud.Telemetry.DataLink(0);
+        link.Start();
+        if (!link.Listening)
+        {
+            Console.WriteLine($"datalink probe: cannot bind udp {WtHud.Telemetry.DataLink.Port} " +
+                              "(another WtHud instance running, or the port is blocked)");
+            return 2;
+        }
+
+        link.PacketCallback = (n, from) =>
+        {
+            string pos = n.Xn is double x && n.Yn is double y
+                ? $"pos={x:F5},{y:F5}"
+                : "pos=-";
+            string hdg = n.HeadingDeg is double h ? h.ToString("F0") : "-";
+            Console.WriteLine($"  {DateTime.Now:HH:mm:ss.fff}  from {from,-22} id={n.Id,-7} " +
+                              $"alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  {pos}");
+        };
+
+        Console.WriteLine($"datalink probe: listening on udp {WtHud.Telemetry.DataLink.Port} for {seconds}s");
+        Console.WriteLine("  expecting WTDL2|id|alt|vy|hdg|turn[|x|y]  (Ctrl+C stops early)");
+
+        long t0 = Environment.TickCount64;
+        while (Environment.TickCount64 - t0 < seconds * 1000L) Thread.Sleep(200);
+
+        Console.WriteLine();
+        Console.WriteLine($"result: rx={link.RxCount}  bad={link.RxBad}  nodes={link.NodeCount}  " +
+                          $"last={(link.LastPeer.Length == 0 ? "none" : link.LastPeer)}");
+        if (link.RxCount > 0) return 0;
+
+        Console.WriteLine("no packet arrived. check, in this order:");
+        Console.WriteLine("  1. firewall on BOTH ends (Windows asks once per network profile)");
+        Console.WriteLine("  2. target ip:port - broadcast 255.255.255.255 never crosses a router");
+        Console.WriteLine("  3. if the two machines are not on the same subnet, configure dataLinkPeers");
+        Console.WriteLine("     with the peer's address and open the udp port on the way through");
+        return 1;
+    }
+
     private static int ScopeTest()
     {
         Console.WriteLine("=== per-airframe setting scope ===");
@@ -1185,7 +1286,15 @@ public static class Program
             }
             dataLink = new WtHud.Telemetry.DataLink(cfg.DataLinkId);
             dataLink.Start();
-            Console.WriteLine($"data link: on, node id {cfg.DataLinkId}, udp {WtHud.Telemetry.DataLink.Port} (heights only)");
+            Console.WriteLine($"data link: on, node id {cfg.DataLinkId}, udp {WtHud.Telemetry.DataLink.Port}" +
+                              (dataLink.Listening ? "" : "  ** BIND FAILED - port busy or blocked **"));
+
+            // 单播目标：跨网段/内网穿透必须填，广播 255.255.255.255 出不了路由器。
+            foreach (var bad in dataLink.SetPeers(cfg.DataLinkPeers))
+                Console.WriteLine($"data link: bad peer \"{bad}\" ignored (want ip:port)");
+            Console.WriteLine(cfg.DataLinkPeers.Count == 0
+                ? "data link: sending to broadcast (same subnet only)"
+                : $"data link: sending to {string.Join(", ", cfg.DataLinkPeers)}");
         }
 
         WtHud.UI.L10n.LoadFromConfig(cfg.Language);
@@ -1822,7 +1931,12 @@ public static class Program
                 ownHdgValid = true;
             }
             UpdateOwnTurnRate(ownHdgValid, ownHdg, snap.ElapsedSeconds);
-            dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg);
+            // 坐标只在 map_obj 认得出自己时才有（刚进图、地图没加载时 Self 为 null）。
+            // 那时发不带坐标的 6 段报文 —— 对方至少还能拿到高度，只是配不上对。
+            double? dlXn = null, dlYn = null;
+            if (mapData.Self is { } dlSelf) { dlXn = dlSelf.X; dlYn = dlSelf.Y; }
+            dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg,
+                           dlXn, dlYn);
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----

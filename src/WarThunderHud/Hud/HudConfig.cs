@@ -324,6 +324,14 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("dataLinkId")] public int DataLinkId { get; set; }
 
+    /// <summary>
+    /// 数据链单播目标，形如 <c>["192.168.16.7:48017"]</c>。为空 = 子网广播。
+    /// <para>★ 广播地址 255.255.255.255 **出不了路由器**：两台机器不在同一网段时
+    /// （内网穿透 / VPN 组网 / 公网中转）必须在这里填对方的地址，并在链路上放通 UDP 48017。</para>
+    /// <para>可以填多个，每个目标都会发一份；某个目标不可达不影响其它目标。</para>
+    /// </summary>
+    [JsonPropertyName("dataLinkPeers")] public List<string> DataLinkPeers { get; set; } = new();
+
     /// <summary>Hold the right mouse button to enter the aiming layout.</summary>
     [JsonPropertyName("aimOnRightMouse")] public bool AimOnRightMouse { get; set; } = true;
 

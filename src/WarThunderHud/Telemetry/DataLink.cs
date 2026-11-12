@@ -11,9 +11,15 @@ namespace WtHud.Telemetry;
 /// <summary>
 /// 极简数据链：广播自己的气压高度，外加编队辅助需要的航向与转向率。
 /// <para>
-/// 位置不共享 —— 单机拿到的友机位置与对方自报值一致到 1–2 m（实测 27 m–31 km 全段），
+/// 位置**不作为位置来源** —— 单机拿到的友机位置与对方自报值一致到 1–2 m（实测 27 m–31 km 全段），
 /// 而高度在 <c>map_obj</c> 里根本没有 z，单机无论如何拿不到。高度又恰好是慢变量
 /// （Vy 通常 0–5 m/s），100 ms 延迟只差半米，所以它对时间同步几乎没有要求。
+/// </para>
+/// <para>
+/// 2026-11-12 起报文末尾多两段自身归一化坐标，目的**只有一个**：把「数据链节点」和
+/// <c>map_obj</c> 里的友机认成同一架。map_obj 只给位置和机型、没有呼号，节点 ID 是随机的，
+/// 两边唯一的共同量就是位置 —— 拿它当配对键，才能给编队里**每一架**友机配上各自的高度，
+/// 而不是全队共用「最活跃那个节点」的高度。
 /// </para>
 /// <para>
 /// **转向率是第二个值得共享的量**：它决定转弯时僚机要给多少提前量
@@ -27,8 +33,9 @@ namespace WtHud.Telemetry;
 /// </para>
 /// <para>
 /// 协议刻意做成一行文本，方便用任何工具手工调试：
-/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;|&lt;航向 度&gt;|&lt;转向率 0.1 °/s&gt;</c>
+/// <c>WTDL2|&lt;节点ID&gt;|&lt;气压高度 m&gt;|&lt;升降速度 0.1 m/s&gt;|&lt;航向 度&gt;|&lt;转向率 0.1 °/s&gt;[|&lt;x 1e-5&gt;|&lt;y 1e-5&gt;]</c>
 /// 后两段是后加的：老版本只发 4 段、也只读 4 段，双方仍能互通（只是没有转向率可用）。
+/// 坐标两段同样是追加的，老读端会忽略，不影响高度。
 /// </para>
 /// </summary>
 internal sealed class DataLink : IDisposable
@@ -52,11 +59,109 @@ internal sealed class DataLink : IDisposable
 
         /// <summary>对方自报的转向率（°/s，正 = 右转）。老版本不发这一段 → null。</summary>
         public double? TurnRateDeg;
+
+        /// <summary>对方自报的归一化位置（0..1）。老版本不发这两段 → null，此时无法与地图友机配对。</summary>
+        public double? Xn;
+        public double? Yn;
+
         public long TickAt;
+        public int Packets;
     }
 
     private readonly Dictionary<int, Remote> _nodes = new();
     private readonly object _lock = new();
+
+    // ---- 诊断计数：内网穿透联调时，界面上的"有没有收到"全靠这三个数 ----
+
+    /// <summary>收到的数据包总数（含解析失败的）。</summary>
+    public long RxCount => Interlocked.Read(ref _rxCount);
+    private long _rxCount;
+
+    /// <summary>收到的、但解析不通过的包数（格式不对 / 被截断）。</summary>
+    public long RxBad => Interlocked.Read(ref _rxBad);
+    private long _rxBad;
+
+    /// <summary>发出的包数。</summary>
+    public long TxCount => Interlocked.Read(ref _txCount);
+    private long _txCount;
+
+    /// <summary>最后一个包的来源，形如 <c>192.168.16.7:52311</c>。空 = 一个都没收到。</summary>
+    public string LastPeer { get; private set; } = "";
+
+    /// <summary>最后一个包的到达时刻（<see cref="Environment.TickCount64"/>）。</summary>
+    public long LastRxTick { get; private set; }
+
+    /// <summary>单播目标。为空时退回子网广播 —— 跨网段必须填，广播出不了路由器。</summary>
+    private readonly List<IPEndPoint> _peers = new();
+
+    /// <summary>收到的一个数据链节点。位置可能为 null（对方版本不带坐标）。</summary>
+    public readonly record struct LinkNode(int Id, int AltM, double VyMs,
+                                           double? HeadingDeg, double? TurnRateDeg,
+                                           double? Xn, double? Yn, int AgeMs);
+
+    /// <summary>
+    /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
+    /// 从而给每架友机找到各自的高度。
+    /// </summary>
+    public LinkNode[] Snapshot()
+    {
+        long now = Environment.TickCount64;
+        lock (_lock)
+        {
+            var list = new List<LinkNode>(_nodes.Count);
+            foreach (var kv in _nodes)
+            {
+                if (now - kv.Value.TickAt >= StaleMs) continue;
+                var n = kv.Value;
+                list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
+                                      n.Xn, n.Yn, (int)(now - n.TickAt)));
+            }
+            return list.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// 设置单播目标（<c>"ip:port"</c> 列表）。解析不了的行会被跳过并返回失败项，方便在启动日志里明说。
+    /// </summary>
+    public List<string> SetPeers(IEnumerable<string> specs)
+    {
+        var bad = new List<string>();
+        lock (_lock)
+        {
+            _peers.Clear();
+            foreach (var spec in specs)
+            {
+                if (TryParsePeer(spec, out var ep)) _peers.Add(ep);
+                else if (!string.IsNullOrWhiteSpace(spec)) bad.Add(spec);
+            }
+        }
+        return bad;
+    }
+
+    /// <summary>解析 <c>"host:port"</c>；端口缺省用 <see cref="Port"/>。</summary>
+    internal static bool TryParsePeer(string? spec, out IPEndPoint ep)
+    {
+        ep = null!;
+        if (string.IsNullOrWhiteSpace(spec)) return false;
+
+        string text = spec.Trim();
+        string host = text;
+        int port = Port;
+
+        int colon = text.LastIndexOf(':');
+        // IPv6 字面量（[::1]:48017）只有一个冒号在方括号外，这里不处理 —— 内网穿透用不到，
+        // 真需要时再补，别为没验证过的输入写一堆分支。
+        if (colon > 0 && int.TryParse(text.AsSpan(colon + 1), out int p))
+        {
+            host = text[..colon];
+            if (p <= 0 || p > 65535) return false;
+            port = p;
+        }
+
+        if (!IPAddress.TryParse(host, out var addr)) return false;
+        ep = new IPEndPoint(addr, port);
+        return true;
+    }
 
     /// <summary>是否收到过"和自己同 ID"的包（说明两台机器撞了随机 ID）。</summary>
     public volatile bool SelfIdConflict;
@@ -155,6 +260,15 @@ internal sealed class DataLink : IDisposable
         }
     }
 
+    /// <summary>端口是否绑成功。false = 被防火墙/其它进程占了，功能等于没开数据链。</summary>
+    public bool Listening => _running && _socket != null;
+
+    /// <summary>
+    /// 调试用：每收到一个有效包触发一次（在接收线程上）。
+    /// 只有 <c>dlprobe</c> 会挂它，正式渲染路径不要挂 —— 回调里抛异常会打断接收循环。
+    /// </summary>
+    public Action<LinkNode, string>? PacketCallback;
+
     public void Start()
     {
         if (_running) return;
@@ -193,17 +307,55 @@ internal sealed class DataLink : IDisposable
     }
 
     /// <summary>
+    /// 带自身归一化坐标的报文（第 7、8 段）。
+    /// <para>坐标是 <c>map_obj</c> 那套 0..1 的归一化位置，乘 100000 存成整数 —— 100 km 的地图
+    /// 也有 1 m 分辨率，而 int 比小数短，一行报文仍然能手工读。</para>
+    /// <para>★ 为什么不升 magic 到 WTDL3：老读端只认 <c>WTDL2</c> 前缀、且只取前 6 段，
+    /// 保留前缀 + 追加段等于「老版本照常收高度，新版本多拿坐标」，不需要两边同时升级。</para>
+    /// </summary>
+    internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
+                                        double? xn, double? yn)
+    {
+        string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
+        if (xn is not double x || yn is not double y) return head;   // 坐标未知 → 仍是 6 段
+
+        int ix = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * CoordinateScale);
+        int iy = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * CoordinateScale);
+        return $"{head}|{ix}|{iy}";
+    }
+
+    /// <summary>归一化坐标的整数倍率：0..1 → 0..100000。</summary>
+    internal const int CoordinateScale = 100_000;
+
+    /// <summary>
     /// 解析一行报文。<paramref name="headingDeg"/> / <paramref name="turnRateDeg"/> 为 null
     /// 表示对方是老版本（只发 4 段）或该段无效，上层会退化为本地近似值。
     /// </summary>
     internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
                                          out double? turnRateDeg, out double? headingDeg)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out _, out _);
+
+    /// <summary>
+    /// 解析一行报文。
+    /// <para><paramref name="headingDeg"/> / <paramref name="turnRateDeg"/> 为 null 表示对方是老版本
+    /// （只发 4 段）或该段无效，上层会退化为本地近似值。</para>
+    /// <para><paramref name="xn"/> / <paramref name="yn"/> 是对方自报的归一化位置，为 null 表示
+    /// 对方版本不带坐标、或该段坏了。★ 坐标只用来把「数据链节点」和 <c>map_obj</c> 里的友机
+    /// 配对（同一架飞机的位置两边一致到 1–2 m），**不用它当位置来源** —— 单机拿到的友机位置
+    /// 本来就够准，缺的只有高度。</para>
+    /// </summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn)
     {
         selfId = 0;
         altM = 0;
         vyMs = 0;
         turnRateDeg = null;
         headingDeg = null;
+        xn = null;
+        yn = null;
 
         var parts = text.Split('|');
         if (parts.Length < 4 || parts[0] != "WTDL2") return false;
@@ -221,23 +373,53 @@ internal sealed class DataLink : IDisposable
         if (parts.Length >= 6 && int.TryParse(parts[5], out int turnTenths))
             turnRateDeg = turnTenths / 10.0;
 
+        // 坐标段（第 7、8 段）：同一条原则，坏了只丢坐标。超出 0..1 的值一律当无效，
+        // 免得远端一个手滑的 999 把配对逻辑带到地图外面去。
+        if (parts.Length >= 8
+            && int.TryParse(parts[6], out int ix) && int.TryParse(parts[7], out int iy)
+            && ix >= 0 && ix <= CoordinateScale && iy >= 0 && iy <= CoordinateScale)
+        {
+            xn = ix / (double)CoordinateScale;
+            yn = iy / (double)CoordinateScale;
+        }
+
         return true;
     }
 
     /// <summary>由渲染循环每帧调用，内部按 4 Hz 限频真正发包。</summary>
     /// <param name="headingDeg">自己的航向（0..359）；无罗盘时上层用航迹角兜底。</param>
     /// <param name="turnRateDeg">自己当前的转向率（°/s，正 = 右转）。僚机拿它算转弯提前量。</param>
-    public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg)
+    /// <param name="xn">自己的归一化位置（0..1）。null = 这一帧地图还没有自己的图标，不发坐标。</param>
+    /// <param name="yn">同上，y 轴。</param>
+    public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg,
+                     double? xn = null, double? yn = null)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
         _lastSendS = nowS;
 
+        IPEndPoint[] targets;
+        lock (_lock)
+            targets = _peers.Count == 0
+                ? new[] { new IPEndPoint(IPAddress.Broadcast, Port) }
+                : _peers.ToArray();
+
         try
         {
-            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg);
+            var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn);
             var bytes = Encoding.ASCII.GetBytes(payload);
-            _socket.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, Port));
+            foreach (var ep in targets)
+            {
+                try
+                {
+                    _socket.Send(bytes, bytes.Length, ep);
+                    Interlocked.Increment(ref _txCount);
+                }
+                catch
+                {
+                    // 单个目标不可达不影响其它目标：跨网段时常常只有一个通
+                }
+            }
         }
         catch
         {
@@ -253,7 +435,7 @@ internal sealed class DataLink : IDisposable
             try
             {
                 var data = _socket!.Receive(ref remote);
-                Parse(data);
+                Parse(data, remote);
             }
             catch
             {
@@ -263,14 +445,23 @@ internal sealed class DataLink : IDisposable
         }
     }
 
-    private void Parse(byte[] data)
+    private void Parse(byte[] data, IPEndPoint from)
     {
+        Interlocked.Increment(ref _rxCount);
+        LastPeer = from.ToString();
+        LastRxTick = Environment.TickCount64;
+
         string text;
         try { text = Encoding.ASCII.GetString(data); }
         catch { return; }
 
         if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
-                             out double? turnRate, out double? heading)) return;
+                             out double? turnRate, out double? heading,
+                             out double? xn, out double? yn))
+        {
+            Interlocked.Increment(ref _rxBad);
+            return;
+        }
 
         if (id == _selfId)
         {
@@ -292,8 +483,62 @@ internal sealed class DataLink : IDisposable
             // 航向/转向率是后加的两段：老版本不发，就保持 null，上层自动退化为本地估算
             node.HeadingDeg = heading;
             node.TurnRateDeg = turnRate;
+            // 坐标同理：老版本不发 → null，配对会跳过这个节点，但高度仍可用于单长机场景
+            node.Xn = xn;
+            node.Yn = yn;
             node.TickAt = Environment.TickCount64;
+            node.Packets++;
         }
+
+        if (PacketCallback is { } cb)
+        {
+            try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0), from.ToString()); }
+            catch { /* 调试回调不能影响接收 */ }
+        }
+    }
+
+    /// <summary>
+    /// 把数据链节点和地图上的友机按位置配对，给出**每一架**友机各自的高度。
+    /// <para>这是坐标两段存在的唯一理由：<c>map_obj</c> 里有位置没高度，数据链里有高度
+    /// 但节点 ID 与飞机没有共同标识，位置是两边唯一共有的量（实测一致到 1–2 m）。</para>
+    /// <para>一个节点只会配给一架友机（配过就标记），避免两架挨得近的友机抢同一个高度。
+    /// 配对不上的返回 null —— 上层应把它当作「高度未知」，而不是拿别人的高度顶替。</para>
+    /// </summary>
+    /// <param name="friendlies">友机的归一化位置，顺序与返回值一一对应。</param>
+    /// <param name="nodes">数据链快照；没有坐标的节点会被跳过。</param>
+    /// <param name="toleranceNorm">配对容差（归一化单位）。50 m / 64 km 地图约为 8e-4。</param>
+    internal static int?[] MatchAltitudes(IReadOnlyList<(double X, double Y)> friendlies,
+                                          IReadOnlyList<LinkNode> nodes,
+                                          double toleranceNorm)
+    {
+        var result = new int?[friendlies.Count];
+        if (friendlies.Count == 0 || nodes.Count == 0) return result;
+
+        var used = new bool[nodes.Count];
+        double tol2 = toleranceNorm * toleranceNorm;
+
+        for (int i = 0; i < friendlies.Count; i++)
+        {
+            double fx = friendlies[i].X, fy = friendlies[i].Y;
+            double bestD2 = double.MaxValue;
+            int best = -1;
+
+            for (int j = 0; j < nodes.Count; j++)
+            {
+                if (used[j] || nodes[j].Xn is not double nx || nodes[j].Yn is not double ny) continue;
+                double dx = nx - fx, dy = ny - fy;
+                double d2 = dx * dx + dy * dy;
+                if (d2 < bestD2) { bestD2 = d2; best = j; }
+            }
+
+            if (best >= 0 && bestD2 <= tol2)
+            {
+                used[best] = true;
+                result[i] = nodes[best].AltM;
+            }
+        }
+
+        return result;
     }
 
     public void Dispose()
