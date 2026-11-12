@@ -52,7 +52,8 @@ public static class Program
             case "selftest":
                 return SelfTest();
             case "dlprobe":
-                return DataLinkProbe(args.Length > 1 ? args[1] : "");
+                return DataLinkProbe(args.Length > 1 ? args[1] : "",
+                                     args.Length > 2 ? args[2] : "");
             case "scopetest":
                 return ScopeTest();
             case "preview":
@@ -487,7 +488,7 @@ public static class Program
             654321, 3000, 0, 90, 0, 0.5, 0.5, 0,
             WtHud.Telemetry.DataLink.LinkRole.Wing, 1,
             WtHud.Telemetry.DataLink.WingState.Behind, 480);
-        Check("wing report has 11 fields", pWingRep.Split('|').Length == 11);
+        Check("wing report has 12 fields", pWingRep.Split('|').Length == 12);
         Check("wing report round-trips",
             WtHud.Telemetry.DataLink.TryParsePayload(pWingRep, out _, out _, out _, out _, out _,
                                                      out _, out _, out _, out _,
@@ -523,8 +524,9 @@ public static class Program
             WtHud.Telemetry.DataLink.LinkRole.Wing, 2,
             WtHud.Telemetry.DataLink.WingState.Unknown, 0);
         var pnp = pNoPos.Split('|');
-        Check("no position keeps the field layout", pnp.Length == 11
-            && pnp[6] == "" && pnp[7] == "" && pnp[9] == "2" && pnp[10] == "2,-1,0");
+        Check("no position keeps the field layout", pnp.Length == 12
+            && pnp[6] == "" && pnp[7] == "" && pnp[9] == "2" && pnp[10] == "2,-1,0"
+            && pnp[11] == "0");
         Check("no position still parses role and slot",
             WtHud.Telemetry.DataLink.TryParsePayload(pNoPos, out _, out _, out _, out _, out _,
                                                      out var xNp, out var yNp, out _, out var roleNp,
@@ -535,6 +537,29 @@ public static class Program
         // 既没坐标又没身份：回到 6 段纯高度包，老读端看到的和以前一样
         Check("no position and no role stays 6 fields",
             WtHud.Telemetry.DataLink.BuildPayload(1, 100, 0, 0, 0, null, null).Split('|').Length == 6);
+
+        // ---- 跟随长机（第 12 段）：两家长机同时在线时靠它把两张表分开 ----
+        var pLeadId = WtHud.Telemetry.DataLink.BuildPayload(
+            654321, 3000, 0, 90, 0, 0.5, 0.5, 0,
+            WtHud.Telemetry.DataLink.LinkRole.Wing, 1,
+            WtHud.Telemetry.DataLink.WingState.InPosition, 0, 555001);
+        Check("lead id is the 12th field",
+            pLeadId.Split('|').Length == 12 && pLeadId.EndsWith("|555001", StringComparison.Ordinal));
+        Check("lead id round-trips",
+            WtHud.Telemetry.DataLink.TryParsePayload(pLeadId, out _, out _, out _, out _, out _,
+                                                     out _, out _, out _, out _,
+                                                     out _, out _, out _, out int leadOut)
+            && leadOut == 555001);
+        Check("old packet has no lead id",
+            WtHud.Telemetry.DataLink.TryParsePayload(pWingRep, out _, out _, out _, out _, out _,
+                                                     out _, out _, out _, out _,
+                                                     out _, out _, out _, out int leadOld)
+            && leadOld == 0);
+        Check("lead id without a station segment stays 10 fields",
+            WtHud.Telemetry.DataLink.BuildPayload(
+                1, 3000, 0, 90, 0, 0.5, 0.5, 0,
+                WtHud.Telemetry.DataLink.LinkRole.Wing, -1, WtHud.Telemetry.DataLink.WingState.Unknown, 0,
+                555001).Split('|').Length == 10);
 
         // ---- 站位状态判定：与状态机脱离 MAINTAIN 同一条线 ----
         var wc = new HudConfig { FormationDropPct = 30, FormationAlignDeg = 5 };
@@ -649,6 +674,17 @@ public static class Program
             WingVerdict(new[] { wtOff }) == LeadWingVerdict.Offline);
         Check("offline outranks data error when nobody judged",
             WingVerdict(new[] { wtOff, wt4 }) == LeadWingVerdict.Offline);
+
+        // ---- 两家长机：只列跟我的那架（0 = 没指定，当"可能是我的人"留下）----
+        var wtMine = wt4 with { LeadId = 555 };
+        var wtOther = wt4 with { LeadId = 999 };
+        Check("wing that follows another lead is filtered out", !IsMyWing(wtOther, 555));
+        Check("wing that names me is kept", IsMyWing(wtMine, 555));
+        Check("wing with no lead id is kept", IsMyWing(wt4, 555));
+        Check("wing table drops the other formation",
+            WingTable(new[] { wtMine, wtOther }, 555).Count == 1);
+        Check("wing table keeps both when my id is unknown",
+            WingTable(new[] { wtMine, wtOther }).Count == 2);
 
         // ---- 表不设行数上限：截断等于静默少报（四人以上 / 带数据错误行时正好踩到）----
         var leadOpt = new HudOptions { LeadStatusMain = "X", FormationOnly = true };
@@ -1608,13 +1644,20 @@ public static class Program
     /// <para>跨机联调时这是最快的判断方式 —— 不用进游戏、不用看 HUD，一张嘴就能说清
     /// 「包到底有没有到」。退出码 0 = 收到过包，1 = 一个都没收到，2 = 端口绑不上。</para>
     /// </summary>
-    private static int DataLinkProbe(string arg)
+    private static int DataLinkProbe(string arg, string idArg = "")
     {
         int seconds = 30;
         if (int.TryParse(arg, NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) && s > 0)
             seconds = s;
 
-        using var link = new WtHud.Telemetry.DataLink(0);
+        // 第二个参数 = 本机节点 ID。填了才能验证「只列跟我的僚机」这条过滤：
+        // 不填是 0 = 不过滤，所有人的僚机都会进表。
+        int selfId = 0;
+        if (int.TryParse(idArg, NumberStyles.Integer, CultureInfo.InvariantCulture, out int sid)
+            && sid > 0 && sid <= 999_999)
+            selfId = sid;
+
+        using var link = new WtHud.Telemetry.DataLink(selfId);
         link.Start();
         if (!link.Listening)
         {
@@ -1648,11 +1691,13 @@ public static class Program
                 _ => n.Slot >= 0 ? $"W{n.Slot + 1}=err" : "-",
             };
             Console.WriteLine($"  {DateTime.Now:HH:mm:ss.fff}  from {from,-22} id={n.Id,-7} " +
-                              $"role={role}  wing={wing,-14} alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
+                              $"role={role}  wing={wing,-14} lead={(n.LeadId > 0 ? "#" + n.LeadId : "-"),-8} " +
+                              $"alt={n.AltM,5}m  vy={n.VyMs,6:F1}  hdg={hdg,4}  bank={bank,6}  {pos}");
         };
 
-        Console.WriteLine($"datalink probe: listening on udp {WtHud.Telemetry.DataLink.Port} for {seconds}s");
-        Console.WriteLine("  expecting WTDL2|id|alt|vy|hdg|turn[|x|y[|bank]]  (Ctrl+C stops early)");
+        Console.WriteLine($"datalink probe: listening on udp {WtHud.Telemetry.DataLink.Port} for {seconds}s"
+                          + (selfId > 0 ? $"  (self id {selfId}: wing table filtered to my formation)" : ""));
+        Console.WriteLine("  expecting WTDL2|id|alt|vy|hdg|turn[|x|y[|bank[|role[|slot,state,err[|leadId]]]]]  (Ctrl+C stops early)");
 
         long t0 = Environment.TickCount64;
         while (Environment.TickCount64 - t0 < seconds * 1000L) Thread.Sleep(200);
@@ -1666,8 +1711,9 @@ public static class Program
         Console.WriteLine($"result: rx={link.RxCount}  bad={link.RxBad}  nodes={link.NodeCount}  " +
                           $"lead={leadText}  last={(link.LastPeer.Length == 0 ? "none" : link.LastPeer)}");
 
-        // 长机 HUD 会画的那张表，原样打出来 —— 联调时不用进游戏就能确认「谁掉队、谁数据错误、谁掉线」
-        var rows = WingTable(link.RecentNodes(WingOfflineKeepMs));
+        // 长机 HUD 会画的那张表，原样打出来 —— 联调时不用进游戏就能确认「谁掉队、谁数据错误、谁掉线」。
+        // ★ 传了本机 ID 就按「只列跟我的」过滤；不传（ID=0）是全量，看 lead= 那一列区分。
+        var rows = WingTable(link.RecentNodes(WingOfflineKeepMs), link.SelfId);
         Console.WriteLine($"wing table: {rows.Count} row(s)");
         foreach (var n in rows)
             Console.WriteLine($"  {WingLabel(n),-6} {WingStateText(n)}");
@@ -2725,7 +2771,8 @@ public static class Program
             if (mapData.Self is { } dlSelf) { dlXn = dlSelf.X; dlYn = dlSelf.Y; }
             dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg,
                            dlXn, dlYn, TurnAssistBroadcastBank(cfg), SelfLinkRole(cfg),
-                           selfWingSlot, selfWingState, selfWingErrM);
+                           selfWingSlot, selfWingState, selfWingErrM,
+                           EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId));
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -3339,7 +3386,7 @@ public static class Program
                 //   长机再按自己的地图算一遍只会算出第二套结论。
                 // ★ 用 RecentNodes 而不是 OnlineNodes：掉线的那架要留在表里说「掉线」，
                 //   3 秒硬线会让整行凭空消失，长机只会以为"本来就没这架"。
-                var wingRows = WingTable(dataLink?.RecentNodes(WingOfflineKeepMs));
+                var wingRows = WingTable(dataLink?.RecentNodes(WingOfflineKeepMs), cfg.DataLinkId);
 
                 // 主状态：僚机在不在位（长机唯一需要关心的事）
                 string main;
@@ -3766,6 +3813,14 @@ public static class Program
                         : WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noFriendly");
                 }
             }
+
+            // ★ 两个 role=1 且没手填长机 ID：SelectLead 会退到「最近活跃」，
+            //   圈和航向会在两架之间来回跳。这不等于"找不到长机"，但同样是飞行员
+            //   必须知道的事 —— 只放在面板里等于没说。
+            //   不覆盖上面更具体的提示（没自机坐标 / 没认到长机）。
+            if (!cfg.LeadMode && cfg.DataLinkLeadId <= 0 && opt.FormationHint.Length == 0
+                && dataLink != null && dataLink.TryGetLeadNode(out _, out _, out bool leadAmb) && leadAmb)
+                opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.leadAmbiguous");
         }
 
         // --- grid cell (letters = east axis, numbers = north axis) ---
@@ -4410,18 +4465,29 @@ public static class Program
     internal const int WingOfflineKeepMs = 60_000;
 
     /// <summary>
+    /// 这架僚机算不算「我这队的」。
+    /// <para>报文第 12 段是它自报的跟随长机 ID：等于我的 ID = 我的；等于 0 = 没指定。
+    /// ★ 0 必须算进来：面板里那一项默认就是 0，如果把它排除，单长机场景整张表会空掉。
+    /// 代价是两家长机同时在线时，没填 ID 的僚机会同时出现在两张表里 —— 想分开就填 ID。</para>
+    /// <para><paramref name="myId"/> &lt;= 0 表示不做过滤（自检/无链路时用）。</para>
+    /// </summary>
+    internal static bool IsMyWing(WtHud.Telemetry.DataLink.LinkNode n, int myId)
+        => myId <= 0 || n.LeadId == 0 || n.LeadId == myId;
+
+    /// <summary>
     /// 长机 HUD 上的僚机表：只要**发过第 11 段**的节点（槽位 &gt;= 0），按槽位排序。
     /// <para>★ 入表条件不是「状态已知」：状态 Unknown 恰恰是「数据错误」那一档，必须列出来。
     /// 掉线的（包龄 &gt;= 3 s）也留着，状态列写「掉线」——见 <see cref="WingOfflineKeepMs"/>。
     /// 没发第 11 段的节点是"没开编队辅助/老版本"，不属于这支编队，不进表。</para>
     /// </summary>
     internal static List<WtHud.Telemetry.DataLink.LinkNode> WingTable(
-        IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? nodes)
+        IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode>? nodes, int myId = -1)
     {
         var list = new List<WtHud.Telemetry.DataLink.LinkNode>();
         if (nodes is null) return list;
         foreach (var n in nodes)
-            if (n.Slot >= 0 && n.Role == WtHud.Telemetry.DataLink.LinkRole.Wing) list.Add(n);
+            if (n.Slot >= 0 && n.Role == WtHud.Telemetry.DataLink.LinkRole.Wing && IsMyWing(n, myId))
+                list.Add(n);
         list.Sort((a, b) =>
         {
             int sa = a.Slot >= 0 ? a.Slot : int.MaxValue;
@@ -5019,42 +5085,39 @@ public static class Program
             ? WtHud.Telemetry.DataLink.LinkRole.Lead
             : WtHud.Telemetry.DataLink.LinkRole.Wing;
 
-    /// <summary>长机 HUD 上的一行报告：「W2 掉队 480m」。</summary>
-    internal static string WingReportText(WtHud.Telemetry.DataLink.LinkNode n)
-    {
-        string who = WingLabel(n);
-        var alerts = WtHud.UI.LangScope.Alerts;
-        return n.Wing switch
-        {
-            WtHud.Telemetry.DataLink.WingState.Behind => string.Format(
-                WtHud.UI.L10n.Get(alerts, "guide.lead.wingBehind"), who, Math.Abs(n.ErrM)),
-            WtHud.Telemetry.DataLink.WingState.Ahead => string.Format(
-                WtHud.UI.L10n.Get(alerts, "guide.lead.wingAhead"), who, Math.Abs(n.ErrM)),
-            WtHud.Telemetry.DataLink.WingState.OffStation => string.Format(
-                WtHud.UI.L10n.Get(alerts, "guide.lead.wingOff"), who),
-            _ => "",
-        };
-    }
-
     /// <summary>
-    /// 面板一行：每架自报过站位的僚机一条 —— `W1 ok · W2 掉队 480m`。
-    /// <para>长机在飞的时候看 HUD 那一行就够，这一行是给落地后复盘用的：
-    /// 谁掉队、掉多少都在，能直接对上当时的通话。</para>
+    /// 面板一行：**我这一队**的僚机逐架一条 —— `W1 到位 · W2 掉队 480m · W3 数据错误`。
+    /// <para>长机在飞的时候看 HUD 那张表就够，这一行是给落地后复盘用的。
+    /// ★ 和 HUD 用同一份数据、同一个过滤（<see cref="WingTable"/>）：两家长机同时在线时，
+    /// 面板不会把对方的人算进来，掉线的也照样能看见。</para>
     /// </summary>
     public static string DataLinkWingText()
     {
         var link = dataLink;
         if (link == null) return "-";
 
-        var parts = new List<string>();
-        foreach (var n in link.OnlineNodes())
-        {
-            if (n.Wing == WtHud.Telemetry.DataLink.WingState.Unknown) continue;
-            parts.Add(n.Wing == WtHud.Telemetry.DataLink.WingState.InPosition
-                ? WingLabel(n) + " ok"
-                : WingReportText(n));
-        }
-        return parts.Count == 0 ? "-" : string.Join(" · ", parts);
+        var rows = WingTable(link.RecentNodes(WingOfflineKeepMs), link.SelfId);
+        if (rows.Count == 0) return "-";
+        var parts = new List<string>(rows.Count);
+        foreach (var n in rows) parts.Add(WingLabel(n) + " " + WingStateText(n));
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// 面板一行：填了的长机 ID 现在在线还是离线。
+    /// <para>填错了或者对端还没起来，当场就能看出来 —— 否则飞行员只会看到"找不到长机"，
+    /// 不知道是 ID 错了还是对方没开。</para>
+    /// </summary>
+    public static string DataLinkLeadStateText(HudConfig cfg)
+    {
+        if (cfg.LeadMode) return "-";                       // 长机自己不需要跟谁
+        int want = cfg.DataLinkLeadId;
+        if (want <= 0) return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadAuto");
+        var link = dataLink;
+        if (link != null)
+            foreach (var n in link.Snapshot())
+                if (n.Id == want) return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadOnline");
+        return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadOffline");
     }
 
     /// <summary>长机是怎么认出来的，面板上一行字。</summary>

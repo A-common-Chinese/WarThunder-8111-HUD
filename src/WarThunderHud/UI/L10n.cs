@@ -187,6 +187,11 @@ public static class L10n
         ["row.dataLinkId"] = ("节点 ID", "NODE ID"),
         ["row.dataLinkRole"] = ("本机角色", "MY ROLE"),
         ["row.dataLinkLeadId"] = ("长机节点 ID", "LEAD NODE ID"),
+        // 填了 ID 之后紧跟着的一行只读状态：填错了/对方没开，当场能看出来
+        ["row.dataLinkLeadState"] = ("长机在线", "LEAD ONLINE"),
+        ["val.leadAuto"] = ("未指定（自动）", "AUTO"),
+        ["val.leadOnline"] = ("在线", "ONLINE"),
+        ["val.leadOffline"] = ("离线", "OFFLINE"),
         ["row.apiHealth"] = ("接口状态", "API STATE"),
         ["row.dataLinkNodes"] = ("在线节点", "NODES"),
         ["row.dataLinkWings"] = ("僚机站位", "WING POS"),
@@ -466,6 +471,8 @@ public static class L10n
         // 认得长机但拿不到自机坐标：8111 半初始化 / 不在对局。这是错误状态，要明说
         ["formation.noSelfPos"] = ("无自机坐标 · 8111 未就绪", "NO OWN POSITION · 8111 NOT READY"),
         ["formation.noMatch"] = ("无 {0} 型友军 · 检查长机机型", "NO {0} CONTACT · CHECK LEAD TYPE"),
+        // 两个 role=1 且没填长机 ID：引导会在两架之间跳，必须说清该怎么办
+        ["formation.leadAmbiguous"] = ("长机不唯一 · 填节点 ID", "MULTIPLE LEADS · SET NODE ID"),
         ["guide.formationOff"] = ("编队已解除", "FORMATION OFF"),
         ["guide.lead.nolink"] = ("无数据链", "NO LINK"),
         ["splash"] = ("击落", "SPLASH"),

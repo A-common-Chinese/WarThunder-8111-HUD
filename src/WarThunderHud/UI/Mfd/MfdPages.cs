@@ -570,6 +570,10 @@ internal static class MfdPages
             Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
                    1, 0, 999999, ""),
+            // 填了跟一行只读状态：ID 抄错了、对方还没开，当场能看出来 —— 不然飞行员只会看到
+            // 「找不到长机」，分不清是填错还是对面没起来。
+            Info("row.dataLinkLeadState", c => WtHud.Program.DataLinkLeadStateText(c),
+                 c => !c.LeadMode && c.DataLinkEnabled),
 
             // ---- 站位判定：到位/保持/脱离三条线 ----
             Number("row.fAlignDeg", c => c.FormationAlignDeg, (c, v) => c.FormationAlignDeg = v, 1, 0, 45, "°"),

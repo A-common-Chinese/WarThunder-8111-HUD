@@ -40,6 +40,7 @@ namespace WtHud.Telemetry;
 /// ★ 坐标拿不到时第 7、8 段留**空**（<c>||||</c>），段位不挪：角色/站位照发，
 /// 长机才知道这架是僚机、只是没有位置，从而显示「数据错误」而不是当它不存在。
 /// 第 11 段是站位 <c>槽位,状态,误差m</c>，状态 <c>-1</c> = 在编队里但本帧无判定。
+/// 第 12 段是「我跟的长机节点 ID」，0 = 没指定 —— 两家长机同时在线时靠它把两张表分开。
 /// </para>
 /// <para>
 /// 套接字是**双栈**的（IPv6Any + DualMode）：同一个端口同时收 IPv4 和 IPv6。
@@ -113,6 +114,9 @@ internal sealed class DataLink : IDisposable
         /// <summary>对方自报的站位距离误差（米，正 = 比槽位远）。</summary>
         public int ErrM;
 
+        /// <summary>对方自报「我跟的长机」节点 ID（第 12 段）。0 = 没指定/老版本。</summary>
+        public int LeadId;
+
         /// <summary>
         /// 这一包是从哪个地址来的。<see cref="Send"/> 用它回包 —— 长机不必把每个僚机的
         /// IP 都手填一遍，谁发过来就回给谁。
@@ -166,7 +170,9 @@ internal sealed class DataLink : IDisposable
                                            int Packets = 0,
                                            WingState Wing = WingState.Unknown,
                                            int Slot = -1,
-                                           int ErrM = 0);
+                                           int ErrM = 0,
+                                           // 对方自报「我跟的长机」节点 ID（第 12 段）。0 = 没指定。
+                                           int LeadId = 0);
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -192,7 +198,7 @@ internal sealed class DataLink : IDisposable
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
                                       n.Xn, n.Yn, age, n.TargetBankDeg,
-                                      n.Role, n.Packets, n.Wing, n.Slot, n.ErrM));
+                                      n.Role, n.Packets, n.Wing, n.Slot, n.ErrM, n.LeadId));
             }
             return list.ToArray();
         }
@@ -276,6 +282,9 @@ internal sealed class DataLink : IDisposable
         _selfId = selfId;
     }
 
+    /// <summary>本机节点 ID。长机侧用它判断「这架僚机是不是在跟我」（报文第 12 段）。</summary>
+    public int SelfId => _selfId;
+
     /// <summary>当前在线的伙伴数量（3 秒内收过包的不同 ID）。</summary>
     public int NodeCount
     {
@@ -344,7 +353,7 @@ internal sealed class DataLink : IDisposable
             ambiguous = amb;
             lead = new LinkNode(entries[idx].Id, r.AltM, r.VyMs, r.HeadingDeg, r.TurnRateDeg,
                                 r.Xn, r.Yn, (int)(now - r.TickAt), r.TargetBankDeg,
-                                r.Role, r.Packets, r.Wing, r.Slot, r.ErrM);
+                                r.Role, r.Packets, r.Wing, r.Slot, r.ErrM, r.LeadId);
             return true;
         }
     }
@@ -532,7 +541,8 @@ internal sealed class DataLink : IDisposable
     internal static string BuildPayload(int selfId, int altM, double vyMs, double headingDeg, double turnRateDeg,
                                         double? xn, double? yn, double? targetBankDeg,
                                         LinkRole role = LinkRole.Unknown,
-                                        int slot = -1, WingState wing = WingState.Unknown, int errM = 0)
+                                        int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
+                                        int leadId = 0)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         bool hasPos = xn is double && yn is double;
@@ -569,7 +579,15 @@ internal sealed class DataLink : IDisposable
             // ★ 槽位已知就发，哪怕状态是 Unknown（=-1）：那表示「我在编队里，但这一帧算不出
             //   自己在哪」—— 长机靠这一点显示「数据错误」。不发等于让长机以为这架没参加编队。
             if (slot >= 0)
+            {
                 tail += $"|{slot},{(int)wing},{Math.Clamp(errM, -9999, 9999)}";
+                // 第 12 段：我跟的长机节点 ID（0 = 没指定）。
+                // ★ 只在站位段存在时追加 —— 没开编队辅助的人不进任何人的表，带这个没意义；
+                //   而且段位必须连续，不能靠"省掉一段"表达，否则老读端会错位。
+                //   ★ 不能塞进第 11 段当第四个子段：老读端写死 `st.Length == 3`，
+                //     四段会让整段作废，直接丢掉这行 —— 比不兼容更糟。
+                tail += "|" + Math.Clamp(leadId, 0, 999_999);
+            }
         }
         return tail;
     }
@@ -626,12 +644,26 @@ internal sealed class DataLink : IDisposable
                                          out double? turnRateDeg, out double? headingDeg,
                                          out double? xn, out double? yn, out double? targetBankDeg,
                                          out LinkRole role, out int slot, out WingState wing, out int errM)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out xn, out yn, out targetBankDeg, out role, out slot, out wing, out errM,
+                           out _);
+
+    /// <summary>
+    /// 解析一行报文（含角色段、站位段和我跟随的长机段）。
+    /// <para><paramref name="leadId"/> = 对方跟的长机节点 ID（第 12 段）；0 = 没指定/老版本。</para>
+    /// </summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn, out double? targetBankDeg,
+                                         out LinkRole role, out int slot, out WingState wing, out int errM,
+                                         out int leadId)
     {
         targetBankDeg = null;
         role = LinkRole.Unknown;
         slot = -1;
         wing = WingState.Unknown;
         errM = 0;
+        leadId = 0;
         selfId = 0;
         altM = 0;
         vyMs = 0;
@@ -697,6 +729,12 @@ internal sealed class DataLink : IDisposable
             }
         }
 
+        // 我跟随的长机（第 12 段）：节点 ID，0 = 没指定。缺失/脏值都当 0 —— 和"没填"同义，
+        // 长机侧会把这架当作"可能是我的人"列出来，不会因此丢行。
+        if (parts.Length >= 12 && int.TryParse(parts[11], out int leadVal)
+            && leadVal >= 0 && leadVal <= 999_999)
+            leadId = leadVal;
+
         return true;
     }
 
@@ -705,10 +743,12 @@ internal sealed class DataLink : IDisposable
     /// <param name="turnRateDeg">自己当前的转向率（°/s，正 = 右转）。僚机拿它算转弯提前量。</param>
     /// <param name="xn">自己的归一化位置（0..1）。null = 这一帧地图还没有自己的图标，不发坐标。</param>
     /// <param name="yn">同上，y 轴。</param>
+    /// <param name="leadId">我跟的长机节点 ID。0 = 没指定；面板里填了就用那个值。</param>
     public void Send(double nowS, int altM, double vyMs, double headingDeg, double turnRateDeg,
                      double? xn = null, double? yn = null, double? targetBankDeg = null,
                      LinkRole role = LinkRole.Unknown,
-                     int slot = -1, WingState wing = WingState.Unknown, int errM = 0)
+                     int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
+                     int leadId = 0)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -729,7 +769,7 @@ internal sealed class DataLink : IDisposable
         try
         {
             var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg,
-                                       role, slot, wing, errM);
+                                       role, slot, wing, errM, leadId);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
@@ -825,7 +865,8 @@ internal sealed class DataLink : IDisposable
         if (!TryParsePayload(text, out int id, out int alt, out double vyMs,
                              out double? turnRate, out double? heading,
                              out double? xn, out double? yn, out double? targetBank,
-                             out LinkRole role, out int slot, out WingState wing, out int errM))
+                             out LinkRole role, out int slot, out WingState wing, out int errM,
+                             out int leadId))
         {
             Interlocked.Increment(ref _rxBad);
             return;
@@ -859,6 +900,7 @@ internal sealed class DataLink : IDisposable
             node.Wing = wing;
             node.Slot = slot;
             node.ErrM = errM;
+            node.LeadId = leadId;
             // 记住来源，回包时能直接发回去（长机靠这个自动覆盖所有僚机）
             node.LastFrom = from;
             node.TickAt = Environment.TickCount64;
@@ -868,7 +910,7 @@ internal sealed class DataLink : IDisposable
         if (PacketCallback is { } cb)
         {
             try { cb(new LinkNode(id, alt, vyMs, heading, turnRate, xn, yn, 0, targetBank, role,
-                                 0, wing, slot, errM), Unmap(from).ToString()); }
+                                 0, wing, slot, errM, leadId), Unmap(from).ToString()); }
             catch { /* 调试回调不能影响接收 */ }
         }
     }
