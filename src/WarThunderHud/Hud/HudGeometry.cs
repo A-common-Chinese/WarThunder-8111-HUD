@@ -285,6 +285,12 @@ public sealed class HudOptions
     /// <summary>Longitudinal acceleration in m/s^2, derived from dTAS/dt.</summary>
     public double AccelMs2 { get; set; }
 
+    /// <summary>
+    /// 编队目标速度（真空速）。由 <c>AddFormationGuidance</c> 写入，<c>AddFormationReadout</c>
+    /// 拿去在速度带上画琥珀三角 —— 原来这个值只喂给下面那条独立横条，横条一删就没了来源。
+    /// </summary>
+    public double? FormationTargetKmh { get; set; }
+
     /// <summary>Preview helper: keep the transit boxes visible instead of blinking.</summary>
     public bool ForceTransitVisible { get; set; }
 
@@ -978,13 +984,11 @@ public sealed class HudGeometry
             FontSize = font * 1.55, Color = col, Points = { (cx, cy + 7.2 * pxDeg) },
         });
 
-        // ---- 速度条 + 加速度条 ----
-        // 抽成通用方法：长机模式也要看「我该飞多快」，那边不走 Guide，单独调。
-        // 加速度条与下面那行油门文字用同一个判据（有动作就画），
-        // 否则 Δv 在 0–5 之间会出现「有文字没条」的中间态。
-        AddSpeedBars(prims, cx, cy + 8.6 * pxDeg, pxDeg, fontSmall,
-                     g.CurrentKmh, g.CurrentKmh + g.DeltaKmh, g.DeltaKmh,
-                     g.Action != FormationAction.None);
+        // ---- 目标速度：合并进速度带 ----
+        // 原来这里画一条独立横条（轴线 + 绿点 + 琥珀三角 + 一串数字），占掉中心下方一整行。
+        // 现在只把目标速度交给速度带：带子上直接一个琥珀三角，和「现在多快」在同一根尺上，
+        // 不用在屏幕两个位置之间来回对。加速度条另有竖条（在带子里，加粗）。
+        _opt.FormationTargetKmh = g.CurrentKmh + g.DeltaKmh;
         // ---- 2) 现在多远 → 目标多远 ----
         // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
         // 目标距离也画出来：只说"820m"飞行员不知道要追到多少，"820m → 400m"一眼就明白。
@@ -1010,10 +1014,8 @@ public sealed class HudGeometry
             string act = L10n.Get(LangScope.Alerts, hold ? "guide.hold"
                 : g.Action == FormationAction.Accelerate ? "guide.accel" : "guide.decel");
 
-            // 数值按 10 km/h 取整：编队时"加 80"比"加 83.6"好读，也没人会照着个位数修油门
-            int dv = (int)(Math.Round(g.DeltaKmh / 10.0) * 10);
-            if (!hold && dv != 0)
-                act += "  " + (dv > 0 ? "+" : "-") + Math.Abs(dv).ToString() + " km/h";
+            // 数值不再重复：速度带上已经有琥珀三角标出目标位置，
+            // 再写一遍「+640」既占地方又容易和带子上的数对不上（一个 TAS 一个取整差值）。
 
             prims.Add(new HudPrim
             {
@@ -1249,7 +1251,9 @@ public sealed class HudGeometry
     private void AddFormationReadout(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
                                      double pxDeg, double line, double font, double fontSmall)
     {
-        AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall, FormationAccelWidth);
+        // useTas: 编队引导按真空速算，带子必须同一口径，否则目标三角和引导数字对不上
+        AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall,
+                     FormationAccelWidth, _opt.FormationTargetKmh, useTas: true);
         AddAltTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
     }
 
@@ -1259,21 +1263,31 @@ public sealed class HudGeometry
     /// 加速度竖条的线宽倍数。普通模式 1.0；编队模式传更大值 —— 那边视野里没有别的东西，
     /// 细线看不清，但带子本身的线宽不能跟着变粗，否则和普通模式长得不一样了。
     /// </param>
+    /// <param name="targetKmh">
+    /// 目标速度。给了就在带子上画一个琥珀三角（位置就在那个速度上）——
+    /// 编队时「我该飞多快」和「我现在多快」必须落在同一根尺上才比得出来。
+    /// </param>
+    /// <param name="useTas">
+    /// true 用真空速、false 用指示空速。编队引导按 TAS 算（长机按马赫飞），
+    /// 所以编队模式必须用 TAS，否则目标三角和引导给的数字对不上。
+    /// </param>
     private void AddSpeedTape(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg,
-        double line, double font, double fontSmall, double accelScale = 1.0)
+        double line, double font, double fontSmall, double accelScale = 1.0,
+        double? targetKmh = null, bool useTas = false)
     {
         double x = cx - _tapeOffsetDeg * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
         double pxPerKmh = 1.5 * pxDeg / 50.0;   // 50 km/h per 1.5 deg
         var col = _opt.Color;
+        double shownKmh = useTas ? s.TasKmh : s.IasKmh;
 
         prims.Add(new HudPrim { Kind = HudPrimKind.Line, Width = line, Color = col, Points = { (x, cy - span), (x, cy + span) } });
 
-        double startV = Math.Floor((s.IasKmh - span / pxPerKmh) / 50) * 50;
-        for (double v = startV; v <= s.IasKmh + span / pxPerKmh; v += 50)
+        double startV = Math.Floor((shownKmh - span / pxPerKmh) / 50) * 50;
+        for (double v = startV; v <= shownKmh + span / pxPerKmh; v += 50)
         {
             if (v < 0) continue;
-            double y = cy + (s.IasKmh - v) * pxPerKmh;
+            double y = cy + (shownKmh - v) * pxPerKmh;
             if (Math.Abs(y - cy) > span) continue;
             bool major = Math.Abs(v % 100) < 0.01;
             prims.Add(new HudPrim
@@ -1293,8 +1307,28 @@ public sealed class HudGeometry
         }
 
         bool overspeed = _opt.OverspeedAlert;
-        AddBoxedText(prims, x - 0.6 * pxDeg, cy, s.IasKmh.ToString("0"), font, HudAlign.Right,
+        AddBoxedText(prims, x - 0.6 * pxDeg, cy, shownKmh.ToString("0"), font, HudAlign.Right,
             overspeed ? _opt.DangerColor : col, line, pxDeg);
+
+        // 目标速度：带子左侧一个朝右的琥珀三角，尖端贴在带上。
+        // 左边离刻度数字（-2.6°）还有余量，右边要让给加速度条。
+        if (targetKmh is double tgt && tgt > 1)
+        {
+            double tY = cy + (shownKmh - tgt) * pxPerKmh;
+            bool offTape = Math.Abs(tY - cy) > span;
+            tY = Math.Clamp(tY, cy - span, cy + span);
+            double tipX = x - 0.35 * pxDeg;
+            double baseX = x - 1.15 * pxDeg;
+            double halfH = 0.5 * pxDeg;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Polyline, Width = 2.0,
+                // 出量程时**不变暗**：它是唯一的目标指示，钳在端头已经说明「还在更外面」，
+                // 再压暗就等于看不见了。改由文字那边补一句具体差多少。
+                Color = _opt.WarnColor,
+                Points = { (tipX, tY), (baseX, tY - halfH), (baseX, tY + halfH), (tipX, tY) },
+            });
+        }
 
         // Longitudinal acceleration (dTAS/dt) takes the slot the Mach readout used to occupy;
         // Mach moves one row down. Both sit INSIDE the speed tape.
