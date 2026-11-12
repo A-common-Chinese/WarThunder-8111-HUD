@@ -109,6 +109,9 @@ powershell -ExecutionPolicy Bypass -File .\fakedatalink.ps1 -Target 100.66.9.170
 | 跨网段、可路由 | B 的 IP | 两端防火墙放通 UDP 48017 |
 | NAT / 公网穿透 | B 的公网映射地址 | 端口转发，或用蒲公英类组网 |
 
+> ★ 跨省、两台机器都在各自家里的宽带后面：直接看 **[datalink-pgy-remote.md](datalink-pgy-remote.md)** ——
+> 蒲公英组网 + 双向验收（含丢包门槛、5 分钟稳定性、测试记录表），比本文更贴合那个场景。
+
 > 广播地址 `255.255.255.255` **出不了路由器**，这是协议决定的，不是设置问题。
 
 ---

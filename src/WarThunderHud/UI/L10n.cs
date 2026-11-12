@@ -286,6 +286,7 @@ public static class L10n
         ["row.fUpOffset"] = ("自定义高度", "CUSTOM ALT"),
         ["row.fVertGate"] = ("高度到位门槛", "ALT GATE"),
         ["row.fVertMax"] = ("升降率上限", "VERT RATE MAX"),
+        ["row.fFarRange"] = ("远距例外", "FAR OVERRIDE"),
         ["opt.shapeCustom"] = ("自定义", "CUSTOM"),
         ["opt.shapeEchelon"] = ("梯队", "ECHELON"),
         ["opt.shapeColumn"] = ("纵队", "COLUMN"),

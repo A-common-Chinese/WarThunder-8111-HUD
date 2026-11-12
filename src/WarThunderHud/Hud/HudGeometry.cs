@@ -44,8 +44,11 @@ public enum TurnAssistAction { BankMore, BankLess, Hold }
 /// 垂直引导。正 <paramref name="ErrorM"/> = 本机比该在的位置低，需要爬。
 /// <para><paramref name="Priority"/> 在「编队未完成且高度差超门槛」时为真：
 /// 这条会提到速度条下面、加大字号，同时油门建议让位（先爬到位再修速度）。</para>
+/// <para><paramref name="FarRangeM"/> 非空 = 爬升阶段被甩得太远，破例多画一行距离
+/// （只画距离，横向引导仍然等高度到位）。<paramref name="FarTargetM"/> 是那行右半边的目标距离。</para>
 /// </summary>
-public readonly record struct VerticalCue(double ErrorM, double RateMs, bool Stale, bool Priority, bool AtTarget);
+public readonly record struct VerticalCue(double ErrorM, double RateMs, bool Stale, bool Priority, bool AtTarget,
+                                          double? FarRangeM = null, double? FarTargetM = null);
 
 /// <summary>
 /// 长机转向辅助的显示数据。
@@ -747,6 +750,11 @@ public sealed class HudGeometry
         => metres < 1000 ? ((int)(Math.Round(metres / 10.0) * 10)).ToString()
                          : (metres / 1000.0).ToString("F1") + "km";
 
+    /// <summary>同上，但带单位。距离行和「远距例外」行共用，避免两处取整规则漂移。</summary>
+    private static string FormatRangeShort(double metres)
+        => metres < 1000 ? ((int)(Math.Round(metres / 10.0) * 10)).ToString() + "m"
+                         : (metres / 1000.0).ToString("F1") + "km";
+
     /// <summary>
     /// 编队模式的三个最小读数：速度 / 高度 / 航向，放在画面下方，避开视野中心。
     /// 数值在上、单位在下，两行一组。
@@ -847,6 +855,28 @@ public sealed class HudGeometry
                 // 爬升阶段放 9.2°：FPM 圈画在 cy + 迎角（3–6°），6.5° 时大字会和圈的下缘压上
                 Points = { (cx, v.Priority ? cy + 9.2 * pxDeg : cy + 13.0 * pxDeg) },
             });
+
+            // 远距例外：被甩开太远时，爬升阶段也放一行距离。
+            // 只放距离 —— 圈/航向/油门仍然等高度到位，两阶段的分界不变。
+            // 位置 11.5°：大字本体占 8.7–9.7°（字号 1.05°），这里留 1.4° 空隙。
+            if (v.Priority && v.FarRangeM is double far)
+            {
+                double farGapPx = 0.55 * pxDeg;
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text, Text = FormatRangeShort(far), Align = HudAlign.Right,
+                    FontSize = fontSmall * 1.15, Color = Fade(_opt.WarnColor, 0.85),
+                    Points = { (cx - farGapPx, cy + 11.5 * pxDeg) },
+                });
+                prims.Add(new HudPrim
+                {
+                    Kind = HudPrimKind.Text,
+                    Text = "\u2192 " + ((int)Math.Round(v.FarTargetM ?? far)).ToString() + "m",
+                    Align = HudAlign.Left, FontSize = fontSmall * 1.15,
+                    Color = Fade(_opt.WarnColor, 0.6),
+                    Points = { (cx + farGapPx, cy + 11.5 * pxDeg) },
+                });
+            }
         }
 
         // ---- 找不到长机：说明是哪一种，别让飞行员对着空屏猜 ----
@@ -958,9 +988,7 @@ public sealed class HudGeometry
         // ---- 2) 现在多远 → 目标多远 ----
         // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
         // 目标距离也画出来：只说"820m"飞行员不知道要追到多少，"820m → 400m"一眼就明白。
-        string range = g.RangeM < 1000
-            ? ((int)(Math.Round(g.RangeM / 10.0) * 10)).ToString() + "m"
-            : (g.RangeM / 1000.0).ToString("F1") + "km";
+        string range = FormatRangeShort(g.RangeM);
         string target = ((int)Math.Round(g.TargetRangeM)).ToString() + "m";
 
         double gapPx = 0.55 * pxDeg;

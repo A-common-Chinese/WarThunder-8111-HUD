@@ -1,5 +1,5 @@
-{
-  "_version": 25,
+﻿{
+  "_version": 26,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -583,5 +583,9 @@
   "row.fVertMax": {
     "zh": "爬升率建议的上限（m/s），默认 10。爬升由飞行员自己完成，辅助只给速率；不限幅的话差 300 m 会算出 45 m/s，飞机做不到。仿真里 120 m 偏差在 10 m/s 限幅下 17.5 s 收完。",
     "en": "Cap on the suggested climb rate, default 10 m/s. The pilot flies the climb; the HUD only supplies the rate. Uncapped, a 300 m error asks for 45 m/s. In simulation a 120 m error settles in 17.5 s at this cap."
+  },
+  "row.fFarRange": {
+    "zh": "远距例外（米），默认 2000。爬升阶段本来只显示爬升率，但长机跑远时看不见差距更糟 —— 距离超过这个值时破例多画一行「现在距离 → 目标距离」。只放距离，引导圈/转向/油门仍然等高度到位才开始，所以两阶段的分界没有变。0 = 关掉例外。",
+    "en": "Far-range override in metres, default 2000. The climb stage normally shows only a climb rate, but being left behind with no readout is worse: beyond this range one extra line appears with current and target range. Only the range is revealed; circle, turn cue and throttle still wait for the altitude gate. 0 disables the override."
   }
 }

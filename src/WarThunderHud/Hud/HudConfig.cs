@@ -254,6 +254,14 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationVertMaxMs")] public double FormationVertMaxMs { get; set; } = 10;
 
+    /// <summary>
+    /// 远距例外：距离超过这个米数时，即使还在爬升阶段（高度没到位）也把距离行放出来。默认 2000。
+    /// <para>两阶段的本意是「先爬高度、别分心」，但长机跑远时飞行员看不见差距会更糟 ——
+    /// 4 Hz 的数据链里高度是慢变量，而距离几秒钟就能拉开几百米。</para>
+    /// <para>0 = 关掉例外，爬升阶段什么都不显示（严格两阶段）。</para>
+    /// </summary>
+    [JsonPropertyName("formationFarRangeM")] public double FormationFarRangeM { get; set; } = 2000;
+
     // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
 
     /// <summary>

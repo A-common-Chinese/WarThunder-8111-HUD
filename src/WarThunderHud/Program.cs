@@ -285,6 +285,12 @@ public static class Program
             Math.Abs(FormationRangeErrorPct(1545 * 1.1, 1545) - 10.0) < 1e-9);
         Check("range error pct guards zero target", FormationRangeErrorPct(500, 0) == 0);
 
+        // ---- 远距例外：爬升阶段的距离行只看「够不够远」，门槛 0 = 关掉 ----
+        Check("far range hidden just under gate", !RevealRangeWhileClimbing(1999.9, 2000));
+        Check("far range shown at gate", RevealRangeWhileClimbing(2000, 2000));
+        Check("far range shown beyond gate", RevealRangeWhileClimbing(5200, 2000));
+        Check("far range disabled at zero gate", !RevealRangeWhileClimbing(99999, 0));
+
         Check("turn assist off stays off",
             AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
         st = new TurnAssistState(TurnAssistStage.Arming, 0, -1);
@@ -2911,12 +2917,20 @@ public static class Program
                                         : Math.Abs(altErr) > vertGate);
                     altitudeStageActive = altStage;
 
+                    // 远距例外：爬升阶段本来只给爬升率，但被甩开 2 km 还不给距离就是坑。
+                    // 只放距离行，不放圈/航向/油门 —— 横向仍然等高度到位再开始。
+                    double? farRange = altStage && RevealRangeWhileClimbing(lead.RangeM, cfg.FormationFarRangeM)
+                        ? lead.RangeM
+                        : null;
+
                     opt.Vertical = new VerticalCue(
                         altErr,
                         VerticalRateCmd(altErr, cfg.FormationVertMaxMs),
                         opt.AltDiffStale,
                         altStage,
-                        Math.Abs(altErr) <= vertGate);
+                        Math.Abs(altErr) <= vertGate,
+                        farRange,
+                        farRange is null ? null : slot.RangeM);
                 }
 
                 FormationAction action = FormationAction.None;
@@ -3599,6 +3613,16 @@ public static class Program
     internal static double VerticalRateCmd(double errorM, double maxMs)
         => Math.Clamp(errorM * VerticalGain, -Math.Abs(maxMs), Math.Abs(maxMs));
 
+    /// <summary>
+    /// 爬升阶段是否因为「离得太远」而破例放出距离行。
+    /// <para>两阶段的分界是高度，但长机一跑起来距离是按秒变的：先爬 20 s 高度，
+    /// 编队可能已经甩开 2 km。这时候屏幕上只剩一条爬升率，飞行员不知道自己正在被甩掉 ——
+    /// 破例给一行距离，比严守「只给爬升率」更有用。</para>
+    /// <para>门槛 0 表示关掉例外（严格两阶段）；负数按 0 处理，免得配置手滑关不掉。</para>
+    /// </summary>
+    internal static bool RevealRangeWhileClimbing(double rangeM, double gateM)
+        => gateM > 0 && rangeM >= gateM;
+
     /// <summary>状态机位置：Off / 等方向（Arming）/ 已锁方向（Active）。</summary>
     internal enum TurnAssistStage { Off, Arming, Active }
 
@@ -4210,14 +4234,16 @@ public static class Program
                 opt.Vertical = new VerticalCue(pAlt, VerticalRateCmd(pAlt, 10), false, false, Math.Abs(pAlt) <= 30);
             }
 
-            // 垂直引导样张：WT_PREVIEW_VERT="误差m,升降率,过期(0/1),优先(0/1)"
+            // 垂直引导样张：WT_PREVIEW_VERT="误差m,升降率,过期(0/1),优先(0/1)[,远距m,目标m]"
             var vertSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_VERT");
             if (!string.IsNullOrWhiteSpace(vertSpec))
             {
                 var vp = vertSpec.Split(',');
                 double V(int i, double dflt) => vp.Length > i
                     && double.TryParse(vp[i], NumberStyles.Any, CultureInfo.InvariantCulture, out double x) ? x : dflt;
-                opt.Vertical = new VerticalCue(V(0, 120), V(1, 4.5), V(2, 0) > 0.5, V(3, 0) > 0.5, V(0, 120) == 0);
+                double? farRange = vp.Length > 4 ? V(4, 0) : null;
+                opt.Vertical = new VerticalCue(V(0, 120), V(1, 4.5), V(2, 0) > 0.5, V(3, 0) > 0.5, V(0, 120) == 0,
+                                               farRange, farRange is null ? null : V(5, 0));
                 // 爬升阶段横向引导不出现：样张也照这个规则，否则出图会和真机不一致
                 if (V(3, 0) > 0.5) { opt.Guide = null; opt.TargetHeadingDeg = null; }
             }

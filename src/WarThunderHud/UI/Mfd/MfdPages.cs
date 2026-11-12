@@ -536,6 +536,8 @@ internal static class MfdPages
             // 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」
             Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
             Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
+            // 远距例外：超过这个距离，爬升阶段也放一行距离（0 = 关掉）
+            Number("row.fFarRange", c => c.FormationFarRangeM, (c, v) => c.FormationFarRangeM = v, 100, 0, 20000, "m"),
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头
             Number("row.fKp", c => c.FormationKp, (c, v) => c.FormationKp = v, 0.01, 0.01, 0.50, ""),
             // 近距离比例：进入 blend 距离后从 Kp 渐变到 KpNear，调大刹车更早
