@@ -371,6 +371,9 @@ internal static class MfdPages
             Key("row.keySave", c => c.SaveKey, (c, v) => c.SaveKey = v),
             Key("row.keyHole", c => c.CursorHoleKey, (c, v) => c.CursorHoleKey = v),
             Key("row.keySettings", c => c.SettingsKey, (c, v) => c.SettingsKey = v),
+            // 编队辅助开关（长机/僚机都用）：原来只有默认值，面板里改不了 ——
+            // 其余热键都能在这一页改，唯独它漏了
+            Key("row.keyFormation", c => c.FormationKey, (c, v) => c.FormationKey = v),
             Key("row.keyExit", c => c.ExitKey, (c, v) => c.ExitKey = v),
             Key("row.keyHoldHide", c => c.HoldHideKey, (c, v) => c.HoldHideKey = v),
             // 固定组合键（不可改，只读展示）

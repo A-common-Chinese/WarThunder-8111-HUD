@@ -245,6 +245,7 @@ public static class L10n
         ["row.keySave"] = ("保存配置", "SAVE CONFIG"),
         ["row.keyHole"] = ("光标洞开关", "CURSOR HOLE KEY"),
         ["row.keySettings"] = ("设置面板", "SETTINGS"),
+        ["row.keyFormation"] = ("编队辅助", "FORMATION"),
         ["row.keyExit"] = ("退出", "EXIT"),
         ["row.keyPitchZero"] = ("俯仰零位校准", "PITCH ZERO CAL"),
         ["row.keyBankFlip"] = ("坡度方向翻转", "BANK FLIP"),

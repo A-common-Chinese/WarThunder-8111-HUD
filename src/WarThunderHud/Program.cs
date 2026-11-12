@@ -458,6 +458,11 @@ public static class Program
             if (WtHud.UI.Mfd.MfdFrameForm.MenuSideSlotName(cell) != "SIDE" + back) menuSideOk = false;
         }
         Check("menu side key names round-trip", menuSideOk);
+        // 格号 → 全局模块下标：菜单多页时不能把格号当模块号用
+        Check("menu global index page 0", WtHud.UI.Mfd.MfdFrameForm.MenuGlobalIndex(0, 3) == 3);
+        Check("menu global index page 1", WtHud.UI.Mfd.MfdFrameForm.MenuGlobalIndex(1, 3) == 13);
+        Check("menu global index last cell of page 1",
+            WtHud.UI.Mfd.MfdFrameForm.MenuGlobalIndex(2, 9) == 29);
 
         // ---- 面板分页：键漏了不会报错，屏幕上会直接印出键名（曾经出现过 val.roleWing）----
         var modules = WtHud.UI.Mfd.MfdPages.Build();

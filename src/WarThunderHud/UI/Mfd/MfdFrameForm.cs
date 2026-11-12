@@ -642,9 +642,12 @@ public sealed class MfdFrameForm : Form
         if (!_work.Mfd.RealisticKeys && _mode == Mode.Menu
             && RowHitTest(new PointF(e.X, e.Y), out var rowCell))
         {
-            if (rowCell >= _pages.Count) { ClearRepeatClick(); return; }     // 空单元格：不选也不确认
-            var repeated = IsRepeatClick("menu", rowCell, 400);
-            _menuSel = rowCell;
+            // ★ 格号是本页内的（0-9），_menuSel 是全局模块下标。现在正好一页十个模块，
+            //   两者相等所以看不出问题；模块超过十个时，第二页点第一格会选到第一页的模块。
+            var rowIndex = MenuGlobalIndex(_menuPageIdx, rowCell);
+            if (rowIndex >= _pages.Count) { ClearRepeatClick(); return; }    // 空单元格：不选也不确认
+            var repeated = IsRepeatClick("menu", rowIndex, 400);
+            _menuSel = rowIndex;
             if (repeated || e.Clicks >= 2) EnterPage();
             Invalidate();
             return;
@@ -1299,6 +1302,13 @@ public sealed class MfdFrameForm : Form
     /// 而且不报错、只是进错模块 —— 一度就是这样。</para>
     /// </summary>
     internal static string MenuSideSlotName(int cell) => "SIDE" + cell;
+
+    /// <summary>
+    /// 主菜单某一页的某个格子对应的**全局模块下标**。
+    /// <para>★ 格号只在本页内有意义；菜单超过一页后，任何把格号直接当模块下标用的地方
+    /// 都会指到第一页去。抽出来是为了让这条换算只有一处。</para>
+    /// </summary>
+    internal static int MenuGlobalIndex(int pageIdx, int cell) => pageIdx * 10 + cell;
 
     private void EnterPage()
     {
