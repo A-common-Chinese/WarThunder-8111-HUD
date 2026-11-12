@@ -436,7 +436,7 @@ public sealed class HudGeometry
             if (_opt.ShowFpm) AddFpm(prims, s, cx, cy, pxDeg, line);
             AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
             AddFormationGuidance(prims, s, cx, cy, pxDeg, font, fontSmall);
-            AddFormationReadout(prims, s, cx, cy, pxDeg, font, fontSmall);
+            AddFormationReadout(prims, s, cx, cy, pxDeg, line, font, fontSmall);
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
             AddStallAlert(prims, cx, cy, pxDeg, font);
@@ -1065,11 +1065,20 @@ public sealed class HudGeometry
         double xNow = cx + Clamp(cue.BankNowDeg) * perDeg;
         double xTgt = cx + Clamp(cue.TargetBankDeg) * perDeg;
 
-        // 目标坡度：琥珀竖标（比绿标矮一点，避免遮住当前值）
+        // 目标坡度：琥珀三角箭头，尖端指向基线。
+        // ★ 原来是一根和「当前坡度」同形状的竖线，只靠颜色和高度区分 —— 扫一眼分不清
+        //   哪个是「现在」哪个是「该去的」。换成三角形之后形状本身就是语义。
+        double arrowTip = y + 0.9 * pxDeg;
+        double arrowBase = y - 0.45 * pxDeg;
+        double arrowHalf = 0.55 * pxDeg;
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Line, Width = 3.2, Color = amber,
-            Points = { (xTgt, y - 0.75 * pxDeg), (xTgt, y + 0.75 * pxDeg) },
+            Kind = HudPrimKind.Polyline, Width = 3.2, Color = amber,
+            Points =
+            {
+                (xTgt, arrowTip), (xTgt - arrowHalf, arrowBase),
+                (xTgt + arrowHalf, arrowBase), (xTgt, arrowTip),
+            },
         });
 
         // 当前坡度：绿色竖标（更高，一眼看到「我现在在哪」）
@@ -1209,49 +1218,49 @@ public sealed class HudGeometry
                 Kind = HudPrimKind.Line, Width = 2.0, Color = Fade(col, 0.70),
                 Points = { (cx, ay - 0.22 * pxDeg), (cx, ay + 0.22 * pxDeg) },
             });
-            // 指示块：这条条整个表达的就是「系统希望我加/减多少」，所以用琥珀色（和速度条的目标三角同色系），
-            // 不再用绿色 —— 绿色在这套界面里统一表示「你现在在哪」。
+            // 指示块：琥珀三角，尖端指向轴线。
+            // ★ 原来是短竖线，和速度条上的绿色实心块形状几乎一样，全靠颜色区分；
+            //   换成三角之后「该去哪」和「现在在哪」形状不同，扫一眼就分得开。
+            //   形状与速度条的目标三角一致（都是朝下），整套界面只有一种琥珀含义。
             double tx = cx + frac * half;
             prims.Add(new HudPrim
             {
-                Kind = HudPrimKind.Line, Width = 0.44 * pxDeg, Color = _opt.WarnColor,
-                Points = { (tx, ay - 0.28 * pxDeg), (tx, ay + 0.28 * pxDeg) },
+                Kind = HudPrimKind.Polyline, Width = 1.8, Color = _opt.WarnColor,
+                Points =
+                {
+                    (tx - 0.34 * pxDeg, ay - 0.74 * pxDeg),
+                    (tx + 0.34 * pxDeg, ay - 0.74 * pxDeg),
+                    (tx, ay - 0.10 * pxDeg),
+                    (tx - 0.34 * pxDeg, ay - 0.74 * pxDeg),
+                },
             });
         }
     }
 
+    /// <summary>编队模式下加速度条的线宽倍数：比普通模式粗，因为周围没有别的参照物。</summary>
+    private const double FormationAccelWidth = 2.4;
+
+    /// <summary>
+    /// 编队模式的读数：速度和高度用**和普通模式一样的竖带**，加速度条加粗。
+    /// <para>原来是横排三个数字（TAS / ALT / HDG），省地方但不好用 —— 数字要读，带子扫一眼
+    /// 就知道自己快慢高低，和长机比也更直观。航向不再单独给：航向带顶部本来就显示当前值。</para>
+    /// <para>带子在外侧，中心区域仍然留给引导，和原来「视野中心不放东西」的原则不冲突。</para>
+    /// </summary>
     private void AddFormationReadout(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
-                                     double pxDeg, double font, double fontSmall)
+                                     double pxDeg, double line, double font, double fontSmall)
     {
-        var col = _opt.Color;
-        // 11.0 → 12.5：上面多了一条速度条和一行速度数字，读数整体让位。
-        double y = cy + 14.6 * pxDeg;
-        double dx = 6.0 * pxDeg;
-
-        void Cell(double x, string value, string unit)
-        {
-            prims.Add(new HudPrim
-            {
-                Kind = HudPrimKind.Text, Text = value, Align = HudAlign.Center,
-                FontSize = font, Color = col, Points = { (x, y) },
-            });
-            prims.Add(new HudPrim
-            {
-                Kind = HudPrimKind.Text, Text = unit, Align = HudAlign.Center,
-                FontSize = fontSmall, Color = Fade(col, 0.75), Points = { (x, y + 1.1 * pxDeg) },
-            });
-        }
-
-        // 编队用真空速：长机按马赫飞，僚机追的是相对速度，TAS 才是一致的量
-        Cell(cx - dx, ((int)Math.Round(s.TasKmh)).ToString(), "km/h");
-        Cell(cx, ((int)Math.Round(s.AltM)).ToString(), "m");
-        Cell(cx + dx, (((int)Math.Round(s.HeadingDeg)) % 360).ToString("000"), "deg");
+        AddSpeedTape(prims, s, cx, cy, pxDeg, line, font, fontSmall, FormationAccelWidth);
+        AddAltTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
     }
 
     // -------------------------------------------------------------------- tapes
 
+    /// <param name="accelScale">
+    /// 加速度竖条的线宽倍数。普通模式 1.0；编队模式传更大值 —— 那边视野里没有别的东西，
+    /// 细线看不清，但带子本身的线宽不能跟着变粗，否则和普通模式长得不一样了。
+    /// </param>
     private void AddSpeedTape(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg,
-        double line, double font, double fontSmall)
+        double line, double font, double fontSmall, double accelScale = 1.0)
     {
         double x = cx - _tapeOffsetDeg * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
@@ -1307,9 +1316,10 @@ public sealed class HudGeometry
         // Both bars share the same baseline (cy) and get a short tick so the zero is readable.
         double accLen = Math.Clamp(Math.Abs(_opt.AccelMs2) * 0.50 * pxDeg, 0, 5.0 * pxDeg);   // 0-10 m/s^2 maps to 0-5 deg
         double accBarX = x + 1.3 * pxDeg;   // between the tape and the readouts
+        double accW = line * accelScale;
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.55),
+            Kind = HudPrimKind.Line, Width = accW, Color = Fade(col, 0.55),
             Points = { (accBarX - 0.25 * pxDeg, cy), (accBarX + 0.25 * pxDeg, cy) },
         });
         if (accLen > 0.15 * pxDeg)
@@ -1317,7 +1327,7 @@ public sealed class HudGeometry
             double dir = _opt.AccelMs2 >= 0 ? -1 : 1;
             prims.Add(new HudPrim
             {
-                Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.85),
+                Kind = HudPrimKind.Line, Width = accW, Color = Fade(col, 0.85),
                 Points = { (accBarX, cy), (accBarX, cy + dir * accLen) },
             });
         }

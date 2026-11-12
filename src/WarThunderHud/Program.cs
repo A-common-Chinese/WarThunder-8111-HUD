@@ -4754,6 +4754,12 @@ public static class Program
                                               0, false, 0, false, 640);
             }
 
+            // 纵向加速度样张：WT_PREVIEW_ACCEL="6.5"（m/s²，正 = 加速）。
+            // 编队模式的加速度竖条只在非零时才画，没有这个变量就永远出不了样张。
+            if (double.TryParse(Environment.GetEnvironmentVariable("WT_PREVIEW_ACCEL"),
+                                NumberStyles.Any, CultureInfo.InvariantCulture, out double previewAccel))
+                opt.AccelMs2 = previewAccel;
+
             // 数据链目标坡度样张：WT_PREVIEW_LEADBANK="54"（僚机侧那行「长机 R54°」）
             if (double.TryParse(Environment.GetEnvironmentVariable("WT_PREVIEW_LEADBANK"),
                                 NumberStyles.Any, CultureInfo.InvariantCulture, out double previewBank))
