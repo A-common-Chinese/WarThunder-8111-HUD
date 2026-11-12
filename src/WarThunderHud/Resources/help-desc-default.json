@@ -1,5 +1,5 @@
 {
-  "_version": 20,
+  "_version": 21,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -531,5 +531,37 @@
   "page.formationShape": {
     "zh": "队形几何：选形状与槽位，下面三行只读值告诉你这个位置到底在哪（斜距 / 横向 / 纵向）。三个手工距离只在「自定义」时可改。",
     "en": "Formation geometry: pick a shape and slot; the three read-only rows below show exactly where that slot sits (slant / lateral / longitudinal). The three manual distances are editable only under CUSTOM."
+  },
+  "row.turnAssistMenu": {
+    "zh": "长机转向辅助：按一下开关按键，HUD 在屏幕下方画一条坡度横带 —— 绿标是当前坡度、琥珀标是按「目标过载」算出的目标坡度，下面一句告诉你多压一点还是回一点杆。再按一下关掉。方向不用选：第一次真实转向（转向率超过 1.5°/s）自动锁定左右。",
+    "en": "Lead turn assist: press the assist key and a bank tape appears at the bottom of the HUD - green is your current bank, amber is the target bank derived from the target G, and the line below says bank more or ease off. Press again to stop. You never pick a direction: the first real turn (turn rate above 1.5 deg/s) latches left or right."
+  },
+  "page.turnAssist": {
+    "zh": "转向辅助设置：开关按键、目标过载与容差，以及是否把目标坡度广播给僚机。只有长机模式会用这些值。",
+    "en": "Turn assist settings: key, target load factor and tolerance, and whether the target bank is broadcast to wingmen. These only apply in lead mode."
+  },
+  "row.turnKey": {
+    "zh": "转向辅助的开关按键。默认 CTRL+SHIFT+T。按一下开始（此时显示「转向以锁定」），第一次真实转向后自动锁方向，再按一下关闭。改完按 SAVE 才写进配置。",
+    "en": "Key that starts and stops the assist. Default CTRL+SHIFT+T. First press arms it (the cue reads TURN TO ARM), the first real turn latches the direction, second press stops. SAVE to persist."
+  },
+  "row.turnG": {
+    "zh": "目标过载（G），默认 3.0，可调 1.2–9.0。换算成目标坡度 φ = acos(1/n)：3G 是 71°、6G 是 80°。★ 定得比飞机在当前速度下能维持的更高，提示会一直喊「多压一点」，而压到底也到不了。",
+    "en": "Target load factor, default 3.0, range 1.2-9.0. Converted to a target bank: phi = acos(1/n), so 3G is 71 deg and 6G is 80 deg. If you set it above what the aircraft can hold at the current speed the cue will keep asking for more bank you cannot achieve."
+  },
+  "row.turnTol": {
+    "zh": "容差（G），默认 0.3。实际过载与目标之差在这个范围内就显示「坡度正好」，不再催你修。调大更安静，调小更严格。",
+    "en": "Tolerance in G, default 0.3. Within this band the cue reads ON TARGET and stops asking. Larger is quieter, smaller is stricter."
+  },
+  "row.turnBcast": {
+    "zh": "把目标坡度通过数据链发给僚机，让它们提前知道长机要转到多少度，而不是等看到转角再追。关闭只是少一段报文，不影响本地辅助。",
+    "en": "Broadcast the target bank over the data link so wingmen know in advance how far the lead is about to roll, instead of chasing the turn after it starts. Turning it off only drops one payload field; local assist is unaffected."
+  },
+  "row.turnBank": {
+    "zh": "由目标过载算出的目标坡度，只读：φ = acos(1/n)。它不随速度变，所以比「目标转向率」更适合当主提示（同样 3G，速度不同转向率能差一倍）。",
+    "en": "Target bank derived from the load factor, read-only: phi = acos(1/n). It does not change with speed, which is why it is the primary cue rather than the target turn rate - the same 3G gives wildly different rates at different speeds."
+  },
+  "row.turnStatus": {
+    "zh": "辅助当前状态：OFF = 关；ARM = 已按下、等第一次转向来锁方向；R / L = 已锁右转 / 左转（反向超过门槛并持续 1 s 会自动重锁）。",
+    "en": "Assist state: OFF = stopped; ARM = pressed, waiting for the first turn to latch a direction; R / L = latched right or left (a sustained reversal beyond the gate for 1 s re-latches automatically)."
   }
 }

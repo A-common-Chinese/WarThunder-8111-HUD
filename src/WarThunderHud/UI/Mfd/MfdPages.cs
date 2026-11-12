@@ -470,6 +470,28 @@ internal static class MfdPages
         },
     };
 
+    /// <summary>长机转向辅助（三级页）：按键、目标 G、容差、广播开关，加两行只读。
+    /// <para>值是「配置」不是「实时读数」：目标坡度由 G 算出，实际坡度和指令只在 HUD 上看。</para>
+    /// </summary>
+    private static MfdPage TurnAssistPage() => new()
+    {
+        Key = "formation.turnassist",
+        TitleKey = "page.turnAssist",
+        ParentTitleKey = "page.formationTune",
+        MenuKey = "page.turnAssist",
+        MenuHintKey = "menu.hint.turnAssist",
+        Items =
+        {
+            Key("row.turnKey", c => c.FormationTurnAssistKey, (c, v) => c.FormationTurnAssistKey = v),
+            Number("row.turnG", c => c.FormationTurnTargetG, (c, v) => c.FormationTurnTargetG = v, 0.1, 1.2, 9.0, "G"),
+            Number("row.turnTol", c => c.FormationTurnTolG, (c, v) => c.FormationTurnTolG = v, 0.05, 0.05, 1.50, "G"),
+            Toggle("row.turnBcast", c => c.FormationTurnBroadcast, (c, v) => c.FormationTurnBroadcast = v),
+            Info("row.turnBank", c => WtHud.Program.TurnAssistTargets(c.FormationTurnTargetG, 0).BankDeg
+                                          .ToString("0") + "°"),
+            Info("row.turnStatus", _ => WtHud.Program.TurnAssistStatusText()),
+        },
+    };
+
     private static int ShapeIndex(string shape) =>
         Math.Max(0, Array.IndexOf(WtHud.Hud.FormationGeometry.ShapeIds, shape));
 
@@ -493,6 +515,8 @@ internal static class MfdPages
             // 队形几何（原「僚机侧位」+ 三个距离）搬进三级页：这些数只跟队形有关，
             // 混在增益和判定里既占屏又容易被误改。入口行显示当前队形 + 槽位。
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
+            Submenu("row.turnAssistMenu", () => TurnAssistPage(), c =>
+                c.FormationTurnTargetG.ToString("F1") + "G ›"),
             Number("row.leadHeading", c => c.LeadHeadingDeg, (c, v) => c.LeadHeadingDeg = v, 1, -1, 359, "°"),
             Toggle("row.formationOmni", c => c.FormationOmniFollow, (c, v) => c.FormationOmniFollow = v),
             Number("row.leadMach", c => c.LeadMach, (c, v) => c.LeadMach = v, 0.01, 0.30, 2.00, "M"),

@@ -163,6 +163,7 @@ public sealed class OverlayWindow : IDisposable
         Bind(10, cfg.SaveKey, 0x7B, "CTRL+F12");      // save config (plain F12 is Steam screenshots)
         Bind(12, cfg.SettingsKey, 0x70, "F1");        // settings dialog
         Bind(14, cfg.CursorHoleKey, 0x48, "H", NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY);
+        Bind(15, cfg.FormationTurnAssistKey, 0x54, "CTRL+SHIFT+T");   // 长机转向辅助开关
 
         // Fixed combinations: layout offset, FOV and roll coupling.
         NativeMethods.RegisterHotKey(_hwnd, 4, NativeMethods.MOD_CONTROL_KEY | NativeMethods.MOD_ALT_KEY | NativeMethods.MOD_NOREPEAT, NativeMethods.VK_UP);

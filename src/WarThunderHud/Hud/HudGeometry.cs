@@ -37,6 +37,19 @@ public readonly record struct FormationLead(
     // 0 = 未知，此时不画速度条（地面静止也走这条路，没有编队意义）。
     double CurrentKmh = 0);
 
+/// <summary>长机转向辅助的指令：坡压多了 / 压少了 / 正好。</summary>
+public enum TurnAssistAction { BankMore, BankLess, Hold }
+
+/// <summary>
+/// 长机转向辅助的显示数据。
+/// <para>横带两端固定 ±60°，绿标是当前坡度、琥珀标是目标坡度 ——
+/// 和僚机那套「圈=该飞的方向」不同，长机这边两个标都是**坡度**，所以要放在单独的带上，
+/// 不能挂在航向带上（同一符号两套语义会误读）。</para>
+/// </summary>
+public readonly record struct TurnAssistCue(
+    int Dir, double BankNowDeg, double TargetBankDeg, double TargetRateDeg,
+    double TargetG, TurnAssistAction Action, bool Arming);
+
 /// <summary>
 /// 编队引导两条条的刻度换算。
 /// <para>抽成纯函数是为了能断言映射本身（满偏、归零、越界钳位），不必渲染出图。</para>
@@ -122,6 +135,9 @@ public sealed class HudOptions
     /// ADD POWER 的话，飞行员还得自己找空速表心算差多少。null = 不画。</para>
     /// </summary>
     public (double CurrentKmh, double TargetKmh, double DeltaKmh)? LeadSpeedBar { get; set; }
+
+    /// <summary>长机转向辅助：有值就画坡度横带（只有长机模式会设它）。</summary>
+    public TurnAssistCue? TurnAssist { get; set; }
 
     /// <summary>
     /// 编队引导的提示行：找不到长机时说明原因是哪一种。空 = 不画。
@@ -753,6 +769,11 @@ public sealed class HudGeometry
                 AddSpeedBars(prims, cx, cy + 10.1 * pxDeg, pxDeg, fontSmall, curKmh, tgtKmh, dvKmh,
                              Math.Abs(dvKmh) >= 5);
 
+            // 转向辅助放在三格读数下面：读数主行 14.6°、单位行 15.7°，横带的标签从 17.9° 起，
+            // 留 1.6° 空隙。放在 17.6° 时右标签会和「航向 275 deg」压在一起（实测重叠）。
+            if (_opt.TurnAssist is { } ta)
+                AddTurnAssistBand(prims, cx, cy + 19.2 * pxDeg, pxDeg, fontSmall, ta);
+
             return;
         }
 
@@ -919,6 +940,89 @@ public sealed class HudGeometry
                 Points = { (cx, cy + 11.4 * pxDeg) },
             });
         }
+    }
+
+    /// <summary>
+    /// 长机坡度横带：一条水平刻度带，绿标 = 当前坡度，琥珀标 = 目标坡度，下方一句该压多还是回。
+    /// <para>左右各 60°，所以刻度带的「长度」就是坡度本身；不用圆环是因为圆环在长机模式下
+    /// 与航向语义冲突（僚机的圈代表该飞的航向）。</para>
+    /// </summary>
+    private void AddTurnAssistBand(List<HudPrim> prims, double cx, double y, double pxDeg,
+                                   double fontSmall, TurnAssistCue cue)
+    {
+        const double halfDeg = 60.0;
+        double half = 9.0 * pxDeg;
+        double perDeg = half / halfDeg;
+
+        var dim = Fade(_opt.Color, 0.55);
+        var amber = _opt.WarnColor;        // 与「该飞的航向/该到的速度」同一个琥珀
+        var green = _opt.Color;            // 与速度条上的「我现在在哪」同一个绿
+
+        // 基线
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Line, Width = 1.6, Color = dim,
+            Points = { (cx - half, y), (cx + half, y) },
+        });
+
+        // 刻度：每 15°，0/±30/±60 稍长
+        for (var d = -60; d <= 60; d += 15)
+        {
+            bool major = d % 30 == 0;
+            double h = (major ? 0.62 : 0.4) * pxDeg;
+            double x = cx + d * perDeg;
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Line, Width = 1.2, Color = Fade(_opt.Color, major ? 0.75 : 0.45),
+                Points = { (x, y - h), (x, y + h) },
+            });
+        }
+
+        // 中止位姿：目标坡度过大时钳到端头，用短箭头提示「不止这么多」
+        double Clamp(double deg) => Math.Clamp(deg, -halfDeg, halfDeg);
+        double xNow = cx + Clamp(cue.BankNowDeg) * perDeg;
+        double xTgt = cx + Clamp(cue.TargetBankDeg) * perDeg;
+
+        // 目标坡度：琥珀竖标（比绿标矮一点，避免遮住当前值）
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Line, Width = 3.2, Color = amber,
+            Points = { (xTgt, y - 0.75 * pxDeg), (xTgt, y + 0.75 * pxDeg) },
+        });
+
+        // 当前坡度：绿色竖标（更高，一眼看到「我现在在哪」）
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Line, Width = 3.6, Color = green,
+            Points = { (xNow, y - 1.05 * pxDeg), (xNow, y + 1.05 * pxDeg) },
+        });
+
+        // 上图左：目标 G；图右：现在 → 目标
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = cue.TargetG.ToString("F1") + "G",
+            Align = HudAlign.Left, FontSize = fontSmall,
+            Color = amber, Points = { (cx - half, y - 1.35 * pxDeg) },
+        });
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text,
+            Text = Math.Abs(cue.BankNowDeg).ToString("0") + "° → " + Math.Abs(cue.TargetBankDeg).ToString("0") + "°",
+            Align = HudAlign.Right, FontSize = fontSmall,
+            Color = Fade(_opt.Color, 0.85), Points = { (cx + half, y - 1.35 * pxDeg) },
+        });
+
+        // 下：指令。持平时用绿色（说明到位了），否则用琥珀
+        string key = cue.Arming ? "guide.turnArming"
+            : cue.Action == TurnAssistAction.Hold ? "guide.turnHold"
+            : cue.Action == TurnAssistAction.BankMore ? "guide.turnMore" : "guide.turnLess";
+        var cueColor = !cue.Arming && cue.Action == TurnAssistAction.Hold ? green : amber;
+        prims.Add(new HudPrim
+        {
+            Kind = HudPrimKind.Text, Text = L10n.Get(LangScope.Alerts, key),
+            Align = HudAlign.Center, FontSize = fontSmall * 1.05,
+            Color = cueColor, Points = { (cx, y + 1.55 * pxDeg) },
+        });
     }
 
     /// <summary>

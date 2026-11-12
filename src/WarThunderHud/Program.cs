@@ -233,6 +233,32 @@ public static class Program
         Check("unknown shape falls back to custom",
             WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM == 400);
 
+        // ---- 长机转向辅助：目标坡度/转向率与「反向 1 s 才重锁」 ----
+        var (bank3, rate3) = TurnAssistTargets(3.0, 800);
+        Check("turn targets 3G bank", Math.Abs(bank3 - 70.53) < 0.05);
+        Check("turn targets 3G rate at 800kmh", Math.Abs(rate3 - 7.15) < 0.05);
+        var (bank6, _) = TurnAssistTargets(6.0, 800);
+        Check("turn targets 6G bank", Math.Abs(bank6 - 80.41) < 0.05);
+        Check("turn targets clamp low G", Math.Abs(TurnAssistTargets(0.5, 800).BankDeg - 33.56) < 0.05);
+
+        var st = new TurnAssistState(TurnAssistStage.Off, 0, -1);
+        Check("turn assist off stays off",
+            AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
+        st = new TurnAssistState(TurnAssistStage.Arming, 0, -1);
+        Check("arming needs a real turn", AdvanceTurnAssist(st, 0.8, 1.0).Stage == TurnAssistStage.Arming);
+        var locked = AdvanceTurnAssist(st, 2.0, 1.0);
+        Check("arming latches direction", locked.Stage == TurnAssistStage.Active && locked.Dir == 1);
+        // 反向 0.5 s 不重锁，1.1 s 才重锁
+        var rev1 = AdvanceTurnAssist(locked, -3.0, 10.0);
+        Check("reversal records start", rev1.Dir == 1 && Math.Abs(rev1.ReverseSince - 10.0) < 1e-9);
+        var rev2 = AdvanceTurnAssist(rev1, -3.0, 10.5);
+        Check("reversal under 1s keeps direction", rev2.Dir == 1);
+        var rev3 = AdvanceTurnAssist(rev2, -3.0, 11.1);
+        Check("reversal over 1s relatches", rev3.Dir == -1 && rev3.ReverseSince < 0);
+        // 反向中断就清零，不累计
+        var cancel = AdvanceTurnAssist(rev1, 0.2, 10.4);
+        Check("reversal cancelled resets timer", cancel.ReverseSince < 0 && cancel.Dir == 1);
+
         Check("inside turn right/right", IsInsideTurn(+1, +10));
         Check("outside turn right/left", !IsInsideTurn(-1, +10));
         Check("inside turn left/left", IsInsideTurn(-1, -10));
@@ -1546,6 +1572,11 @@ public static class Program
                 cal.VerticalFovDeg = cfg.VerticalFovDeg;
                 Console.WriteLine($"Ctrl+Alt+PgDn   -> FOV = {cfg.VerticalFovDeg:F0} deg (symbols smaller)");
             }
+            else if (id == 15)
+            {
+                // 长机转向辅助：开/关。方向不在这里定 —— 由第一次真实转向自动锁。
+                ToggleTurnAssist();
+            }
             else if (id == 14)
             {
                 // Ctrl+Alt+H cycles the cursor-hole size so the minimum acceptable value can be
@@ -2687,6 +2718,9 @@ public static class Program
                 if (dataLink == null || dataLink.NodeCount == 0)
                     subs.Add(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.nolink"));
 
+                // 转向辅助：只在长机模式下有意义（僚机看的是长机怎么转，不是自己）。
+                opt.TurnAssist = BuildTurnAssistCue(cfg, snap, snap.ElapsedSeconds);
+
                 opt.LeadStatusMain = main;
                 opt.LeadStatusSub = string.Join("  ·  ", subs);
                 opt.LeadStatusWarn = warn;
@@ -2694,6 +2728,10 @@ public static class Program
             }
             opt.LeadStatusMain = "";
             opt.LeadStatusSub = "";
+            opt.TurnAssist = null;
+            // 切回僚机就退出辅助：状态留着会在下次当长机时凭空亮起来
+            if (turnAssist.Stage != TurnAssistStage.Off)
+                turnAssist = new TurnAssistState(TurnAssistStage.Off, 0, -1);
 
             // 高度差：map_obj 没有 z，这一项只能来自数据链。正 = 对方比我高（我该爬）。
             opt.AltDiffM = null;
@@ -3374,6 +3412,77 @@ public static class Program
     /// <summary>最近一次算出的自己的转向率（°/s，正 = 右转）。</summary>
     private static double ownTurnRateDeg;
 
+    // ---- 长机转向辅助（2026-11-12）----
+    // 只提示不控杆：把「该压多少度」数字化，平滑仍然取决于人的输入。
+    private const double TurnAssistRateGate = 1.5;      // °/s：低于它视为「没在转」，不锁方向
+    private const double TurnAssistReverseHoldS = 1.0;  // 反向持续多久才自动重锁
+
+    private static TurnAssistState turnAssist = new(TurnAssistStage.Off, 0, -1);
+
+    /// <summary>状态机位置：Off / 等方向（Arming）/ 已锁方向（Active）。</summary>
+    internal enum TurnAssistStage { Off, Arming, Active }
+
+    /// <summary>方向锁存状态。<paramref name="ReverseSince"/> 是反向开始的时刻，-1 = 当前没有反向。</summary>
+    internal readonly record struct TurnAssistState(TurnAssistStage Stage, int Dir, double ReverseSince);
+
+    /// <summary>
+    /// 目标坡度与目标转向率。
+    /// <para>坡度 φ = acos(1/n) 只跟 G 有关；转向率 ω = g·√(n²−1)/V 还跟速度有关，
+    /// 所以主提示给坡度，转向率只作副行 —— 同是 3G，500 km/h 时 13°/s、900 km/h 时 7°/s。</para>
+    /// </summary>
+    internal static (double BankDeg, double RateDeg) TurnAssistTargets(double targetG, double tasKmh)
+    {
+        var n = Math.Clamp(targetG, 1.2, 9.0);
+        var bank = Math.Acos(1.0 / n) * 180.0 / Math.PI;
+        var v = Math.Max(50.0, tasKmh / 3.6);
+        var rate = Math.Sqrt(Math.Max(0, n * n - 1)) * 9.80665 / v * 180.0 / Math.PI;
+        return (bank, rate);
+    }
+
+    /// <summary>
+    /// 推进一步转向辅助状态机。抽成纯函数是为了能断言「反向多久才重锁」这种边界。
+    /// <para>方向由转向率的符号决定：长机往哪边压，系统就跟哪边，不用人告诉它左右。</para>
+    /// </summary>
+    internal static TurnAssistState AdvanceTurnAssist(TurnAssistState s, double rateDeg, double nowS,
+                                                      double gateDeg = TurnAssistRateGate,
+                                                      double holdS = TurnAssistReverseHoldS)
+    {
+        if (s.Stage == TurnAssistStage.Off) return s;
+
+        var mag = Math.Abs(rateDeg);
+        var sign = Math.Sign(rateDeg);
+
+        if (s.Stage == TurnAssistStage.Arming)
+            return mag >= gateDeg && sign != 0 ? new TurnAssistState(TurnAssistStage.Active, sign, -1) : s;
+
+        // Active：反向超过门槛并**持续** holdS 才重锁，滚转过零那一瞬不算反悔
+        if (sign != 0 && sign != s.Dir && mag >= gateDeg)
+        {
+            var since = s.ReverseSince < 0 ? nowS : s.ReverseSince;
+            return nowS - since >= holdS
+                ? new TurnAssistState(TurnAssistStage.Active, sign, -1)
+                : s with { ReverseSince = since };
+        }
+        return s.ReverseSince < 0 ? s : s with { ReverseSince = -1 };
+    }
+
+    /// <summary>按键：关 → 待锁；待锁/已锁 → 关。</summary>
+    internal static void ToggleTurnAssist()
+    {
+        turnAssist = turnAssist.Stage == TurnAssistStage.Off
+            ? new TurnAssistState(TurnAssistStage.Arming, 0, -1)
+            : new TurnAssistState(TurnAssistStage.Off, 0, -1);
+        Console.WriteLine($"turn assist -> {turnAssist.Stage}");
+    }
+
+    /// <summary>面板只读行：当前状态。</summary>
+    public static string TurnAssistStatusText() => turnAssist.Stage switch
+    {
+        TurnAssistStage.Active => turnAssist.Dir > 0 ? "R" : "L",
+        TurnAssistStage.Arming => "ARM",
+        _ => "OFF",
+    };
+
     /// <summary>友机相对方位的历史（没有数据链时用它反推长机转向率）。</summary>
     private static readonly System.Collections.Generic.List<(double T, double Rel)> leadRelHistory = new();
 
@@ -3452,6 +3561,40 @@ public static class Program
     private static double formationStageSince;
     private static double formationDoneSince = -1;   // 进入 40 m 的起始时刻（要持续 2 s 才算完成）
     private static double formationNoticeUntil = -1; // 「编队完成 / 已解除」提示显示到什么时候
+
+    /// <summary>
+    /// 长机转向辅助的显示数据。状态机先走一步（方向可能在这一帧被锁上），再算偏差与指令。
+    /// <para>坡度取 <c>BankDeg * BankSign</c>：和俯仰梯上看到的符号一致，
+    /// 否则用户会看到「带子说左、梯子说右」。</para>
+    /// </summary>
+    private static TurnAssistCue? BuildTurnAssistCue(HudConfig cfg, TelemetrySnapshot snap, double nowS)
+    {
+        turnAssist = AdvanceTurnAssist(turnAssist, ownTurnRateDeg, nowS);
+        if (turnAssist.Stage == TurnAssistStage.Off) return null;
+
+        var (targetBank, targetRate) = TurnAssistTargets(cfg.FormationTurnTargetG, snap.TasKmh);
+        var bankNow = (snap.BankDeg ?? 0) * cfg.BankSign;
+
+        // 还没锁方向时先按右侧画目标标，靠下面的「转向以锁定」文案说明它只是个占位
+        var dir = turnAssist.Dir == 0 ? 1 : turnAssist.Dir;
+        var signedTarget = dir * targetBank;
+
+        // 容差按 G 换算成坡度差：φ(n±tol) − φ(n)，这样「容差 0.3G」在 3G 和 6G 下都合理
+        var (bankHigh, _) = TurnAssistTargets(cfg.FormationTurnTargetG + Math.Max(0.05, cfg.FormationTurnTolG),
+                                              snap.TasKmh);
+        var tolBank = Math.Max(0.5, bankHigh - targetBank);
+
+        var absBank = Math.Abs(bankNow);
+        var action = absBank < targetBank - tolBank ? TurnAssistAction.BankMore
+            : absBank > targetBank + tolBank ? TurnAssistAction.BankLess
+            : TurnAssistAction.Hold;
+        // 压反了：不管大小，先回正再说
+        if (Math.Sign(bankNow) == -dir && absBank > tolBank) action = TurnAssistAction.BankMore;
+
+        return new TurnAssistCue(dir, bankNow, signedTarget, targetRate,
+                                 Math.Clamp(cfg.FormationTurnTargetG, 1.2, 9.0), action,
+                                 turnAssist.Stage == TurnAssistStage.Arming);
+    }
 
     /// <summary>
     /// 编队状态机（产品层）：只做「到位判定 + 提示」，不参与控制 —— HUD 是建议，飞行员才是控制器。
@@ -3875,6 +4018,27 @@ public static class Program
                 }
             }
         }
+        if (variant == "turnassist")
+        {
+            // 长机转向辅助样张：WT_PREVIEW_TURN="方向,当前坡度,目标坡度,G,指令(0多压1回杆2正好),待锁(0/1),目标转向率"
+            // ★ FormationAssist 必须开：编队块（含转向辅助）只在它开着时绘制
+            opt.FormationOnly = true;
+            opt.FormationAssist = true;
+            if (opt.LeadStatusMain.Length == 0)
+            {
+                opt.LeadStatusMain = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.formation");
+                opt.LeadStatusSub = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.setMach") + " 0.70";
+                opt.LeadSpeedBar = (snap.TasKmh, snap.TasKmh + 55, 55);
+            }
+            var spec = Environment.GetEnvironmentVariable("WT_PREVIEW_TURN") ?? "1,28,54,3.0,0,0,7.2";
+            var q = spec.Split(',');
+            double Q(int i, double dflt) => q.Length > i &&
+                double.TryParse(q[i], NumberStyles.Any, CultureInfo.InvariantCulture, out double v) ? v : dflt;
+            opt.TurnAssist = new TurnAssistCue(
+                Dir: (int)Q(0, 1), BankNowDeg: Q(1, 28), TargetBankDeg: Q(2, 54),
+                TargetRateDeg: Q(6, 7.2), TargetG: Q(3, 3.0),
+                Action: (TurnAssistAction)(int)Q(4, 0), Arming: Q(5, 0) > 0.5);
+        }
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }
         opt.AltTapeM = snap.AltM;   // previews default to barometric altitude on the tape
         opt.GridText = "F6";
@@ -3992,6 +4156,7 @@ public static class Program
             }
             else if (view == "help") { form.PreviewHelp(0); }
             else if (view == "shape") { form.PreviewOpen(1, 3); form.PreviewSub(3); }   // 编队 → 队形（三级页）
+            else if (view == "turn") { form.PreviewOpen(1, 4); form.PreviewSub(4); }    // 编队 → 转向辅助
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
