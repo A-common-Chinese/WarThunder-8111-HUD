@@ -309,7 +309,7 @@ public static class L10n
         ["row.fUpM"] = ("站位高度", "ALTITUDE"),
         ["row.fVertGate"] = ("高度到位门槛", "ALT GATE"),
         ["row.fVertMax"] = ("升降率上限", "VERT RATE MAX"),
-        ["row.fFarRange"] = ("远距例外", "FAR OVERRIDE"),
+        ["row.fFarRange"] = ("爬升显示距离", "CLIMB RANGE"),
         ["opt.shapeCustom"] = ("自定义", "CUSTOM"),
         ["opt.shapeEchelon"] = ("梯队", "ECHELON"),
         ["opt.shapeColumn"] = ("纵队", "COLUMN"),

@@ -331,12 +331,19 @@ public static class Program
         var oldCfg = new HudConfig
         {
             FormationModel = 0, FormationShape = "custom", FormationWingSide = 0,
-            LegacyFormationRangeM = 620, FormationStationBackM = 370,
+            LegacyFormationRangeM = 620, FormationStationBackM = 370, FormationFarRangeM = 2000,
         };
         oldCfg.MigrateFormation();
         Check("legacy trail range becomes the back distance",
-            Math.Abs(oldCfg.FormationStationBackM - 620) < 0.01 && oldCfg.FormationModel == 2
+            Math.Abs(oldCfg.FormationStationBackM - 620) < 0.01 && oldCfg.FormationModel == 3
             && oldCfg.LegacyFormationRangeM is null);
+        // 爬升阶段的远距提示：没动过的 2000 收到 0（严格两阶段），自己调过的不碰
+        Check("untouched far range folds to zero",
+            oldCfg.FormationFarRangeM == 0);
+        var tunedFar = new HudConfig { FormationModel = 2, FormationFarRangeM = 2600 };
+        tunedFar.MigrateFormation();
+        Check("a hand-tuned far range survives the migration",
+            Math.Abs(tunedFar.FormationFarRangeM - 2600) < 0.01 && tunedFar.FormationModel == 3);
         var oldNamed = new HudConfig { FormationModel = 0, FormationShape = "diamond", FormationSlot = 2 };
         oldNamed.MigrateFormation();
         Check("legacy named shape is rewritten from the preset",

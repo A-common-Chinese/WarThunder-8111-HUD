@@ -268,12 +268,12 @@ public sealed class HudConfig
     [JsonPropertyName("formationVertMaxMs")] public double FormationVertMaxMs { get; set; } = 10;
 
     /// <summary>
-    /// 远距例外：距离超过这个米数时，即使还在爬升阶段（高度没到位）也把距离行放出来。默认 2000。
-    /// <para>两阶段的本意是「先爬高度、别分心」，但长机跑远时飞行员看不见差距会更糟 ——
-    /// 4 Hz 的数据链里高度是慢变量，而距离几秒钟就能拉开几百米。</para>
-    /// <para>0 = 关掉例外，爬升阶段什么都不显示（严格两阶段）。</para>
+    /// 远距例外：距离超过这个米数时，即使还在爬升阶段（高度没到位）也把距离行放出来。**默认 0 = 关**。
+    /// <para>两阶段的本意是「先爬高度、别分心」，所以 0.4.22 起默认严格两阶段：爬升阶段屏幕上
+    /// 只有一条爬升率。长机跑远时想看见差距，把它调到 1500–2000 就会在超距时多给一行距离。</para>
+    /// <para>0 = 关掉例外，爬升阶段什么都不显示。</para>
     /// </summary>
-    [JsonPropertyName("formationFarRangeM")] public double FormationFarRangeM { get; set; } = 2000;
+    [JsonPropertyName("formationFarRangeM")] public double FormationFarRangeM { get; set; }
 
     // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
 
@@ -527,11 +527,15 @@ public sealed class HudConfig
             {
                 // 旧语义（0.4.20 及以前）只迁移一次；迁移前把原文件留一份 .bak，
                 // 因为这一步会重写四个站位数值，用户没法从面板上看出改过什么。
-                if (cfg.FormationModel < 2)
+                if (cfg.FormationModel < 3)
                 {
-                    try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+                    // 只有改几何的那一次（<2）需要留 .bak；只是改默认值不需要
+                    if (cfg.FormationModel < 2)
+                    {
+                        try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+                    }
                     cfg.MigrateFormation();
-                    // 迁移结果立刻落盘：否则每次启动都会重跑一遍、重写一次 .bak
+                    // 迁移结果立刻落盘：否则每次启动都会重跑一遍
                     cfg.SaveTo(path);
                 }
                 return cfg;
@@ -561,27 +565,36 @@ public sealed class HudConfig
     /// </summary>
     public void MigrateFormation()
     {
-        if (FormationModel >= 2) return;
-
-        if (!WtHud.Hud.FormationGeometry.IsKnownShape(FormationShape))
-            FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
-
-        if (FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
+        if (FormationModel < 2)
         {
-            // 具名队形：旧版几何来自槽位表，直接按预设写回四个值
-            WtHud.Hud.FormationGeometry.ApplyPreset(this, FormationShape, FormationSlot);
-            SnapshotCustomDefaults();
-        }
-        else
-        {
-            // 自定义：把旧的「尾随距离」并进唯一的后距，保持当前侧位看到的距离不变
-            if (FormationWingSide == 0 && LegacyFormationRangeM is double r && r > 50)
-                FormationStationBackM = r;
-            SnapshotCustom();
+            if (!WtHud.Hud.FormationGeometry.IsKnownShape(FormationShape))
+                FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+
+            if (FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
+            {
+                // 具名队形：旧版几何来自槽位表，直接按预设写回四个值
+                WtHud.Hud.FormationGeometry.ApplyPreset(this, FormationShape, FormationSlot);
+                SnapshotCustomDefaults();
+            }
+            else
+            {
+                // 自定义：把旧的「尾随距离」并进唯一的后距，保持当前侧位看到的距离不变
+                if (FormationWingSide == 0 && LegacyFormationRangeM is double r && r > 50)
+                    FormationStationBackM = r;
+                SnapshotCustom();
+            }
+
+            LegacyFormationRangeM = null;
+            FormationModel = 2;
         }
 
-        LegacyFormationRangeM = null;
-        FormationModel = 2;
+        // 3：爬升阶段的「远距例外」默认从 2000 改成 0（严格两阶段）。
+        // 只改没动过的 2000 —— 自己调过别的值说明是有意为之，不碰。
+        if (FormationModel < 3)
+        {
+            if (Math.Abs(FormationFarRangeM - 2000.0) < 1e-9) FormationFarRangeM = 0;
+            FormationModel = 3;
+        }
     }
 
     /// <summary>把当前四个值存成「自定义快照」。</summary>

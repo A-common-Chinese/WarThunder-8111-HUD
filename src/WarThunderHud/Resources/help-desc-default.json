@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 37,
+  "_version": 38,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -633,7 +633,7 @@
     "en": "Cap on the suggested climb rate, default 10 m/s. The pilot flies the climb; the HUD only supplies the rate. Uncapped, a 300 m error asks for 45 m/s. In simulation a 120 m error settles in 17.5 s at this cap."
   },
   "row.fFarRange": {
-    "zh": "远距例外（米），默认 2000。爬升阶段本来只显示爬升率，但长机跑远时看不见差距更糟 —— 距离超过这个值时破例多画一行「现在距离 → 目标距离」。只放距离，引导圈/转向/油门仍然等高度到位才开始，所以两阶段的分界没有变。0 = 关掉例外。",
-    "en": "Far-range override in metres, default 2000. The climb stage normally shows only a climb rate, but being left behind with no readout is worse: beyond this range one extra line appears with current and target range. Only the range is revealed; circle, turn cue and throttle still wait for the altitude gate. 0 disables the override."
+    "zh": "爬升阶段要不要破例显示距离，单位米，**默认 0 = 不显示**。高度没到位时屏幕上只有一条爬升率；把它设成 1500–2000，就只有「距离超过这个值」时才额外画一行「现在距离 → 目标距离」。只放距离，引导圈 / 转向 / 油门仍然等高度到位才开始，两阶段的分界没有变。设 0 = 严格两阶段。",
+    "en": "Whether the climb stage reveals range, in metres. Default 0, meaning it stays hidden. While the altitude gate is not met only a climb rate is shown; set this to 1500-2000 and one extra line with current and target range appears only when further away than that. Only the range is revealed - circle, turn cue and throttle still wait for the gate. 0 keeps the stages strict."
   }
 }
