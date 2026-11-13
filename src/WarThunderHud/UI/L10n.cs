@@ -187,7 +187,7 @@ public static class L10n
         ["row.dataLinkId"] = ("节点 ID", "NODE ID"),
         ["row.dataLinkRole"] = ("本机角色", "MY ROLE"),
         ["row.dataLinkLeadId"] = ("长机节点 ID", "LEAD NODE ID"),
-        ["row.fMapOnly"] = ("只跟地图可见", "MAP VISIBLE ONLY"),
+        ["row.fMapOnly"] = ("地图判定", "MAP CHECK"),
         // 填了 ID 之后紧跟着的一行只读状态：填错了/对方没开，当场能看出来
         ["row.dataLinkLeadState"] = ("长机在线", "LEAD ONLINE"),
         ["val.leadAuto"] = ("未指定（自动）", "AUTO"),
@@ -326,6 +326,7 @@ public static class L10n
         ["slot.3"] = ("3", "3"),
         ["hint.presetOnly"] = ("仅预设队形可改", "PRESET ONLY"),
         ["hint.vertFirstOnly"] = ("仅两段式", "TWO-STAGE ONLY"),
+        ["hint.wingOnly"] = ("仅僚机", "WING ONLY"),
         ["row.wingSide"] = ("侧位", "SIDE"),
 
         // ---- 编队调参页（僚机制导增益，平时不用动） ----

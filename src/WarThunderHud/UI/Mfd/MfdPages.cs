@@ -166,8 +166,12 @@ internal static class MfdPages
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set,
-                                  Func<HudConfig, bool>? enabledWhen = null) =>
-        new() { LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set, EnabledWhen = enabledWhen };
+                                  Func<HudConfig, bool>? enabledWhen = null, string? disabledKey = null) =>
+        new()
+        {
+            LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set, EnabledWhen = enabledWhen,
+            DisabledText = disabledKey is null ? null : _ => L10n.Get(LangScope.Screen, disabledKey),
+        };
 
     private static MfdItem Number(string label, Func<HudConfig, double> get, Action<HudConfig, double> set,
         double step, double min, double max, string unit = "", Func<HudConfig, bool>? enabledWhen = null,
@@ -602,9 +606,6 @@ internal static class MfdPages
             Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
                    1, 0, 999999, ""),
-            // 只跟地图可见：默认开 = 地图上没显示这架友机就不给水平引导（全真 1 km 外不显示）
-            Toggle("row.fMapOnly", c => c.FormationMapOnly, (c, v) => c.FormationMapOnly = v,
-                   c => !c.LeadMode),
             // 填了跟一行只读状态：ID 抄错了、对方还没开，当场能看出来 —— 不然飞行员只会看到
             // 「找不到长机」，分不清是填错还是对面没起来。
             Info("row.dataLinkLeadState", c => WtHud.Program.DataLinkLeadStateText(c),
@@ -698,6 +699,9 @@ internal static class MfdPages
         Items =
         {
             Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
+            // 地图判定：数据链认出的长机在地图上没显示时给不给水平引导（全真 1 km 外不显示友机）
+            Toggle("row.fMapOnly", c => c.FormationMapOnly, (c, v) => c.FormationMapOnly = v,
+                   c => !c.LeadMode, "hint.wingOnly"),
             // 对端地址：留空 = 广播（只能同一局域网）；填 ip:port = 单播，跨网段/组网必须填。
             // 改完立即生效 —— 联调时 IP 会变好几次，重启 HUD 太慢。
             Text("row.dataLinkPeer",
