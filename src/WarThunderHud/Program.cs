@@ -632,11 +632,15 @@ public static class Program
             VerifyTeam(airfields, 0.20, 0.20, true) == WtHud.Telemetry.DataLink.TeamVerdict.Same);
         Check("team check rejects the other side",
             VerifyTeam(airfields, 0.20, 0.20, false) == WtHud.Telemetry.DataLink.TeamVerdict.Other);
-        Check("team check ignores a far-off anchor",
-            VerifyTeam(airfields, 0.50, 0.50, true) == WtHud.Telemetry.DataLink.TeamVerdict.Unknown);
+        Check("team check blocks an airfield it cannot find",
+            VerifyTeam(airfields, 0.50, 0.50, true) == WtHud.Telemetry.DataLink.TeamVerdict.Other);
         Check("team check with no airfields is unknown",
             VerifyTeam(Array.Empty<WtHud.Telemetry.MapPoint>(), 0.2, 0.2, true)
             == WtHud.Telemetry.DataLink.TeamVerdict.Unknown);
+        // 选锚点时只认友军机场、且不限距离：僚机飞在敌方机场旁边也不会锚错
+        Check("anchor selection prefers a friendly field anywhere",
+            TryNearestAirfield(airfields, 0.79, 0.79, out var picked, friendlyOnly: true, tolerance: 2.0)
+            && Math.Abs(picked.X - 0.20) < 1e-9 && picked.Friendly);
 
         // 丢包决策：只有明确判成异队才丢，老包/不可判一律放行
         var anchorSame = new WtHud.Telemetry.DataLink.TeamAnchor(0.2, 0.2, true);
@@ -2860,7 +2864,8 @@ public static class Program
             double? anchorXn = null, anchorYn = null;
             bool? anchorFriendly = null;
             if (mapData.Self is { } anchorSelf
-                && TryNearestAirfield(mapData.Airfields, anchorSelf.X, anchorSelf.Y, out var anchorField))
+                && TryNearestAirfield(mapData.Airfields, anchorSelf.X, anchorSelf.Y, out var anchorField,
+                                      friendlyOnly: true, tolerance: 2.0))
             {
                 anchorXn = anchorField.X;
                 anchorYn = anchorField.Y;
@@ -4626,8 +4631,11 @@ public static class Program
 
     /// <summary>
     /// 拿本机机场表比对对方自报的锚点：同一座机场，两队看到的颜色相反。
-    /// <para>比不出来（机场表空、坐标对不上任何机场）返回 Unknown —— **放行**，不因此断链：
-    /// 刚进图时 map_obj 还没给出机场，那时每条都是 Unknown，断链会让人以为功能坏了。</para>
+    /// <para>★ 对方锚点只取**友军机场**，而友军机场两边都永远可见 —— 所以「我这边找不到这座机场」
+    /// 基本等于「它不是我的友军机场」= 另一队，判 Other。
+    /// 这正是全真模式的补丁：敌方机场没点亮时不在我的表里，以前判不出来就放行了。</para>
+    /// <para>唯一例外是我的机场表还是空的（刚进图、map_obj 没读到）：这时谁都判不了，
+    /// 一律 Unknown 放行，否则进图头几秒会把所有人断掉。</para>
     /// </summary>
     internal static WtHud.Telemetry.DataLink.TeamVerdict VerifyTeam(
         IReadOnlyList<WtHud.Telemetry.MapPoint>? fields,
@@ -4636,28 +4644,35 @@ public static class Program
         if (fields is null || fields.Count == 0)
             return WtHud.Telemetry.DataLink.TeamVerdict.Unknown;
         if (!TryNearestAirfield(fields, anchorXn, anchorYn, out var field))
-            return WtHud.Telemetry.DataLink.TeamVerdict.Unknown;
+            return WtHud.Telemetry.DataLink.TeamVerdict.Other;
         return field.Friendly == senderFriendly
             ? WtHud.Telemetry.DataLink.TeamVerdict.Same
             : WtHud.Telemetry.DataLink.TeamVerdict.Other;
     }
 
-    /// <summary>图片上离给定归一化坐标最近的机场；超出容差算「对不上」。</summary>
+    /// <summary>机场表里离给定归一化坐标最近的一座；超出容差算「对不上」。</summary>
+    /// <param name="tolerance">允许的距离（归一化）。选自己的锚点时传 2.0（覆盖全图）：
+    /// 最近的友军机场可能在几十公里外，那也得用。</param>
     internal static bool TryNearestAirfield(IReadOnlyList<WtHud.Telemetry.MapPoint> fields,
                                             double xn, double yn,
-                                            out WtHud.Telemetry.MapPoint best)
+                                            out WtHud.Telemetry.MapPoint best,
+                                            bool friendlyOnly = false,
+                                            double tolerance = 0.005)
     {
         best = default;
         double bestSq = double.MaxValue;
         foreach (var f in fields)
         {
+            // 发送端只锚友军机场：友军机场两边都永远可见，对方一定认得出来；
+            // 锚敌方机场会在对方没点亮时被判成「找不到」。
+            if (friendlyOnly && !f.Friendly) continue;
             double dx = f.X - xn, dy = f.Y - yn;
             double d = dx * dx + dy * dy;
             if (d < bestSq) { bestSq = d; best = f; }
         }
         // 容差 0.5% 地图边长：两边读同一张图、同一套归一化坐标，实际只差取整误差 1e-5，
         // 留余量只为防不同帧的刷新抖动。
-        return bestSq <= 0.005 * 0.005;
+        return bestSq <= tolerance * tolerance;
     }
 
     /// <summary>僚机的显示名：有编号就叫 W1/W2，没有就用节点号。</summary>

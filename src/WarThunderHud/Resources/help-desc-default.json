@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 42,
+  "_version": 43,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -517,8 +517,8 @@
     "en": "Each wingman's self-reported station: `W1 ok` on station, `W2 behind 480m` 480 m further out than the slot, `W3 ahead 320m` past the slot, `off station` right range but wrong bearing. The judgement happens on the wingman (only it knows its slot); the lead just displays it, so the two ends cannot disagree. On the lead HUD the same data becomes a per-wing table (`W1 on station`, `W2 behind 480m`, `W3 off station`), up to four rows; this row is for the debrief. Older wingmen do not send this field and show `-`."
   },
   "row.dataLinkTeam": {
-    "zh": "异队过滤：因为**机场队标不符**被丢掉的包数，以及最后一次丢弃距今几秒。每架飞机在报文里报出「离自己最近的机场坐标 + 在我眼里它是不是友军」；收到时拿本机地图上同一座机场的颜色一比，颜色相反就是另一队，整包丢弃、不建节点。机场位置固定、两队看到的颜色相反，所以这条判据是稳的。**一直是「无」说明网段里只有自己人**；出现数字才需要确认是不是有另一队误进了同一个 VPN。判不出来时（刚进图、机场表还没读到）一律放行，不会因此断链。",
-    "en": "Team filter: how many packets were dropped because the airfield anchor disagreed, and how long ago the last drop was. Each aircraft reports the nearest airfield's coordinates plus whether that field counts as friendly in its own view; on receipt we look up the same field on our map and compare the colour - opposite colours mean the other team, and the whole packet is dropped without creating a node. Airfields are static and each side sees them in the opposite colour, so the test is stable. A permanent NONE means only your own side is on the network; a number means you should check whether the other team wandered into the same VPN. When the verdict is unavailable (just joined, airfield table not read yet) the packet is accepted, so the link never drops over it."
+    "zh": "异队过滤：因为**机场队标不符**被丢掉的包数，以及最后一次丢弃距今几秒。每架飞机在报文里报出「离自己最近的机场坐标 + 在我眼里它是不是友军」；收到时拿本机地图上同一座机场的颜色一比，颜色相反就是另一队，整包丢弃、不建节点。机场位置固定、两队看到的颜色相反，所以这条判据是稳的。**一直是「无」说明网段里只有自己人**；出现数字才需要确认是不是有另一队误进了同一个 VPN。两处细节：① 锚点只取**友军机场**（两边都永远可见），所以「我这边找不到这座机场」也直接算异队——**全真模式下敌方机场没点亮时不显示，正是靠这条兜住**；② 只有本机机场表还没读到时（刚进图）才放行，否则进图头几秒会把所有人断掉。",
+    "en": "Team filter: how many packets were dropped because the airfield anchor disagreed, and how long ago the last drop was. Each aircraft reports the nearest airfield's coordinates plus whether that field counts as friendly in its own view; on receipt we look up the same field on our map and compare the colour - opposite colours mean the other team, and the whole packet is dropped without creating a node. Airfields are static and each side sees them in the opposite colour, so the test is stable. A permanent NONE means only your own side is on the network; a number means you should check whether the other team wandered into the same VPN. Two details: the anchor only ever names a FRIENDLY airfield (visible to both sides at all times), so an airfield we cannot find is treated as the other team - that is what covers simulator battles, where enemy airfields stay hidden until spotted. Packets are accepted only while our own airfield table is still empty (just joined), otherwise the link would drop everyone for the first few seconds."
   },
   "row.dataLinkNodes": {
     "zh": "在线节点一览，格式 `#节点ID 角色 高度 包龄`：角色 L = 自称长机、W = 自称僚机、? = 老版本没发角色。包龄是「最后一包到现在」的毫秒数，一直往上涨说明那个节点在丢包或已经掉线。联调时这一行比状态行更有用。",
