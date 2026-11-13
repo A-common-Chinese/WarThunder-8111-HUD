@@ -6,22 +6,19 @@ namespace WtHud.Hud;
 
 /// <summary>
 /// 僚机站位相对长机的几何。横向右为正、纵向用「后退量」（站位永远在长机后方，所以是负值）。
-/// <para>★ 斜距逐个站位按真实几何算 —— 自定义也不例外。默认 150²+370²≈399.25，
-/// 与尾随位的 400 只差 0.19%，看上去像相等；但把横偏/后距改大之后两者就分开了，
-/// 判定必须跟着真实斜距走。</para>
+/// <para>★ 0.4.21 起这里只有**一条**几何路径：四个配置数值（侧位 / 横偏 / 后距 / 高度）。
+/// 预设队形退化成「把四个值填好」的按钮，不再是一张独立的槽位表 ——
+/// 两套表并存时，面板上的「槽位」和「侧位」会各说一套（谁决定位置取决于形状）。</para>
 /// </summary>
 public readonly record struct FormationSlotSpec(double SideM, double BackM, double UpM = 0)
 {
     /// <summary>
-    /// 斜距（水平面内）。单纯由横偏与后距算出：<c>√(Side² + Back²)</c>。
-    /// <para>★ 曾经把自定义队形三个站位的斜距**统一覆盖成尾随距离**（400 m）。后果是
-    /// 改动横偏/后距后判定仍按 400 走：真实 500 m 的站位误差 25%，既到不了「到位」
-    /// 也报不出「掉队」，而长机那边自报的站位却是「到位」—— 两边说法会打架。
-    /// 0.4.20 起改为真实斜距，判定与面板上那行只读「斜距」永远是同一个数。</para>
+    /// 斜距（水平面内）：<c>√(Side² + Back²)</c>。到位判定、速度前馈、面板只读值读的都是它，
+    /// 所以面板上看到多少，判定就用多少。
     /// </summary>
     public double RangeM => Math.Sqrt(SideM * SideM + BackM * BackM);
 
-    /// <summary>内圈/外圈的判据：右侧 +1、左侧 −1、正后 0。原来直接用 FormationWingSide 的符号。</summary>
+    /// <summary>内圈/外圈的判据：右侧 +1、左侧 −1、正后 0。</summary>
     public int SideSign => Math.Sign(SideM);
 
     /// <summary>站位相对长机的目标高度差（正 = 站位更高）。垂直引导的目标就是这个值。</summary>
@@ -29,9 +26,9 @@ public readonly record struct FormationSlotSpec(double SideM, double BackM, doub
 }
 
 /// <summary>
-/// 具名队形的槽位表。新增队形只在这里加一行，面板、制导、仿真都自动跟上。
-/// <para>横队（纯侧向）故意没有：站位后距为 0 时引导角长期指向 ±90°，
-/// 横向位移靠航向而不是推力，速度前馈失效 —— 那是另一种飞行模式，不是换几个数字。</para>
+/// 站位几何与预设队形。
+/// <para>几何只有两个入口：<see cref="Station"/> 读当前配置（制导、判定、绘制都走它），
+/// <see cref="ApplyPreset"/> 把某个预设写进配置（面板点一下时调用）。</para>
 /// </summary>
 public static class FormationGeometry
 {
@@ -42,85 +39,97 @@ public static class FormationGeometry
 
     public static readonly string[] ShapeIds = { ShapeCustom, ShapeEchelon, ShapeColumn, ShapeDiamond };
 
+    /// <summary>僚机编号上限：三机队形。编号只是编号，和几何无关。</summary>
+    public const int MaxSlots = 3;
+
     public static bool IsKnownShape(string shape) => Array.IndexOf(ShapeIds, shape) >= 0;
 
-    /// <summary>该队形有几个槽位。自定义只有 1 个（几何由三个距离字段决定）。</summary>
-    public static int SlotCount(string shape) => shape switch
+    /// <summary>
+    /// 当前配置对应的站位。**这是唯一的几何入口。**
+    /// <para>侧位为正后（0）时横偏乘 0，横偏那一项自然不起作用 —— 不需要额外的分支。</para>
+    /// </summary>
+    public static FormationSlotSpec Station(HudConfig cfg) =>
+        new(cfg.FormationWingSide * cfg.FormationWingOffsetM,
+            -Math.Max(1.0, cfg.FormationStationBackM),
+            cfg.FormationUpM);
+
+    /// <summary>该形状当前使用的基准间距（米）。自定义队形没有间距，返回后距。</summary>
+    public static double Spacing(HudConfig cfg, string shape) => shape switch
     {
-        ShapeEchelon => 3,
-        ShapeColumn => 3,
-        ShapeDiamond => 3,
-        _ => 1,
+        ShapeEchelon => cfg.FormationEchelonSpacingM,
+        ShapeColumn => cfg.FormationColumnSpacingM,
+        ShapeDiamond => cfg.FormationDiamondSpacingM,
+        _ => cfg.FormationStationBackM,
     };
 
-    /// <summary>
-    /// 取第 <paramref name="index"/> 个槽位。
-    /// <para>梯队：每架再靠后 450 m、再偏左 250 m（同一侧成斜线）。
-    /// 纵队：正后方每架间隔 400 m。菱形：左后 / 右后 / 正后。</para>
-    /// </summary>
-    public static FormationSlotSpec Slot(string shape, int index, HudConfig cfg)
+    /// <summary>写回该形状的基准间距（面板那一行用它）。</summary>
+    public static void SetSpacing(HudConfig cfg, string shape, double value)
     {
-        var i = Math.Clamp(index, 0, SlotCount(shape) - 1);
         switch (shape)
         {
-            case ShapeEchelon:
-                // 逐架累加：第 2 架 (500, 900)，第 3 架 (750, 1350)，斜距 1030 / 1545
-                // 高度也逐级抬高 25 m：真实梯队常带阶梯，且能把视觉上的重叠分开
-                return new FormationSlotSpec(-250.0 * (i + 1), -450.0 * (i + 1), 25.0 * (i + 1));
-            case ShapeColumn:
-                return new FormationSlotSpec(0, -400.0 * (i + 1));
-            case ShapeDiamond:
-                // 后位抬高 30 m：三机同高时后位正好被前两架的尾流叠在一起
-                return i switch
-                {
-                    1 => new FormationSlotSpec(300, -400),
-                    2 => new FormationSlotSpec(0, -600, 30.0),
-                    _ => new FormationSlotSpec(-300, -400),
-                };
-            default:
-                // 自定义：沿用既有三项距离。尾随位（side=0）的后距就是「尾随距离」，
-                // 侧位的后距是「侧位后距」—— 与参数化之前完全一致。
-                return LegacySlot(cfg.FormationWingSide, cfg);
+            case ShapeEchelon: cfg.FormationEchelonSpacingM = value; break;
+            case ShapeColumn: cfg.FormationColumnSpacingM = value; break;
+            case ShapeDiamond: cfg.FormationDiamondSpacingM = value; break;
+            default: cfg.FormationStationBackM = value; break;
         }
     }
 
-    /// <summary>当前配置对应的站位（形状 + 槽位，越界钳位）。</summary>
-    public static FormationSlotSpec Current(HudConfig cfg) =>
-        Slot(cfg.FormationShape, cfg.FormationSlot, cfg);
-
     /// <summary>
-    /// 参数化之前的三个站位（尾随 / 左 / 右），自定义队形走这条路。
-    /// <para>★ 侧位的斜距不再覆盖成尾随距离，而是按 √(横偏²+后距²) 算：默认值下
-    /// 399.25 与 400 只差 0.19%（历史仿真数据的差异也在这个量级），但把横偏/后距
-    /// 改大之后，判定才会跟着真实几何走。</para>
+    /// 预设的四个值：侧位、横偏、后距、高度。
+    /// <para>比例固定，只有基准间距可变 —— 所以「改间距」等于整体缩放，形状不会变形。</para>
+    /// <para>梯队默认 450：再后 450、再左 250（250/450）、再高 25（25/450）。
+    /// 菱形默认 400：左右后 300/400，后位 0/600 且抬高 30（0.075 × 400）。</para>
     /// </summary>
-    public static FormationSlotSpec LegacySlot(int wingSide, HudConfig cfg) =>
-        wingSide == 0
-            ? new FormationSlotSpec(0, -cfg.FormationRangeM, cfg.FormationUpM)
-            : new FormationSlotSpec(wingSide * cfg.FormationWingOffsetM, -cfg.FormationStationBackM,
-                                    cfg.FormationUpM);
+    public static (int Side, double OffsetM, double BackM, double UpM) Preset(
+        string shape, int index, double spacingM)
+    {
+        var i = Math.Clamp(index, 0, MaxSlots - 1);
+        var s = Math.Clamp(spacingM, 50.0, 2000.0);
+        var k = i + 1;
+        switch (shape)
+        {
+            case ShapeEchelon:
+                return (-1, s * 250.0 / 450.0 * k, s * k, s * 25.0 / 450.0 * k);
+            case ShapeColumn:
+                return (0, 0, s * k, 0);
+            case ShapeDiamond:
+                return i switch
+                {
+                    1 => (+1, s * 0.75, s, 0),
+                    2 => (0, 0, s * 1.5, s * 0.075),
+                    _ => (-1, s * 0.75, s, 0),
+                };
+            default:
+                return (0, 0, s, 0);
+        }
+    }
 
     /// <summary>
-    /// 仿真要遍历的站位表。自定义队形仍是原来三个（尾随、左、右）；具名队形按自己的槽位表逐个跑。
-    /// <para>★ 侧位斜距自 0.4.20 起按真实几何算，默认参数下比旧口径小 0.75 m（399.25 vs 400），
-    /// 与历史 1G/2G 数据对比时要把这点算进去。</para>
+    /// 把预设写进配置。★ 只写四个数值，**不碰**快照 —— 快照由调用方在「自定义 → 预设」时存。
+    /// </summary>
+    public static void ApplyPreset(HudConfig cfg, string shape, int index)
+    {
+        var (side, offset, back, up) = Preset(shape, index, Spacing(cfg, shape));
+        cfg.FormationWingSide = side;
+        cfg.FormationWingOffsetM = offset;
+        cfg.FormationStationBackM = back;
+        cfg.FormationUpM = up;
+    }
+
+    /// <summary>
+    /// 仿真要遍历的站位表：三个侧位，数值全部来自当前配置。
+    /// <para>统一模型之后不再按形状分叉 —— 仿真跑的就是用户真正会飞的几何。</para>
     /// </summary>
     public static List<(FormationSlotSpec Spec, int SideSign, string Label)> SimSlots(HudConfig cfg)
     {
-        var list = new List<(FormationSlotSpec, int, string)>();
-        if (!IsKnownShape(cfg.FormationShape) || cfg.FormationShape == ShapeCustom)
+        var back = -Math.Max(1.0, cfg.FormationStationBackM);
+        var up = cfg.FormationUpM;
+        var off = Math.Max(0.0, cfg.FormationWingOffsetM);
+        return new List<(FormationSlotSpec, int, string)>
         {
-            list.Add((LegacySlot(0, cfg), 0, "0"));
-            list.Add((LegacySlot(-1, cfg), -1, "L"));
-            list.Add((LegacySlot(+1, cfg), +1, "R"));
-            return list;
-        }
-
-        for (var i = 0; i < SlotCount(cfg.FormationShape); i++)
-        {
-            var spec = Slot(cfg.FormationShape, i, cfg);
-            list.Add((spec, spec.SideSign, (i + 1).ToString()));
-        }
-        return list;
+            (new FormationSlotSpec(0, back, up), 0, "0"),
+            (new FormationSlotSpec(-off, back, up), -1, "L"),
+            (new FormationSlotSpec(+off, back, up), +1, "R"),
+        };
     }
 }

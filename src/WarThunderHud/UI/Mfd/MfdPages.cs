@@ -170,11 +170,14 @@ internal static class MfdPages
         new() { LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set, EnabledWhen = enabledWhen };
 
     private static MfdItem Number(string label, Func<HudConfig, double> get, Action<HudConfig, double> set,
-        double step, double min, double max, string unit = "", Func<HudConfig, bool>? enabledWhen = null) =>
+        double step, double min, double max, string unit = "", Func<HudConfig, bool>? enabledWhen = null,
+        string? disabledKey = null) =>
         new()
         {
             LabelKey = label, Kind = ItemKind.Number, GetNumber = get, SetNumber = set,
             Step = step, Min = min, Max = max, Unit = unit, EnabledWhen = enabledWhen,
+            // 与 Enum 一致：不可用时值列直接说原因，比只变灰好懂
+            DisabledText = disabledKey is null ? null : _ => L10n.Get(LangScope.Screen, disabledKey),
         };
 
     private static MfdItem Action(string label, Action<HudConfig> run,
@@ -415,22 +418,46 @@ internal static class MfdPages
         },
     };
 
-    /// <summary>入口行摘要：队形名 + 槽位（自定义时不带槽位号）。</summary>
+    /// <summary>入口行摘要：预设名 + 编号（自定义也带编号，编号永远是编号）。</summary>
     private static string FormationShapeSummary(HudConfig cfg)
     {
         var shape = WtHud.Hud.FormationGeometry.IsKnownShape(cfg.FormationShape)
             ? cfg.FormationShape : WtHud.Hud.FormationGeometry.ShapeCustom;
         var name = L10n.Get(LangScope.Screen, "opt.shape" + char.ToUpperInvariant(shape[0]) + shape[1..]);
-        if (shape == WtHud.Hud.FormationGeometry.ShapeCustom) return name;
-        var slots = WtHud.Hud.FormationGeometry.SlotCount(shape);
-        var idx = Math.Clamp(cfg.FormationSlot, 0, slots - 1) + 1;
+        var idx = Math.Clamp(cfg.FormationSlot, 0, WtHud.Hud.FormationGeometry.MaxSlots - 1) + 1;
         return name + " · " + idx;
     }
 
+    /// <summary>选预设：把四个数值填好。只在「自定义 → 预设」这一刻存快照，预设之间互切不动它。</summary>
+    private static void ApplyShapePreset(HudConfig c, string shape)
+    {
+        if (!WtHud.Hud.FormationGeometry.IsKnownShape(shape))
+            shape = WtHud.Hud.FormationGeometry.ShapeCustom;
+
+        if (shape == WtHud.Hud.FormationGeometry.ShapeCustom)
+        {
+            c.FormationShape = shape;
+            c.RestoreCustom();
+            return;
+        }
+
+        if (c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom) c.SnapshotCustom();
+        c.FormationShape = shape;
+        c.FormationSlot = Math.Clamp(c.FormationSlot, 0, WtHud.Hud.FormationGeometry.MaxSlots - 1);
+        WtHud.Hud.FormationGeometry.ApplyPreset(c, shape, c.FormationSlot);
+    }
+
+    /// <summary>手工改四个数值之一：标签立刻落回自定义，并把当前值变成新的自定义快照。</summary>
+    private static void ValuesEdited(HudConfig c)
+    {
+        c.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+        c.SnapshotCustom();
+    }
+
     /// <summary>
-    /// 队形（三级页）：选形状与槽位，几何由 <see cref="WtHud.Hud.FormationGeometry"/> 推导。
-    /// <para>下面三个距离只在「自定义」时可改 —— 具名队形的槽位是算出来的，手改没有意义，
-    /// 所以它们跟着形状变灰（EnabledWhen），而不是藏起来：藏起来会让人以为设置丢了。</para>
+    /// 队形（三级页）。
+    /// <para>★ 0.4.21 起「预设」只是填数按钮：真正的几何永远是下面四行数值；改任一行立刻落回自定义。
+    /// 这样「编号」和「侧位」不再各说一套 —— 编号只是编号，侧位永远说了算。</para>
     /// </summary>
     private static MfdPage FormationShapePage() => new()
     {
@@ -441,40 +468,44 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.formationShape",
         Items =
         {
-            // 形状：改形状时把槽位收回到第 1 个，否则会停在一个该队形没有的位置上
+            // 预设：选一个就把下面四个值填好；切回自定义会还原套预设之前的数值
             Enum("row.fShape", new[] { "opt.shapeCustom", "opt.shapeEchelon", "opt.shapeColumn", "opt.shapeDiamond" },
                  c => ShapeIndex(c.FormationShape),
-                 (c, i) =>
-                 {
-                     c.FormationShape = WtHud.Hud.FormationGeometry.ShapeIds[i];
-                     c.FormationSlot = 0;
-                 }),
-            // 槽位：具名队形是真正的站位；自定义下它只是「我是第几号僚机」的编号 ——
-            // 几何由下面那行「侧位」决定（FormationGeometry.LegacySlot 忽略槽位号）。
-            // ★ 自定义下也放开，否则三架僚机会全部自报 W1，长机那张表分不清谁是谁。
+                 (c, i) => ApplyShapePreset(c, WtHud.Hud.FormationGeometry.ShapeIds[i])),
+            // 编号：只是「我是第几号僚机」。预设下换编号会按新编号重填一遍数值
             Enum("row.fSlot", new[] { "slot.1", "slot.2", "slot.3" },
                  c => Math.Clamp(c.FormationSlot, 0, 2),
-                 (c, i) => c.FormationSlot = i),
-            // 派生几何：只读，改了形状/槽位立刻跟着变，用来看「这个站位到底在哪」
-            Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Current(c).RangeM:0} m"),
-            Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Current(c).SideM:0} m"),
-            Info("row.fBackM", c => $"{WtHud.Hud.FormationGeometry.Current(c).BackM:0} m"),
-            // 高度：具名队形由槽位表给，自定义用下面那一项手填
-            Info("row.fUpM", c => $"{WtHud.Hud.FormationGeometry.Current(c).UpM:0} m"),
-            Number("row.fUpOffset", c => c.FormationUpM, (c, v) => c.FormationUpM = v, 5, -200, 200, "m",
-                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
-            // 自定义队形的三块砖（原样保留，默认形状就是自定义，行为不变）
-            Number("row.fRange", c => c.FormationRangeM, (c, v) => c.FormationRangeM = v, 10, 200, 1200, "m",
-                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
-            Number("row.fWingOffset", c => c.FormationWingOffsetM, (c, v) => c.FormationWingOffsetM = v, 10, 0, 600, "m",
-                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
-            Number("row.fStationBack", c => c.FormationStationBackM, (c, v) => c.FormationStationBackM = v, 10, 200, 1200, "m",
-                   c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom),
-            // 自定义队形的左右选择（就是原来的「僚机侧位」）
+                 (c, i) =>
+                 {
+                     c.FormationSlot = i;
+                     if (c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
+                         WtHud.Hud.FormationGeometry.ApplyPreset(c, c.FormationShape, i);
+                 }),
+            // 间距：预设的基准间隔，改它只整体缩放，不落回自定义
+            Number("row.fSpacing", c => WtHud.Hud.FormationGeometry.Spacing(c, c.FormationShape),
+                   (c, v) =>
+                   {
+                       WtHud.Hud.FormationGeometry.SetSpacing(c, c.FormationShape, v);
+                       if (c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
+                           WtHud.Hud.FormationGeometry.ApplyPreset(c, c.FormationShape, c.FormationSlot);
+                   },
+                   10, 100, 1500, "m",
+                   c => c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom,
+                   "hint.presetOnly"),
+            // 派生几何：只读，改下面任何一项立刻跟着变
+            Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Station(c).RangeM:0} m"),
+            Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Station(c).SideM:0} m"),
+            Info("row.fBackM", c => $"{WtHud.Hud.FormationGeometry.Station(c).BackM:0} m"),
+            // 四个真正的输入：改哪个都立刻落回自定义
             Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
-                 c => c.FormationWingSide + 1, (c, i) => c.FormationWingSide = i - 1,
-                 c => c.FormationShape == WtHud.Hud.FormationGeometry.ShapeCustom,
-                 "hint.shapeCustomOnly"),
+                 c => c.FormationWingSide + 1,
+                 (c, i) => { c.FormationWingSide = i - 1; ValuesEdited(c); }),
+            Number("row.fWingOffset", c => c.FormationWingOffsetM,
+                   (c, v) => { c.FormationWingOffsetM = v; ValuesEdited(c); }, 10, 0, 600, "m"),
+            Number("row.fStationBack", c => c.FormationStationBackM,
+                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 100, 1500, "m"),
+            Number("row.fUpM", c => c.FormationUpM,
+                   (c, v) => { c.FormationUpM = v; ValuesEdited(c); }, 5, -200, 200, "m"),
         },
     };
 

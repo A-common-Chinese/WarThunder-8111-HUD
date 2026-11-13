@@ -272,49 +272,76 @@ public static class Program
             Math.Abs(WingAimDeg(0, 400, 0, -150, -370) + WingAimDeg(0, 400, 0, 150, -370)) < 1e-9);
         Check("station center shifts with rel",
             Math.Abs(WingAimDeg(30, 400, 0, 0, -400) - WingAimDeg(0, 400, 0, 0, -400)) > 5);
-        // ---- 队形槽位几何：具名队形按真实斜距，自定义沿用历史口径（三站位同目标距离） ----
-        var shapeCfg = new HudConfig { FormationShape = WtHud.Hud.FormationGeometry.ShapeEchelon };
-        var e1 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("echelon slot1 geometry",
+        // ---- 队形：预设只是「填数」，几何永远来自四个数值 ----
+        var shapeCfg = new HudConfig();
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeEchelon, 0);
+        var e1 = WtHud.Hud.FormationGeometry.Station(shapeCfg);
+        Check("echelon preset slot1",
             e1.SideM == -250 && e1.BackM == -450 && Math.Abs(e1.RangeM - 514.78) < 0.1);
-        shapeCfg.FormationSlot = 2;
-        var e3 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("echelon slot3 geometry",
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeEchelon, 2);
+        var e3 = WtHud.Hud.FormationGeometry.Station(shapeCfg);
+        Check("echelon preset slot3",
             e3.SideM == -750 && e3.BackM == -1350 && Math.Abs(e3.RangeM - 1544.3) < 0.2);
-        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeColumn;
-        shapeCfg.FormationSlot = 1;
-        var c2 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("column slot2 geometry", c2.SideM == 0 && c2.BackM == -800 && Math.Abs(c2.RangeM - 800) < 0.01);
-        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeDiamond;
-        shapeCfg.FormationSlot = 2;
-        var d3 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("diamond slot3 geometry", d3.SideM == 0 && d3.BackM == -600 && Math.Abs(d3.RangeM - 600) < 0.01);
-        shapeCfg.FormationSlot = 0;
-        var d1 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("diamond slot1 is left side", d1.SideM == -300 && d1.SideSign == -1);
-        // 自定义：侧位按真实斜距 √(横偏²+后距²)，不再覆盖成尾随距离
-        shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
-        shapeCfg.FormationWingSide = -1;
-        var leg = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("custom side slot uses true slant",
+        // 间距整体缩放：450 → 900，每个数都翻倍，形状不变
+        shapeCfg.FormationEchelonSpacingM = 900;
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeEchelon, 0);
+        var e1b = WtHud.Hud.FormationGeometry.Station(shapeCfg);
+        Check("spacing scales the whole preset",
+            e1b.SideM == -500 && e1b.BackM == -900 && Math.Abs(e1b.UpM - 50) < 1e-9);
+        shapeCfg.FormationEchelonSpacingM = 450;
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeColumn, 1);
+        var c2 = WtHud.Hud.FormationGeometry.Station(shapeCfg);
+        Check("column preset slot2", c2.SideM == 0 && c2.BackM == -800 && Math.Abs(c2.RangeM - 800) < 0.01);
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeDiamond, 2);
+        var d3 = WtHud.Hud.FormationGeometry.Station(shapeCfg);
+        Check("diamond preset slot3", d3.SideM == 0 && d3.BackM == -600
+            && Math.Abs(d3.RangeM - 600) < 0.01 && Math.Abs(d3.UpM - 30) < 1e-9);
+        WtHud.Hud.FormationGeometry.ApplyPreset(shapeCfg, WtHud.Hud.FormationGeometry.ShapeDiamond, 0);
+        Check("diamond preset slot1 is left",
+            WtHud.Hud.FormationGeometry.Station(shapeCfg).SideM == -300);
+
+        // 手工数值：侧位定左右，斜距按真实几何
+        var manual = new HudConfig
+        {
+            FormationWingSide = -1, FormationWingOffsetM = 150, FormationStationBackM = 370,
+        };
+        var leg = WtHud.Hud.FormationGeometry.Station(manual);
+        Check("manual side station uses true slant",
             leg.SideM == -150 && leg.BackM == -370 && Math.Abs(leg.RangeM - 399.25) < 0.01);
-        // 把横偏/后距改大，判定基准必须跟着变 —— 不能还停在尾随距离上
-        shapeCfg.FormationWingOffsetM = 300;
-        shapeCfg.FormationStationBackM = 400;
-        Check("custom side slot follows the geometry it is given",
-            Math.Abs(WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM - 500) < 0.001);
-        // 完成带按同一斜距的百分比算：500 m 的 10% 是 50 m
-        Check("done band scales with the custom side slant",
-            Math.Abs(FormationRangeErrorPct(550, 500) - 10) < 1e-9);
-        shapeCfg.FormationWingOffsetM = 150;
-        shapeCfg.FormationStationBackM = 370;
-        shapeCfg.FormationWingSide = 0;
-        Check("custom trail slot",
-            Math.Abs(WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM - 400) < 0.001);
-        // 未知形状按自定义处理，不能崩也不能给空站位
-        shapeCfg.FormationShape = "nonsense";
-        Check("unknown shape falls back to custom",
-            WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM == 400);
+        manual.FormationWingOffsetM = 300;
+        manual.FormationStationBackM = 400;
+        Check("manual station follows the numbers given",
+            Math.Abs(WtHud.Hud.FormationGeometry.Station(manual).RangeM - 500) < 0.001);
+        Check("done band scales with the slant", Math.Abs(FormationRangeErrorPct(550, 500) - 10) < 1e-9);
+        // 尾随位横偏乘 0：同一份配置换成正后，横向必须归零
+        manual.FormationWingSide = 0;
+        Check("trail side ignores the lateral offset",
+            WtHud.Hud.FormationGeometry.Station(manual).SideM == 0);
+
+        // 快照：套预设前存，切回自定义还原
+        var snapCfg = new HudConfig { FormationWingSide = 0, FormationStationBackM = 820 };
+        snapCfg.SnapshotCustom();
+        WtHud.Hud.FormationGeometry.ApplyPreset(snapCfg, WtHud.Hud.FormationGeometry.ShapeColumn, 0);
+        Check("preset overwrites the numbers", Math.Abs(snapCfg.FormationStationBackM - 400) < 0.01);
+        snapCfg.RestoreCustom();
+        Check("custom snapshot restores the numbers",
+            snapCfg.FormationWingSide == 0 && Math.Abs(snapCfg.FormationStationBackM - 820) < 0.01);
+
+        // 迁移：旧配置把「尾随距离」并进唯一的后距，只跑一次
+        var oldCfg = new HudConfig
+        {
+            FormationModel = 0, FormationShape = "custom", FormationWingSide = 0,
+            LegacyFormationRangeM = 620, FormationStationBackM = 370,
+        };
+        oldCfg.MigrateFormation();
+        Check("legacy trail range becomes the back distance",
+            Math.Abs(oldCfg.FormationStationBackM - 620) < 0.01 && oldCfg.FormationModel == 2
+            && oldCfg.LegacyFormationRangeM is null);
+        var oldNamed = new HudConfig { FormationModel = 0, FormationShape = "diamond", FormationSlot = 2 };
+        oldNamed.MigrateFormation();
+        Check("legacy named shape is rewritten from the preset",
+            Math.Abs(oldNamed.FormationStationBackM - 600) < 0.01
+            && Math.Abs(oldNamed.FormationUpM - 30) < 0.01);
 
         // ---- 长机转向辅助：目标坡度/转向率与「反向 1 s 才重锁」 ----
         var (bank3, rate3) = TurnAssistTargets(3.0, 800);
@@ -438,19 +465,17 @@ public static class Program
         Check("vert rate proportional", Math.Abs(VerticalRateCmd(20, 10) - 3.0) < 1e-9);
         Check("vert rate symmetric", Math.Abs(VerticalRateCmd(-20, 10) + 3.0) < 1e-9);
         Check("vert rate zero at target", VerticalRateCmd(0, 10) == 0);
-        var vShape = new HudConfig { FormationShape = WtHud.Hud.FormationGeometry.ShapeEchelon };
+        var vShape = new HudConfig();
+        WtHud.Hud.FormationGeometry.ApplyPreset(vShape, WtHud.Hud.FormationGeometry.ShapeEchelon, 0);
         Check("echelon slot1 is 25 m up",
-            WtHud.Hud.FormationGeometry.Current(vShape).UpM == 25
-            && WtHud.Hud.FormationGeometry.Current(vShape).TargetDeltaHM == -25);
-        vShape.FormationShape = WtHud.Hud.FormationGeometry.ShapeDiamond;
-        vShape.FormationSlot = 2;
-        Check("diamond rear slot is 30 m up",
-            WtHud.Hud.FormationGeometry.Current(vShape).UpM == 30);
-        vShape.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+            WtHud.Hud.FormationGeometry.Station(vShape).UpM == 25
+            && WtHud.Hud.FormationGeometry.Station(vShape).TargetDeltaHM == -25);
+        WtHud.Hud.FormationGeometry.ApplyPreset(vShape, WtHud.Hud.FormationGeometry.ShapeDiamond, 2);
+        Check("diamond rear slot is 30 m up", WtHud.Hud.FormationGeometry.Station(vShape).UpM == 30);
         vShape.FormationUpM = -40;
-        Check("custom vertical offset flows into slot",
-            WtHud.Hud.FormationGeometry.Current(vShape).UpM == -40
-            && WtHud.Hud.FormationGeometry.Current(vShape).TargetDeltaHM == 40);
+        Check("manual vertical offset flows into the station",
+            WtHud.Hud.FormationGeometry.Station(vShape).UpM == -40
+            && WtHud.Hud.FormationGeometry.Station(vShape).TargetDeltaHM == 40);
 
         // ---- 到位判定改百分比：同一套门限在 400 m 与 1545 m 的槽位上都成立 ----
         Check("range error pct at 10 percent", Math.Abs(FormationRangeErrorPct(440, 400) - 10.0) < 1e-9);
@@ -704,23 +729,6 @@ public static class Program
         int drawnLabels = leadPrims.Count(p => p.Text is "W1" or "W2" or "W3" or "W4" or "W5" or "W6");
         int drawnStates = leadPrims.Count(p => p.Text == "到位");
         Check("wing table draws every row", drawnLabels == 6 && drawnStates == 6);
-
-        // ---- 长机按僚机自报槽位算期望距离 ----
-        var slotNodes = new[]
-        {
-            new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
-                0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
-                WtHud.Telemetry.DataLink.WingState.InPosition, 2, 0),
-        };
-        Check("lead uses the reported slot",
-            LeadWingSlot(new int?[] { 0 }, slotNodes, 0, -1) == 2);
-        Check("lead falls back when the wing is unmapped",
-            LeadWingSlot(new int?[] { null }, slotNodes, 0, 1) == 1);
-        Check("lead falls back on a bad index",
-            LeadWingSlot(new int?[] { 0 }, slotNodes, 5, 1) == 1);
-        Check("lead falls back when the node has no slot",
-            LeadWingSlot(new int?[] { 0 },
-                new[] { wt3 }, 0, 0) == 0);
 
         // ---- 站位偏差：站在槽位上指向角为 0，横向偏出去必须明显大于容差 ----
         Check("aim zero when parked in the slot", Math.Abs(WingAimDeg(180, 400, 0, 0, 400)) < 1.0);
@@ -3412,23 +3420,12 @@ public static class Program
                     var wing = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
                     double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
                     // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
-                    // 只有僚机跑状态机的话，长机永远等不到这句。判定用的是同一条 40 m / 2 s。
-                    // 长机没有「站位」这回事，方位传 0 = 永远对齐，行为与之前一致
-                    // ★ 期望距离必须用**僚机自报的槽位**算：长机自己的槽位和僚机选的可能不是一个，
-                    //   三机时按自己的算会永远对不上（长机 slot 0 = 400 m，僚机 2 号位 1030 m）。
-                    //   拿不到自报（老版本/没配对）才退回自己的槽位，与以前一致。
-                    int wingSlot = -1;
-                    var onlineNodes = dataLink?.Snapshot();
-                    if (onlineNodes is { Length: > 0 })
-                    {
-                        double tol = 50.0 / Math.Max(2000.0, Math.Max(sizeX, sizeY));
-                        var nodeForFriendly = WtHud.Telemetry.DataLink.MatchNodeIndex(friendPos, onlineNodes, tol);
-                        wingSlot = LeadWingSlot(nodeForFriendly, onlineNodes,
-                                                NearestFriendlyIndex(opt.Friendlies), -1);
-                    }
-                    // 没有链路自报时才跑长机自己的状态机（无链路模式保留现状）
+                    // 只有僚机跑状态机的话，长机永远等不到这句。长机没有「站位」这回事，
+                    // 方位传 0 = 永远对齐，期望距离用长机自己的配置。
+                    // ★ 统一模型之后编号只是编号，推不出僚机的站位 —— 不再按僚机槽位取几何。
+                    // 没有僚机自报时才跑长机自己的状态机（无链路模式保留现状）
                     if (wingRows.Count == 0)
-                        UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg, wingSlot);
+                        UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg);
 
                     if (wing.RangeM < 200)
                     {
@@ -3595,7 +3592,7 @@ public static class Program
 
                 // 本机要飞的站位（形状 + 槽位）。后面所有站位几何、到位判定、速度前馈都读它，
                 // 避免出现「引导按新队形算、油门还按旧距离算」的分叉。
-                var slot = WtHud.Hud.FormationGeometry.Current(cfg);
+                var slot = WtHud.Hud.FormationGeometry.Station(cfg);
 
                 // ---- 垂直引导 ----
                 // 目标高度差 = 长机高度 + 槽位高度（UpM 正 = 站位比长机高），所以目标 ΔH = −UpM。
@@ -4531,20 +4528,7 @@ public static class Program
         };
     }
 
-    /// <summary>
-    /// 长机侧：最近那架友机对应的数据链节点报了哪个槽位。拿不到就返回 <paramref name="fallback"/>。
-    /// </summary>
-    internal static int LeadWingSlot(IReadOnlyList<int?> nodeForFriendly,
-                                     IReadOnlyList<WtHud.Telemetry.DataLink.LinkNode> nodes,
-                                     int friendlyIndex, int fallback)
-    {
-        if (friendlyIndex < 0 || friendlyIndex >= nodeForFriendly.Count) return fallback;
-        if (nodeForFriendly[friendlyIndex] is not int idx) return fallback;
-        if (idx < 0 || idx >= nodes.Count) return fallback;
-        return nodes[idx].Slot >= 0 ? nodes[idx].Slot : fallback;
-    }
-
-    /// <summary>僚机的显示名：有槽位就叫 W1/W2，没有就用节点号。</summary>
+    /// <summary>僚机的显示名：有编号就叫 W1/W2，没有就用节点号。</summary>
     internal static string WingLabel(WtHud.Telemetry.DataLink.LinkNode n)
         => n.Slot >= 0 ? "W" + (n.Slot + 1).ToString() : "#" + n.Id.ToString();
 
@@ -4816,14 +4800,13 @@ public static class Program
     /// 期望距离用哪个槽位算。-1 = 用本机配置的槽位（僚机侧就是自己的）；
     /// 长机侧要传**僚机自报的槽位** —— 否则三机时按长机自己的槽位算，永远对不上。
     /// </param>
-    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg,
-                                             int slotIndex = -1)
+    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg)
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        // 按槽位斜距的百分比判定：同一套松紧在 400 m 和 1545 m 的槽位上都成立
-        int slot = slotIndex >= 0 ? slotIndex : cfg.FormationSlot;
-        double slotRange = WtHud.Hud.FormationGeometry.Slot(cfg.FormationShape, slot, cfg).RangeM;
+        // 按本机站位的斜距百分比判定：同一套松紧在 400 m 和 1545 m 的站位上都成立。
+        // ★ 统一模型之后几何只来自本机配置 —— 僚机的编号推不出它自己的站位。
+        double slotRange = WtHud.Hud.FormationGeometry.Station(cfg).RangeM;
         double err = FormationRangeErrorPct(rangeM, slotRange);
 
         // 站位：距离对上但没站在槽位上，不算「编队完成」。阈值和 Hold 用同一个配置，
@@ -5409,7 +5392,7 @@ public static class Program
             }
             else
             {
-                opt.Guide = new FormationLead(12, 820, pcfg.FormationRangeM, FormationAction.Decelerate, -90,
+                opt.Guide = new FormationLead(12, 820, WtHud.Hud.FormationGeometry.Station(pcfg).RangeM, FormationAction.Decelerate, -90,
                                               0, false, 0, false, 640);
             }
 

@@ -193,55 +193,68 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationWarnG")] public double FormationWarnG { get; set; } = 1.5;
 
-    // ---- 僚机侧位（编队位置设定）----
-    // 僚机主动声明飞在长机左侧还是右侧，引导就把机头指向「长机侧后方的虚拟点」而不是长机本体。
-    // 有了这个稳定设定，长机转弯时才能确定僚机在内圈还是外圈：
-    // 右转圆心在长机右侧 → 右侧 = 内圈、左侧 = 外圈；左转反之。
-    // 0 = 正后方（旧行为，不做内外圈区分），默认编队不受影响。
+    // ---- 站位数值（2026-11-13 统一模型）----
+    // 四个数值是唯一真相：侧位定左右，横偏/后距/高度定位置。
+    // 「预设队形」只是把这四个值一次填好，不再是一套独立的几何表。
 
-    /// <summary>僚机侧位：-1 = 长机左侧，0 = 正后方（默认），+1 = 长机右侧。</summary>
+    /// <summary>僚机侧位：-1 = 长机左侧，0 = 正后方（默认），+1 = 长机右侧。**永远生效。**</summary>
     [JsonPropertyName("formationWingSide")] public int FormationWingSide { get; set; } = 0;
 
-    // ---- 站位间距（2026-11-11 从代码常量改成配置项） ----
-
     /// <summary>
-    /// 尾随站位：长机正后方的距离（米）。默认 400。
-    /// <para>★ 改大之后「编队完成」的判定（40 m 绝对误差）会相对变严，因为它是绝对米数，
-    /// 不是百分比 —— 站位放到 800 m 时建议把判定一起放宽。</para>
-    /// </summary>
-    [JsonPropertyName("formationRangeM")] public double FormationRangeM { get; set; } = 400;
-
-    /// <summary>
-    /// 侧位僚机的横向偏移（米）。默认 150。左僚机 −150、右僚机 +150。
+    /// 横向偏移（米）。默认 150。左僚机 −150、右僚机 +150；侧位为正后时会乘 0，这一项不起作用。
     /// </summary>
     [JsonPropertyName("formationWingOffsetM")] public double FormationWingOffsetM { get; set; } = 150;
 
     /// <summary>
-    /// 侧位僚机的纵向后距（米）。默认 370。
-    /// <para>与 <see cref="FormationWingOffsetM"/> 一起决定斜距：默认 150² + 370² ≈ 400²，
-    /// 三个站位到长机的距离都是 400 m —— 这样切换侧位时速度前馈不用重新标定。
-    /// 改了这两个数就不再相等，属于有意为之的话没问题。</para>
+    /// 纵向后距（米）。默认 400。**所有侧位共用这一个后距。**
+    /// <para>★ 0.4.20 及以前尾随位另有一个「尾随距离」，两套后距只有一套生效 ——
+    /// 与「槽位 / 侧位」是同一类毛病，统一模型里合并掉了。</para>
     /// </summary>
-    [JsonPropertyName("formationStationBackM")] public double FormationStationBackM { get; set; } = 370;
+    [JsonPropertyName("formationStationBackM")] public double FormationStationBackM { get; set; } = 400;
 
-    // ---- 队形（2026-11-12）----
-    // 具名队形的槽位几何在 FormationGeometry 里；这里只存「选了哪个队形、第几个位置」。
+    /// <summary>站位高度偏移（米，正 = 站位比长机高）。默认 0。任何形状都读这一项。</summary>
+    [JsonPropertyName("formationUpM")] public double FormationUpM { get; set; }
+
+    // ---- 预设队形（只是「填数按钮」）----
 
     /// <summary>
-    /// 队形：custom（自定义，用下面三个距离）/ echelon（梯队）/ column（纵队）/ diamond（菱形）。
-    /// <para>custom 之外，三个距离字段只作为显示与自定义队形的输入，不再参与制导 ——
-    /// 制导读的是 <see cref="WtHud.Hud.FormationGeometry.Current"/> 给出的槽位。</para>
+    /// 队形标签：custom / echelon / column / diamond。
+    /// <para>★ 0.4.21 起它只是**标签**，不再决定几何 —— 几何永远来自上面四个数。
+    /// 手工改任一数值会立刻把标签改回 custom。</para>
     /// </summary>
     [JsonPropertyName("formationShape")] public string FormationShape { get; set; } = "custom";
 
-    /// <summary>槽位序号（0 起）。超出该队形槽位数时按最后一个算。</summary>
+    /// <summary>
+    /// 僚机编号（0 起）。**只是编号**：报文第 11 段带它，长机表据此显示 W1/W2/W3，不参与几何。
+    /// </summary>
     [JsonPropertyName("formationSlot")] public int FormationSlot { get; set; } = 0;
 
+    /// <summary>梯队基准间距（米）。默认 450：每架再后 450、再左 250、再高 25，按比例整体缩放。</summary>
+    [JsonPropertyName("formationEchelonSpacingM")] public double FormationEchelonSpacingM { get; set; } = 450;
+
+    /// <summary>纵队基准间距（米）。默认 400：正后方每架间隔 400。</summary>
+    [JsonPropertyName("formationColumnSpacingM")] public double FormationColumnSpacingM { get; set; } = 400;
+
+    /// <summary>菱形基准间距（米）。默认 400：左右后各 300/400，后位 0/600 并抬高 30。</summary>
+    [JsonPropertyName("formationDiamondSpacingM")] public double FormationDiamondSpacingM { get; set; } = 400;
+
+    // ---- 自定义快照：套预设前存一份，切回自定义时原样还原 ----
+
+    [JsonPropertyName("formationCustomSet")] public bool FormationCustomSet { get; set; }
+    [JsonPropertyName("formationCustomWingSide")] public int FormationCustomWingSide { get; set; }
+    [JsonPropertyName("formationCustomWingOffsetM")] public double FormationCustomWingOffsetM { get; set; } = 150;
+    [JsonPropertyName("formationCustomStationBackM")] public double FormationCustomStationBackM { get; set; } = 400;
+    [JsonPropertyName("formationCustomUpM")] public double FormationCustomUpM { get; set; }
+
+    /// <summary>配置模型版本：0 = 0.4.20 及以前，2 = 统一模型。用来只迁移一次。</summary>
+    [JsonPropertyName("formationModel")] public int FormationModel { get; set; }
+
     /// <summary>
-    /// 自定义队形的**高度偏移**（米，正 = 站位比长机高）。默认 0。
-    /// <para>具名队形的高度由槽位表给（梯队逐级抬高、菱形后位略高），这一项只对自定义生效。</para>
+    /// 0.4.20 及以前的「尾随距离」，只在迁移时读一次；迁移完置空，不再落盘。
     /// </summary>
-    [JsonPropertyName("formationUpM")] public double FormationUpM { get; set; }
+    [JsonPropertyName("formationRangeM")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? LegacyFormationRangeM { get; set; }
 
     /// <summary>
     /// 垂直引导的「算到位」门槛（米）。默认 30：不到这个误差就按「高度一致」显示，不再给升降建议。
@@ -499,12 +512,28 @@ public sealed class HudConfig
     public static HudConfig Load()
     {
         var path = PathFor();
-        if (!File.Exists(path)) return new HudConfig();   // 首次运行：没有文件就是默认，正常
+        if (!File.Exists(path))
+        {
+            // 首次运行：没有文件就是默认，正常。也走一遍迁移，把快照与模型版本初始化好。
+            var fresh = new HudConfig();
+            fresh.MigrateFormation();
+            return fresh;
+        }
 
         try
         {
             var cfg = JsonSerializer.Deserialize<HudConfig>(File.ReadAllText(path));
-            if (cfg != null) return cfg;
+            if (cfg != null)
+            {
+                // 旧语义（0.4.20 及以前）只迁移一次；迁移前把原文件留一份 .bak，
+                // 因为这一步会重写四个站位数值，用户没法从面板上看出改过什么。
+                if (cfg.FormationModel < 2)
+                {
+                    try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+                    cfg.MigrateFormation();
+                }
+                return cfg;
+            }
             // 解出 null 不等于「没有配置」，是文件本身有问题，不能当成默认继续跑
             throw new System.IO.InvalidDataException("deserialised to null");
         }
@@ -520,6 +549,70 @@ public sealed class HudConfig
             Console.WriteLine("  -> saving from the panel will overwrite hud-config.json");
             return new HudConfig();
         }
+    }
+
+    /// <summary>
+    /// 把 0.4.20 及以前的配置迁到统一模型。**只跑一次**（跑完写 <c>formationModel = 2</c>）。
+    /// <para>旧语义下具名队形的三个距离是死数据（真正生效的是槽位表），尾随位用的还是另一个
+    /// 「尾随距离」。迁移后：具名队形按预设重写四个值（看到的站位不变）；自定义按当前侧位
+    /// 挑一个后距（尾随位取尾随距离，侧位取侧位后距），也不改变当前站位。</para>
+    /// </summary>
+    public void MigrateFormation()
+    {
+        if (FormationModel >= 2) return;
+
+        if (!WtHud.Hud.FormationGeometry.IsKnownShape(FormationShape))
+            FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+
+        if (FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
+        {
+            // 具名队形：旧版几何来自槽位表，直接按预设写回四个值
+            WtHud.Hud.FormationGeometry.ApplyPreset(this, FormationShape, FormationSlot);
+            SnapshotCustomDefaults();
+        }
+        else
+        {
+            // 自定义：把旧的「尾随距离」并进唯一的后距，保持当前侧位看到的距离不变
+            if (FormationWingSide == 0 && LegacyFormationRangeM is double r && r > 50)
+                FormationStationBackM = r;
+            SnapshotCustom();
+        }
+
+        LegacyFormationRangeM = null;
+        FormationModel = 2;
+    }
+
+    /// <summary>把当前四个值存成「自定义快照」。</summary>
+    public void SnapshotCustom()
+    {
+        FormationCustomSet = true;
+        FormationCustomWingSide = FormationWingSide;
+        FormationCustomWingOffsetM = FormationWingOffsetM;
+        FormationCustomStationBackM = FormationStationBackM;
+        FormationCustomUpM = FormationUpM;
+    }
+
+    /// <summary>
+    /// 首次迁移用具名队形时，手上没有「用户原来的自定义值」，快照写真后 400 这一套默认，
+    /// 免得切回自定义时还原出一堆 0。
+    /// </summary>
+    private void SnapshotCustomDefaults()
+    {
+        FormationCustomSet = true;
+        FormationCustomWingSide = 0;
+        FormationCustomWingOffsetM = 150;
+        FormationCustomStationBackM = 400;
+        FormationCustomUpM = 0;
+    }
+
+    /// <summary>把「自定义快照」写回四个值；没有快照时保持原样。</summary>
+    public void RestoreCustom()
+    {
+        if (!FormationCustomSet) return;
+        FormationWingSide = FormationCustomWingSide;
+        FormationWingOffsetM = FormationCustomWingOffsetM;
+        FormationStationBackM = FormationCustomStationBackM;
+        FormationUpM = FormationCustomUpM;
     }
 
     public void Save() => SaveTo(PathFor());

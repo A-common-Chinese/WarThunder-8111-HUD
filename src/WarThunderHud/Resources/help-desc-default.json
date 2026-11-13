@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 36,
+  "_version": 37,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -313,8 +313,8 @@
     "en": "The full link-status page: API health, own role, link state, online nodes, wing positions, port, notes. Same content as the LINK STATUS row on the connection page, and reachable from DIAG as well - useful when chasing a half-started 8111 without jumping back to the data-link module. Read-only throughout."
   },
   "row.wingSide": {
-    "zh": "僚机侧位：选你在长机的哪一侧。左僚机 / 尾随 / 右僚机三个站位到长机的距离都是 400 m（左和右各偏 22°，横向 150 m、纵向 370 m）。多架僚机在同一局时必须各选不同侧位，否则会抢同一个站位。长机模式用不到这一项。",
-    "en": "Wing position: which side of the lead you fly. Left wing / trail / right wing are all 400 m from the lead (the side slots sit 22 deg off the tail, 150 m across and 370 m back). With several wingmen in one mission each must pick a different slot or they will chase the same point. Not used in lead mode."
+    "zh": "侧位：你在长机的哪一侧。左 / 尾随 / 右，**永远生效**，也是内外圈的判据（右转时右侧是内圈）。选「尾随」时横向偏移乘 0，等于正后方。多架僚机同一局要各飞不同侧位，否则会抢同一个点。",
+    "en": "Side: which side of the lead you fly. Left / trail / right - always active, and it decides inner vs outer turn (the right side is inner in a right turn). TRAIL multiplies the lateral offset by zero, putting you straight astern. In a multi-ship sortie each wing should take a different side."
   },
   "row.formationWarnG": {
     "zh": "转弯告警阈值：长机转弯的横向过载超过这个 G 值，僚机的引导上方就显示「转弯过急」，表示队形跟不住了。默认 1.5 G（600 km/h 下约 5.1°/s）。实测：1.0 G 内外圈偏差 5–15 m（几乎完美），1.5 G 偏差 21–50 m（刚开始偏），2.0 G 内圈偏差 144 m（断崖）。调小 = 更早提醒，调大 = 更晚。",
@@ -364,17 +364,13 @@
     "zh": "速度前馈下限。默认 0.80。试过 0.50：10°/s 内圈减过头，未采纳。",
     "en": "Speed feed lower bound. Default 0.80. 0.50 was tried and over-braked the inner slot at 10 deg/s."
   },
-  "row.fRange": {
-    "zh": "尾随站位：长机正后方的距离。默认 400 m。改大 = 队形更松、更好飞但更难看清长机；改小 = 更紧。★ 编队完成的判定是「槽位斜距的百分比」（默认 10%），400 m 时约 40 m；自定义队形的侧位斜距按 √(横偏²+后距²) 算，不再固定等于这个值。",
-    "en": "Trail slot distance behind the lead. Default 400 m. Larger is a looser formation that is easier to fly; smaller is tighter. The completion check is a percentage of the slot's slant range (10% by default, about 40 m at 400 m). Under CUSTOM the side slots use their own sqrt(lateral^2 + back^2), not this value."
-  },
   "row.fWingOffset": {
-    "zh": "侧位僚机的横向偏移。默认 150 m（左僚机 −150、右僚机 +150）。与侧位后距一起决定斜距：默认 150² + 370² → 399.25 m，和尾随位的 400 m 基本相等，换侧位不用重新标定速度前馈。改大之后斜距跟着变，到位判定也按新的真实斜距判（0.4.20 起不再固定按尾随距离）。",
-    "en": "Lateral offset for the side slots. Default 150 m (left -150, right +150). Together with the station back distance it gives the slant range: 150^2 + 370^2 gives 399.25 m, essentially the trail slot's 400 m. Change it and the slant - and therefore the on-station check - follows the real geometry (no longer pinned to the trail distance as of 0.4.20)."
+    "zh": "横向偏移（米）。默认 150：左僚机 −150、右僚机 +150；侧位选「尾随」时乘 0，这一项不起作用。与后距一起决定斜距 √(横偏²+后距²)。",
+    "en": "Lateral offset in metres. Default 150 (left -150, right +150). With SIDE set to TRAIL it is multiplied by zero and has no effect. Together with the back distance it gives the slant range sqrt(lateral^2 + back^2)."
   },
   "row.fStationBack": {
-    "zh": "侧位僚机的纵向后距。默认 370 m。它是斜距的另一半（见「侧位横偏」）。单独改动会让左右两翼离长机更远或更近，与尾随位的距离不再一致，到位判定也会按新的斜距重新算。",
-    "en": "Longitudinal distance for the side slots. Default 370 m. It is the other half of the slant range; changing it alone makes the wing slots sit further or closer than the trail slot."
+    "zh": "后距（米）。默认 400。**所有侧位共用这一个后距** —— 侧位只决定左右，不再各自带一套后距。改它，斜距和到位判定一起跟着变。",
+    "en": "Back distance in metres. Default 400. All sides share this one value: SIDE only chooses left/right now. Changing it moves the slant range and the on-station band together."
   },
   "row.fDoneHold": {
     "zh": "进入门槛需要持续多久才算完成。默认 2 s。防止只是掠过站位就报完成（长机会据此开始机动）。",
@@ -549,28 +545,32 @@
     "en": "Formation shape: opens the sub-page for shape (custom / echelon / column / diamond), slot and vertical offset. The value column shows the current pair, e.g. \"ECHELON · 2\"."
   },
   "row.fShape": {
-    "zh": "队形形状。自定义 = 用下面的尾随距离 / 侧位横偏 / 侧位后距手工描述站位；梯队 = 每架再靠后 450 m、再偏左 250 m；纵队 = 正后方每架间隔 400 m；菱形 = 左后 / 右后 / 正后三个位置。★ 换形状会把槽位重置到第 1 个。",
-    "en": "Formation shape. CUSTOM uses the three distances below to describe the slot by hand; ECHELON steps each aircraft 450 m further back and 250 m further left; COLUMN stacks them 400 m apart straight astern; DIAMOND gives left-rear / right-rear / astern. Changing shape resets the slot to 1."
+    "zh": "预设队形：**只是一个填数按钮**，按一下就把下面的侧位 / 横偏 / 后距 / 高度填成一套标准值。梯队 = 每架再后 450、再左 250、再高 25；纵队 = 正后方每架间隔 400；菱形 = 左后 / 右后 / 正后。★ 数值才是真几何：改下面任何一行，标签会立刻变回「自定义」。切回自定义会还原你套预设之前的那套数值。",
+    "en": "Formation preset: only a button that fills the four numbers below (side / lateral / back / altitude). ECHELON steps 450 m back, 250 m left and 25 m up per aircraft; COLUMN stacks 400 m apart astern; DIAMOND gives left-rear / right-rear / astern. The numbers are the real geometry - edit any of them and the label drops back to CUSTOM. Switching back to CUSTOM restores the values you had before applying the preset."
   },
   "row.fSlot": {
-    "zh": "第几个位置（1 起）。同一局里多架僚机必须各选不同槽位，否则会全挤在同一个点上。自定义队形的站位由下面「侧位」决定，这一行只当僚机编号用 —— 也要给三架选不同号，长机那张表才分得清 W1/W2/W3（0.4.20 起不再变灰）。",
-    "en": "Which slot (1-based). Several wingmen in one sortie must pick different slots or they will all converge on the same point. Under CUSTOM the station comes from WING SIDE below, so this row only numbers the wing - still give each aircraft a different one so the lead's table can tell W1 from W2 (no longer greyed out as of 0.4.20)."
+    "zh": "僚机编号（1 起）。**只是编号**，不决定站位 —— 报文靠它让长机那张表显示 W1/W2/W3。三架僚机请选不同编号，否则表里会全是同一个号。站位永远由下面的「侧位」和三个距离决定。",
+    "en": "Wing number (1-based). Just a number: it does not set the station, it only lets the lead's table show W1/W2/W3. Give each wingman a different one. The station always comes from SIDE and the three distances below."
+  },
+  "row.fSpacing": {
+    "zh": "预设的基准间距（米）。改它等于把整个预设等比放大或缩小，形状不变，标签也不会变成自定义。梯队默认 450、纵队 400、菱形 400，每个预设各存各的。",
+    "en": "Base spacing of the preset in metres. Changing it scales the whole preset proportionally - same shape, label stays on the preset. Defaults: echelon 450, column 400, diamond 400; each preset keeps its own value."
   },
   "row.fSlant": {
-    "zh": "这个槽位到长机的斜距（水平面内），由形状与槽位算出，只读。到位判定与速度前馈都用它 —— 梯队第 2 位 1030 m、第 3 位 1545 m，与尾随位的 400 m 完全不同，所以「完成误差」按百分比给才有意义。",
-    "en": "Slant range from this slot to the lead, computed from shape and slot; read-only. The completion band and the speed feedforward both use it - echelon slot 2 is 1030 m and slot 3 is 1545 m, nothing like the 400 m trail slot, which is why the done band is a percentage."
+    "zh": "本机站位到长机的斜距（水平面内）= √(横偏² + 后距²)，只读。到位判定与速度前馈都用它 —— 面板上看到多少，判定就用多少。",
+    "en": "Slant range from your station to the lead, sqrt(lateral^2 + back^2), read-only. Both the on-station check and the speed feedforward use it, so the number you see is the number being judged."
   },
   "row.fSideM": {
-    "zh": "槽位相对长机的横向偏移（右为正）。只读，由形状与槽位算出。",
-    "en": "Lateral offset of the slot from the lead, right positive. Read-only, derived from shape and slot."
+    "zh": "本机站位相对长机的横向偏移（右为正）。只读，由侧位与横偏算出。",
+    "en": "Lateral offset of your station from the lead, right positive. Read-only, derived from SIDE and the lateral offset."
   },
   "row.fBackM": {
-    "zh": "槽位相对长机的纵向位置（负值 = 在长机后方）。只读，由形状与槽位算出。",
-    "en": "Longitudinal position of the slot (negative means behind the lead). Read-only, derived from shape and slot."
+    "zh": "本机站位相对长机的纵向位置（负值 = 在长机后方）。只读，等于后距取负。",
+    "en": "Longitudinal position of your station (negative means behind the lead). Read-only; the back distance with a minus sign."
   },
   "page.formationShape": {
-    "zh": "队形几何：选形状与槽位，下面四行只读值告诉你这个位置到底在哪（斜距 / 横向 / 纵向 / 高度）。三个手工距离和自定义高度只在「自定义」时可改。",
-    "en": "Formation geometry: pick a shape and slot; the four read-only rows show exactly where that slot sits (slant / lateral / longitudinal / altitude). The manual distances and custom altitude are editable only under CUSTOM."
+    "zh": "队形：上面是预设（填数按钮）与编号，下面四行是真正的几何输入 —— 侧位、横偏、后距、高度。中间三行只读值告诉你这个站位到底在哪（斜距 / 横向 / 纵向）。改任何一行数值，标签立刻变回自定义。",
+    "en": "Formation: the top rows are the preset (a fill-in button) and the wing number; the four rows below are the real geometry inputs - side, lateral, back, altitude. The read-only rows in between show where the station actually sits (slant / lateral / longitudinal). Editing any value drops the label back to CUSTOM."
   },
   "row.turnAssistMenu": {
     "zh": "长机转向辅助：按一下开关按键，HUD 在屏幕下方画一条坡度横带 —— 绿标是当前坡度、琥珀标是按「目标过载」算出的目标坡度，下面一句告诉你多压一点还是回一点杆。再按一下关掉。方向不用选：第一次真实转向（转向率超过 1.5°/s）自动锁定左右。",
@@ -621,12 +621,8 @@
     "en": "Error band that drops the formation back to converge, also a percentage of slot range. Default 30%. Keep it well above DONE BAND % or the state will flip back and forth."
   },
   "row.fUpM": {
-    "zh": "这个槽位相对长机的**目标高度**（正 = 站位比长机高）。具名队形由槽位表给：梯队逐级抬高 25 m、菱形后位高 30 m、纵队等高。垂直引导瞄准的就是它。",
-    "en": "Target altitude for this slot relative to the lead (positive = the slot sits above the lead). Named shapes supply it: echelon steps up 25 m per slot, diamond puts the rear slot 30 m high, column is level. Vertical guidance aims at this."
-  },
-  "row.fUpOffset": {
-    "zh": "自定义队形的高度偏移（米，正 = 比长机高），默认 0。只对「自定义」生效 —— 具名队形的高度由槽位表决定，手改没有意义，所以这一行在具名队形下变灰。",
-    "en": "Vertical offset for the CUSTOM shape in metres (positive = above the lead), default 0. Only applies to CUSTOM; named shapes take their altitude from the slot table, so this row greys out."
+    "zh": "站位高度（米，正 = 比长机高）。默认 0。任何队形都读这一项：垂直引导瞄准的就是它，改完标签立刻变回自定义。梯队预设会逐级抬高 25 m、菱形后位高 30 m，都是通过这一项写进去的。",
+    "en": "Station altitude in metres (positive = above the lead). Default 0. Every shape reads this value and vertical guidance aims at it; editing it drops the label back to CUSTOM. The echelon preset steps 25 m per slot and the diamond rear slot sits 30 m high by writing this value."
   },
   "row.fVertGate": {
     "zh": "两阶段的分界线（米），默认 30。★ 编队未完成时，高度差超过它就是「爬升阶段」：**横向引导完全不出现**（没有引导圈、没有转向指令、没有距离和速度），屏幕上只留一条爬升率；爬进门槛后横向引导才开始。退出用 60% 门槛（18 m）做迟滞，避免在边界反复切换。",
