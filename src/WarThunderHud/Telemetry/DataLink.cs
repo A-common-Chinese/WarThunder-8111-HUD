@@ -161,6 +161,37 @@ internal sealed class DataLink : IDisposable
     /// </summary>
     public int TargetCount => _lastTargetCount;
 
+    /// <summary>
+    /// 对方自报的**队标锚点**：它最近的机场在哪、在它眼里算不算友军。
+    /// <para>机场位置在同一张图上是固定的，两队看到的颜色却相反 —— 所以把这对坐标拿到
+    /// 本机地图里一比，就能判断对方是不是同一队。机场不会被占领，颜色是稳定的。</para>
+    /// </summary>
+    public readonly record struct TeamAnchor(double Xn, double Yn, bool Friendly);
+
+    /// <summary>队标校验结果。</summary>
+    public enum TeamVerdict
+    {
+        /// <summary>比不出来：本机机场表为空、坐标对不上任何机场，或对方是老版本。</summary>
+        Unknown = 0,
+        /// <summary>同一队。</summary>
+        Same = 1,
+        /// <summary>不同队 —— 这一包直接丢掉，不建节点。</summary>
+        Other = 2,
+    }
+
+    /// <summary>
+    /// 队标校验回调：参数是对方自报的机场归一化坐标与「在它眼里是不是友军」。
+    /// <para>由上层拿本机 <c>map_obj</c> 的机场表来比对；null = 不校验。</para>
+    /// </summary>
+    public Func<double, double, bool, TeamVerdict>? TeamCheck { get; set; }
+
+    /// <summary>因为队标不符被丢掉的包数（同一节点的连续包各算一次）。</summary>
+    public long OtherTeamDropped => Interlocked.Read(ref _otherTeam);
+    private long _otherTeam;
+
+    /// <summary>最后一次丢弃异队包的时刻（<see cref="Environment.TickCount64"/>）；0 = 从没丢过。</summary>
+    public long LastOtherTeamTick { get; private set; }
+
     /// <summary>收到的一个数据链节点。位置可能为 null（对方版本不带坐标）。</summary>
     public readonly record struct LinkNode(int Id, int AltM, double VyMs,
                                            double? HeadingDeg, double? TurnRateDeg,
@@ -542,7 +573,9 @@ internal sealed class DataLink : IDisposable
                                         double? xn, double? yn, double? targetBankDeg,
                                         LinkRole role = LinkRole.Unknown,
                                         int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
-                                        int leadId = 0)
+                                        int leadId = 0,
+                                        double? anchorXn = null, double? anchorYn = null,
+                                        bool? anchorFriendly = null)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         bool hasPos = xn is double && yn is double;
@@ -589,8 +622,20 @@ internal sealed class DataLink : IDisposable
                 tail += "|" + Math.Clamp(leadId, 0, 999_999);
             }
         }
+
+        // 第 13 段：队标锚点 `机场x,机场y,是否友军`。
+        // ★ 段位必须固定在第 13 段，所以前面缺的段用空段补齐 —— 解析端按位置取值，
+        //   不能靠"省掉一段"表达。老读端只认前 12 段，多一段照收。
+        if (anchorXn is double axn && anchorYn is double ayn && anchorFriendly is bool afr)
+        {
+            while (tail.AsSpan().Count('|') < 11) tail += "|";
+            tail += $"|{ToScale(axn)},{ToScale(ayn)},{(afr ? 1 : 0)}";
+        }
         return tail;
     }
+
+    /// <summary>归一化坐标转整数段。</summary>
+    private static int ToScale(double v) => (int)Math.Round(Math.Clamp(v, 0.0, 1.0) * CoordinateScale);
 
     /// <summary>归一化坐标的整数倍率：0..1 → 0..100000。</summary>
     internal const int CoordinateScale = 100_000;
@@ -657,7 +702,22 @@ internal sealed class DataLink : IDisposable
                                          out double? xn, out double? yn, out double? targetBankDeg,
                                          out LinkRole role, out int slot, out WingState wing, out int errM,
                                          out int leadId)
+        => TryParsePayload(text, out selfId, out altM, out vyMs, out turnRateDeg, out headingDeg,
+                           out xn, out yn, out targetBankDeg, out role, out slot, out wing, out errM,
+                           out leadId, out _);
+
+    /// <summary>
+    /// 解析一行报文（含第 13 段队标锚点）。
+    /// <para><paramref name="anchor"/> 为 null 表示对方没发这一段（老版本），或这一段坏了 ——
+    /// 两种情况都按「校验不了」处理，不因此丢包。</para>
+    /// </summary>
+    internal static bool TryParsePayload(string text, out int selfId, out int altM, out double vyMs,
+                                         out double? turnRateDeg, out double? headingDeg,
+                                         out double? xn, out double? yn, out double? targetBankDeg,
+                                         out LinkRole role, out int slot, out WingState wing, out int errM,
+                                         out int leadId, out TeamAnchor? anchor)
     {
+        anchor = null;
         targetBankDeg = null;
         role = LinkRole.Unknown;
         slot = -1;
@@ -735,6 +795,18 @@ internal sealed class DataLink : IDisposable
             && leadVal >= 0 && leadVal <= 999_999)
             leadId = leadVal;
 
+        // 队标锚点（第 13 段）：`机场x,机场y,是否友军`。任何一项不合法就整段丢弃 ——
+        // 结果只是「校验不了」，不影响高度和站位。
+        if (parts.Length >= 13)
+        {
+            var an = parts[12].Split(',');
+            if (an.Length == 3
+                && int.TryParse(an[0], out int ax) && ax >= 0 && ax <= CoordinateScale
+                && int.TryParse(an[1], out int ay) && ay >= 0 && ay <= CoordinateScale
+                && int.TryParse(an[2], out int af) && (af == 0 || af == 1))
+                anchor = new TeamAnchor(ax / (double)CoordinateScale, ay / (double)CoordinateScale, af == 1);
+        }
+
         return true;
     }
 
@@ -748,7 +820,8 @@ internal sealed class DataLink : IDisposable
                      double? xn = null, double? yn = null, double? targetBankDeg = null,
                      LinkRole role = LinkRole.Unknown,
                      int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
-                     int leadId = 0)
+                     int leadId = 0,
+                     double? anchorXn = null, double? anchorYn = null, bool? anchorFriendly = null)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -769,7 +842,8 @@ internal sealed class DataLink : IDisposable
         try
         {
             var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg,
-                                       role, slot, wing, errM, leadId);
+                                       role, slot, wing, errM, leadId,
+                                       anchorXn, anchorYn, anchorFriendly);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
@@ -844,6 +918,14 @@ internal sealed class DataLink : IDisposable
         }
     }
 
+    /// <summary>
+    /// 这一包该不该因为队标不符丢掉。
+    /// <para>没带锚点（老版本）、没接校验、比不出来 —— 都放行；只有**明确判成异队**才丢。</para>
+    /// </summary>
+    internal static bool RejectsAnchor(TeamAnchor? anchor, Func<double, double, bool, TeamVerdict>? check)
+        => anchor is TeamAnchor a && check is { } c
+           && c(a.Xn, a.Yn, a.Friendly) == TeamVerdict.Other;
+
     private void Parse(byte[] data, IPEndPoint from)
     {
         Interlocked.Increment(ref _rxCount);
@@ -866,7 +948,7 @@ internal sealed class DataLink : IDisposable
                              out double? turnRate, out double? heading,
                              out double? xn, out double? yn, out double? targetBank,
                              out LinkRole role, out int slot, out WingState wing, out int errM,
-                             out int leadId))
+                             out int leadId, out TeamAnchor? anchor))
         {
             Interlocked.Increment(ref _rxBad);
             return;
@@ -877,6 +959,18 @@ internal sealed class DataLink : IDisposable
             // 广播会回到自己这里，正常情况下这是"自己发的"。但如果收到了明显不同的高度，
             // 说明同网段另一台机器撞了同一个随机 ID —— 记下来，让上层提示。
             SelfIdConflict = true;
+            return;
+        }
+
+        // 队标校验：对方自报的机场锚点拿到本机地图里比对颜色，异队直接丢包。
+        // ★ 只丢这一包，不"封杀"来源 —— 同一台机器换了队（重新进对局）还要能再连上。
+        // ★ 已经收过的同一 ID 顺手踢掉：否则它会在表里留到 3 秒超时线，那 3 秒里
+        //   长机表和"在线节点"都还看得见一个敌人。
+        if (RejectsAnchor(anchor, TeamCheck))
+        {
+            Interlocked.Increment(ref _otherTeam);
+            LastOtherTeamTick = Environment.TickCount64;
+            lock (_lock) _nodes.Remove(id);
             return;
         }
 

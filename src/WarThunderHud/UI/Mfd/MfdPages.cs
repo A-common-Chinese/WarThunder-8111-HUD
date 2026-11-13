@@ -738,6 +738,8 @@ internal static class MfdPages
                      c.LeadMode ? "val.roleLead" : "val.roleWing"), c => c.DataLinkEnabled),
             Info("row.dataLinkState", _ => WtHud.Program.DataLinkStatusText(), c => c.DataLinkEnabled),
             Info("row.dataLinkNodes", _ => WtHud.Program.DataLinkNodeText(), c => c.DataLinkEnabled),
+            // 异队过滤：机场锚点颜色对不上就丢包。数字一直是 0 说明网段里只有自己人
+            Info("row.dataLinkTeam", _ => WtHud.Program.DataLinkTeamText(), c => c.DataLinkEnabled),
             // 僚机自报的站位：谁掉队、掉多少。长机 HUD 也有同一份，这行用于复盘
             Info("row.dataLinkWings", _ => WtHud.Program.DataLinkWingText(), c => c.DataLinkEnabled),
             Info("row.dataLinkPort", _ => "48017 / UDP"),

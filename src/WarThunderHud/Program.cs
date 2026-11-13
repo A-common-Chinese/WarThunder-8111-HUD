@@ -603,6 +603,53 @@ public static class Program
                 WtHud.Telemetry.DataLink.LinkRole.Wing, -1, WtHud.Telemetry.DataLink.WingState.Unknown, 0,
                 555001).Split('|').Length == 10);
 
+        // ---- 队标锚点（第 13 段）：机场坐标 + 我方视角的友军标志 ----
+        var pAnchor = WtHud.Telemetry.DataLink.BuildPayload(
+            7, 3000, 0, 90, 0, 0.5, 0.5, null,
+            WtHud.Telemetry.DataLink.LinkRole.Lead, -1,
+            WtHud.Telemetry.DataLink.WingState.Unknown, 0, 0,
+            0.25, 0.75, true);
+        Check("anchor is always the 13th field", pAnchor.Split('|').Length == 13);
+        Check("anchor round-trips",
+            WtHud.Telemetry.DataLink.TryParsePayload(pAnchor, out _, out _, out _, out _, out _,
+                                                     out _, out _, out _, out _,
+                                                     out _, out _, out _, out _, out var anchorOut)
+            && anchorOut is { } an
+            && Math.Abs(an.Xn - 0.25) < 1e-4 && Math.Abs(an.Yn - 0.75) < 1e-4 && an.Friendly);
+        Check("packet without an anchor leaves it null",
+            WtHud.Telemetry.DataLink.TryParsePayload(pLeadId, out _, out _, out _, out _, out _,
+                                                     out _, out _, out _, out _,
+                                                     out _, out _, out _, out _, out var noAnchor)
+            && noAnchor is null);
+
+        // ---- 队标校验：同一座机场，两队看到相反的颜色 ----
+        var airfields = new[]
+        {
+            new WtHud.Telemetry.MapPoint(0.20, 0.20, true, 0),
+            new WtHud.Telemetry.MapPoint(0.80, 0.80, false, 0),
+        };
+        Check("team check accepts the same side",
+            VerifyTeam(airfields, 0.20, 0.20, true) == WtHud.Telemetry.DataLink.TeamVerdict.Same);
+        Check("team check rejects the other side",
+            VerifyTeam(airfields, 0.20, 0.20, false) == WtHud.Telemetry.DataLink.TeamVerdict.Other);
+        Check("team check ignores a far-off anchor",
+            VerifyTeam(airfields, 0.50, 0.50, true) == WtHud.Telemetry.DataLink.TeamVerdict.Unknown);
+        Check("team check with no airfields is unknown",
+            VerifyTeam(Array.Empty<WtHud.Telemetry.MapPoint>(), 0.2, 0.2, true)
+            == WtHud.Telemetry.DataLink.TeamVerdict.Unknown);
+
+        // 丢包决策：只有明确判成异队才丢，老包/不可判一律放行
+        var anchorSame = new WtHud.Telemetry.DataLink.TeamAnchor(0.2, 0.2, true);
+        var anchorOther = new WtHud.Telemetry.DataLink.TeamAnchor(0.8, 0.8, true);
+        Check("anchor for the same side is kept",
+            !WtHud.Telemetry.DataLink.RejectsAnchor(anchorSame, (x, y, f) => VerifyTeam(airfields, x, y, f)));
+        Check("anchor for the other side is dropped",
+            WtHud.Telemetry.DataLink.RejectsAnchor(anchorOther, (x, y, f) => VerifyTeam(airfields, x, y, f)));
+        Check("packet without an anchor is never dropped",
+            !WtHud.Telemetry.DataLink.RejectsAnchor(null, (_, _, _) => WtHud.Telemetry.DataLink.TeamVerdict.Other));
+        Check("no checker means no filtering",
+            !WtHud.Telemetry.DataLink.RejectsAnchor(anchorOther, null));
+
         // ---- 站位状态判定：与状态机脱离 MAINTAIN 同一条线 ----
         var wc = new HudConfig { FormationDropPct = 30, FormationAlignDeg = 5 };
         Check("200 m over a 400 m slot is behind",
@@ -2151,6 +2198,8 @@ public static class Program
                 Console.WriteLine($"data link: assigned node id {cfg.DataLinkId} (saved to hud-config.json)");
             }
             dataLink = new WtHud.Telemetry.DataLink(cfg.DataLinkId);
+            // 收到包就拿本机地图的机场表比对队标；比不出来（刚进图）放行，不同队直接丢
+            dataLink.TeamCheck = VerifyTeamAnchor;
             dataLink.Start();
             Console.WriteLine($"data link: on, node id {cfg.DataLinkId}, udp {WtHud.Telemetry.DataLink.Port}" +
                               (dataLink.Listening ? "" : "  ** BIND FAILED - port busy or blocked **"));
@@ -2803,10 +2852,25 @@ public static class Program
             // 那时发不带坐标的 6 段报文 —— 对方至少还能拿到高度，只是配不上对。
             double? dlXn = null, dlYn = null;
             if (mapData.Self is { } dlSelf) { dlXn = dlSelf.X; dlYn = dlSelf.Y; }
+            // 接收线程做队标校验时要读这张表：写一个快照引用过去，读端不会看到半张表
+            Volatile.Write(ref _linkMapSnapshot, mapData);
+
+            // 队标锚点：离自己最近的机场在哪、在**我**眼里算不算友军。
+            // 对方拿同一对坐标去自己的机场表里比颜色，就知道是不是同一队。
+            double? anchorXn = null, anchorYn = null;
+            bool? anchorFriendly = null;
+            if (mapData.Self is { } anchorSelf
+                && TryNearestAirfield(mapData.Airfields, anchorSelf.X, anchorSelf.Y, out var anchorField))
+            {
+                anchorXn = anchorField.X;
+                anchorYn = anchorField.Y;
+                anchorFriendly = anchorField.Friendly;
+            }
             dataLink?.Send(snap.ElapsedSeconds, (int)Math.Round(snap.AltM), snap.VyMs, ownHdg, ownTurnRateDeg,
                            dlXn, dlYn, TurnAssistBroadcastBank(cfg), SelfLinkRole(cfg),
                            selfWingSlot, selfWingState, selfWingErrM,
-                           EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId));
+                           EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId),
+                           anchorXn, anchorYn, anchorFriendly);
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -4545,6 +4609,57 @@ public static class Program
         };
     }
 
+    // ---- 队标校验（机场锚点）----
+    // 双方在同一条数据链上广播，谁都可能收到另一队的包。机场是固定的、两队看到的颜色相反，
+    // 所以「你离哪座机场最近」这个问题在两边各有唯一答案：答案不同 = 不是一队。
+
+    /// <summary>接收线程读的地图快照；主循环每帧写一次。</summary>
+    private static WtHud.Telemetry.MapData? _linkMapSnapshot;
+
+    /// <summary>数据链的队标校验入口（挂给 <c>DataLink.TeamCheck</c>）。</summary>
+    internal static WtHud.Telemetry.DataLink.TeamVerdict VerifyTeamAnchor(
+        double anchorXn, double anchorYn, bool senderFriendly)
+    {
+        var map = Volatile.Read(ref _linkMapSnapshot);
+        return VerifyTeam(map?.Airfields, anchorXn, anchorYn, senderFriendly);
+    }
+
+    /// <summary>
+    /// 拿本机机场表比对对方自报的锚点：同一座机场，两队看到的颜色相反。
+    /// <para>比不出来（机场表空、坐标对不上任何机场）返回 Unknown —— **放行**，不因此断链：
+    /// 刚进图时 map_obj 还没给出机场，那时每条都是 Unknown，断链会让人以为功能坏了。</para>
+    /// </summary>
+    internal static WtHud.Telemetry.DataLink.TeamVerdict VerifyTeam(
+        IReadOnlyList<WtHud.Telemetry.MapPoint>? fields,
+        double anchorXn, double anchorYn, bool senderFriendly)
+    {
+        if (fields is null || fields.Count == 0)
+            return WtHud.Telemetry.DataLink.TeamVerdict.Unknown;
+        if (!TryNearestAirfield(fields, anchorXn, anchorYn, out var field))
+            return WtHud.Telemetry.DataLink.TeamVerdict.Unknown;
+        return field.Friendly == senderFriendly
+            ? WtHud.Telemetry.DataLink.TeamVerdict.Same
+            : WtHud.Telemetry.DataLink.TeamVerdict.Other;
+    }
+
+    /// <summary>图片上离给定归一化坐标最近的机场；超出容差算「对不上」。</summary>
+    internal static bool TryNearestAirfield(IReadOnlyList<WtHud.Telemetry.MapPoint> fields,
+                                            double xn, double yn,
+                                            out WtHud.Telemetry.MapPoint best)
+    {
+        best = default;
+        double bestSq = double.MaxValue;
+        foreach (var f in fields)
+        {
+            double dx = f.X - xn, dy = f.Y - yn;
+            double d = dx * dx + dy * dy;
+            if (d < bestSq) { bestSq = d; best = f; }
+        }
+        // 容差 0.5% 地图边长：两边读同一张图、同一套归一化坐标，实际只差取整误差 1e-5，
+        // 留余量只为防不同帧的刷新抖动。
+        return bestSq <= 0.005 * 0.005;
+    }
+
     /// <summary>僚机的显示名：有编号就叫 W1/W2，没有就用节点号。</summary>
     internal static string WingLabel(WtHud.Telemetry.DataLink.LinkNode n)
         => n.Slot >= 0 ? "W" + (n.Slot + 1).ToString() : "#" + n.Id.ToString();
@@ -5190,6 +5305,22 @@ public static class Program
             parts.Add($"#{n.Id}{role} {n.AltM}m {n.AgeMs / 1000.0:0.0}s");
         }
         return string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// 异队过滤的现状：因为机场队标不符被丢掉多少包、最后一次是什么时候。
+    /// <para>一直是「无」说明网段里只有自己人；出现数字说明收到了另一队的包 ——
+    /// 这时候才需要确认是不是有人误进了同一个 VPN。</para>
+    /// </summary>
+    public static string DataLinkTeamText()
+    {
+        var link = dataLink;
+        if (link == null) return "-";
+        long n = link.OtherTeamDropped;
+        if (n == 0) return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.teamNone");
+        int ago = (int)Math.Round((Environment.TickCount64 - link.LastOtherTeamTick) / 1000.0);
+        return string.Format(WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.teamFiltered"),
+                             n, Math.Max(0, ago));
     }
 
     /// <summary>对端地址的现状（面板上单独一行显示）：broadcast / 2 target(s) / 1 ok / 1 bad。</summary>
