@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 43,
+  "_version": 44,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -487,6 +487,10 @@
   "row.dataLinkRole": {
     "zh": "本机在编队里的角色，由「长机模式」推导：开着 = 长机，关着 = 僚机。这个值会写进每一包报文的第 10 段，僚机端靠它认出谁是长机（不用再猜「最近活跃的那个」）。两台都开长机模式属于配置错误，对方会看到两个 role=1 并标「歧义」。",
     "en": "This machine's role in the formation, derived from LEAD MODE: on = lead, off = wing. The value rides in the 10th field of every packet so wingmen can identify the lead instead of guessing \"the most recently active node\". Two machines both in lead mode is a misconfiguration: the receiver sees two role=1 nodes and flags it as ambiguous."
+  },
+  "row.fMapOnly": {
+    "zh": "只跟地图可见的友军，**默认开**。开着：数据链认出了长机，但地图上没有这架友机（全真 1 km 外不显示友机图标）时，不给水平引导，提示「长机不在图上」。关掉：允许只用报文里的坐标继续引导，能超过 1 km —— 报文 4 Hz，1000 km/h 时位置差 70 m，越远角度越毛。判定用的是距离 + 相对方位（容差 500 m / 25°），不是逐帧比坐标：两边采样时刻不同，硬比会一直对不上。",
+    "en": "Follow only wingmen the map actually shows. On by default: if the link identifies a lead but no friendly on the map matches it (simulator battles hide friendlies beyond ~1 km), lateral guidance is withheld and the HUD says LEAD NOT ON MAP. Off: guidance runs on the reported coordinates alone and can exceed 1 km - the packet is 4 Hz, so at 1000 km/h the position is 70 m stale and bearings get noisy with range. Matching uses range and relative bearing (500 m / 25 deg tolerance) rather than comparing coordinates, because the two sources sample at different times."
   },
   "row.dataLinkLeadId": {
     "zh": "手动指定长机：填对方的节点 ID，0 = 自动。★ 本机「长机模式」开着时这一项被强制忽略并显示 0 —— 自己就是长机，再认一个长机会让僚机端看到两个自称长机的节点。自动顺序是「手填 ID → 唯一自称长机的节点 → 场上只有一个节点 → 最近活跃」。三方以上编队、或两台都开了长机模式时自动会分不清，这一行就是强制手段。★ 填了就必须真能收到这个 ID，否则僚机侧会一直显示认不出长机——这是有意的，宁可明说，也不拿别人的高度顶替。",

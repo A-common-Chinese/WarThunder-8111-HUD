@@ -25,7 +25,9 @@ internal readonly record struct FormationTarget(
     FormationSource Source,
     bool HasHorizontal,
     double RangeM,
-    double RelBearingDeg);
+    double RelBearingDeg,
+    // 「只跟地图可见」把它挡下来的：位置有，但地图上没显示这架友机（全真 1 km 外）。
+    bool LeadHidden = false);
 
 /// <summary>
 /// 两条编队路径的唯一分叉点。
@@ -76,5 +78,25 @@ internal static class FormationResolver
         if (deg > 180.0) deg -= 360.0;
         if (deg <= -180.0) deg += 360.0;
         return deg;
+    }
+
+    /// <summary>
+    /// 地图上是不是真的显示着这架友机。
+    /// <para>判据用距离 + 相对方位，不是坐标：地图给的是相对量，链路给的是坐标，
+    /// 两边采样时刻不同（链路 4 Hz、地图更慢），拿坐标硬比会一直对不上。</para>
+    /// <para>容差 500 m / 25°：1000 km/h 时 4 Hz 就漂 70 m，地图再慢一拍能到两三百米；
+    /// 500 m 既容得下延迟，也不至于把 1.2 km 外的长机认成 400 m 处那架僚机。</para>
+    /// </summary>
+    public static bool VisibleOnMap(IReadOnlyList<FriendlyContact> friendlies,
+                                    double rangeM, double relBearingDeg,
+                                    double rangeTolM = 500.0, double bearingTolDeg = 25.0)
+    {
+        foreach (var f in friendlies)
+        {
+            if (Math.Abs(f.RangeM - rangeM) > rangeTolM) continue;
+            if (Math.Abs(Normalize(f.RelBearingDeg - relBearingDeg)) > bearingTolDeg) continue;
+            return true;
+        }
+        return false;
     }
 }

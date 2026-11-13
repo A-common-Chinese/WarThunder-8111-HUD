@@ -718,6 +718,18 @@ public static class Program
             tMap.Source == FormationSource.Map && tMap.HasHorizontal
             && tMap.RangeM == 400 && tMap.RelBearingDeg == 12);
 
+        // ---- 只跟地图可见：地图上没有这架友机就不给水平引导 ----
+        var mapFr = new List<WtHud.Hud.FriendlyContact> { new(10, 400, "Fighter") };
+        Check("map visibility matches range and bearing",
+            WtHud.Hud.FormationResolver.VisibleOnMap(mapFr, 430, 12));
+        Check("map visibility rejects an unshown lead",
+            !WtHud.Hud.FormationResolver.VisibleOnMap(mapFr, 1200, 12));
+        Check("map visibility rejects an empty list",
+            !WtHud.Hud.FormationResolver.VisibleOnMap(
+                Array.Empty<WtHud.Hud.FriendlyContact>(), 400, 10));
+        Check("map visibility tolerance is bounded",
+            !WtHud.Hud.FormationResolver.VisibleOnMap(mapFr, 400, 40));
+
         // ---- 长机僚机表：按槽位排序、含「数据错误」行、状态词带数字 ----
         var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
             0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
@@ -3725,7 +3737,8 @@ public static class Program
                     opt.Guide = null;
                     opt.TargetHeadingDeg = null;
                     ClearSelfWingReport(cfg.FormationSlot);   // 没有水平量就没有站位误差，别发上一帧的残留
-                    opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "formation.noSelfPos");
+                    opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                        target.LeadHidden ? "formation.leadHidden" : "formation.noSelfPos");
                 }
                 else
                 {
@@ -4500,7 +4513,16 @@ public static class Program
         {
             byLink = FormationResolver.ByLink(leadNode, map.Self?.X, map.Self?.Y,
                                               sizeX, sizeY, cfg.MapYFlip, navHeading);
-            if (byLink.HasHorizontal) return byLink;
+            if (byLink.HasHorizontal)
+            {
+                // 「只跟地图可见」（默认开）：地图上没显示这架友机，就当没看见。
+                // 全真 1 km 外不给友机图标，这一条会把超距的链路位置挡回去 ——
+                // 关掉之后才允许纯报文位置，可以超过 1 km。
+                if (cfg.FormationMapOnly
+                    && !FormationResolver.VisibleOnMap(opt.Friendlies, byLink.RangeM, byLink.RelBearingDeg))
+                    return byLink with { HasHorizontal = false, LeadHidden = true };
+                return byLink;
+            }
         }
 
         // 链路认得长机、但对方报文没带坐标（它自己 map_obj 空）——这时退回地图友机：

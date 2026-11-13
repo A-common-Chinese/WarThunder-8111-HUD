@@ -283,6 +283,14 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationFarRangeM")] public double FormationFarRangeM { get; set; }
 
+    /// <summary>
+    /// 只跟地图上**看得见**的友军，默认开。
+    /// <para>数据链报文里有对方自报的坐标，纯靠它可以在全真里超过 1 km 继续引导 ——
+    /// 但那等于绕开游戏的可见性规则，而且报文位置本身有延迟（4 Hz）。
+    /// 开着：地图上没有这架友机就不给水平引导；关掉：允许用报文坐标，可超 1 km。</para>
+    /// </summary>
+    [JsonPropertyName("formationMapOnly")] public bool FormationMapOnly { get; set; } = true;
+
     // ---- 状态机与保持死区（2026-11-11 从代码常量改成配置项） ----
 
     /// <summary>

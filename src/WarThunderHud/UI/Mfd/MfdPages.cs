@@ -602,6 +602,9 @@ internal static class MfdPages
             Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },
                    1, 0, 999999, ""),
+            // 只跟地图可见：默认开 = 地图上没显示这架友机就不给水平引导（全真 1 km 外不显示）
+            Toggle("row.fMapOnly", c => c.FormationMapOnly, (c, v) => c.FormationMapOnly = v,
+                   c => !c.LeadMode),
             // 填了跟一行只读状态：ID 抄错了、对方还没开，当场能看出来 —— 不然飞行员只会看到
             // 「找不到长机」，分不清是填错还是对面没起来。
             Info("row.dataLinkLeadState", c => WtHud.Program.DataLinkLeadStateText(c),
