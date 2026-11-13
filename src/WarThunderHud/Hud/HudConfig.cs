@@ -257,6 +257,14 @@ public sealed class HudConfig
     public double? LegacyFormationRangeM { get; set; }
 
     /// <summary>
+    /// 垂直优先（两阶段）：高度没到位时**只给爬升率**，圈 / 航向 / 距离 / 油门全关。
+    /// **默认关**（0.4.24 起）。
+    /// <para>关着的时候爬升阶段照样给全套横向引导 —— 只有距离、不知道往哪转，飞行员反馈更难受。
+    /// 打开它回到「先爬高度、别分心」的老行为，适合大高度差同时还要修位置的时候。</para>
+    /// </summary>
+    [JsonPropertyName("formationVerticalFirst")] public bool FormationVerticalFirst { get; set; }
+
+    /// <summary>
     /// 垂直引导的「算到位」门槛（米）。默认 30：不到这个误差就按「高度一致」显示，不再给升降建议。
     /// </summary>
     [JsonPropertyName("formationVertGateM")] public double FormationVertGateM { get; set; } = 30;

@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 39,
+  "_version": 40,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -624,16 +624,20 @@
     "zh": "站位高度（米，正 = 比长机高）。默认 0。任何队形都读这一项：垂直引导瞄准的就是它，改完标签立刻变回自定义。梯队预设会逐级抬高 25 m、菱形后位高 30 m，都是通过这一项写进去的。",
     "en": "Station altitude in metres (positive = above the lead). Default 0. Every shape reads this value and vertical guidance aims at it; editing it drops the label back to CUSTOM. The echelon preset steps 25 m per slot and the diamond rear slot sits 30 m high by writing this value."
   },
+  "row.fVertFirst": {
+    "zh": "只显示爬升率（严格两阶段）。打开后，高度差超过「高度到位门槛」时屏幕上**只留一条爬升率**，引导圈 / 航向 / 距离 / 油门全部不画；爬进门槛后横向引导才开始。**默认关** —— 只给距离、不告诉你往哪转，多数人觉得更难受。关着的时候爬升阶段照常给全套横向引导。",
+    "en": "Climb rate only (strict two-stage). When on, an altitude error beyond the gate leaves just a climb rate on screen - no circle, heading, range or throttle - until the gate is met. Off by default: showing distance without telling you where to turn felt worse in practice. With it off, the climb stage gets the full lateral guidance."
+  },
   "row.fVertGate": {
-    "zh": "两阶段的分界线（米），默认 30。★ 编队未完成时，高度差超过它就是「爬升阶段」：**横向引导完全不出现**（没有引导圈、没有转向指令、没有距离和速度），屏幕上只留一条爬升率；爬进门槛后横向引导才开始。退出用 60% 门槛（18 m）做迟滞，避免在边界反复切换。",
-    "en": "The line between the two stages, default 30 m. While the formation is not yet set, an altitude error beyond it means the climb stage: all lateral guidance disappears (no circle, no turn cue, no range, no speed) and only a climb rate is shown. Lateral guidance starts once inside the gate; it exits at 60% of it (18 m) for hysteresis."
+    "zh": "高度到位门槛（米），默认 30。**只有打开「只显示爬升率」时才决定显示**：编队未完成且高度差超过它，横向引导全关；爬进门槛后横向才开始。退出用 60% 门槛（18 m）做迟滞，避免在边界反复切换。没开那个开关时，这一项只影响「高度一致」的判定。",
+    "en": "Altitude gate in metres, default 30. It only governs the display when CLIMB RATE ONLY is on: while the formation is not set and the error exceeds it, lateral guidance is suppressed; it resumes inside the gate. Exit uses 60% of the gate (18 m) for hysteresis. With the switch off, this value only decides when the altitude reads as matched."
   },
   "row.fVertMax": {
     "zh": "爬升率建议的上限（m/s），默认 10。爬升由飞行员自己完成，辅助只给速率；不限幅的话差 300 m 会算出 45 m/s，飞机做不到。仿真里 120 m 偏差在 10 m/s 限幅下 17.5 s 收完。",
     "en": "Cap on the suggested climb rate, default 10 m/s. The pilot flies the climb; the HUD only supplies the rate. Uncapped, a 300 m error asks for 45 m/s. In simulation a 120 m error settles in 17.5 s at this cap."
   },
   "row.fFarRange": {
-    "zh": "爬升阶段（高度还没到位）要不要显示距离行，单位米，**默认 0 = 任何距离都显示**。**-1 = 什么都不显示**（严格两阶段，屏幕上只有一条爬升率）；正数 = 只有超过这个距离才显示。它只多给一行距离，引导圈 / 转向 / 油门仍然等高度到位才开始。",
-    "en": "Whether the climb stage (altitude gate not met) shows the range line, in metres. Default 0, which shows it at any distance. -1 hides it entirely (strict two-stage: only a climb rate on screen); a positive value shows it only beyond that range. Only the range is revealed - circle, turn cue and throttle still wait for the altitude gate."
+    "zh": "只在「只显示爬升率」打开时有效：那种模式下横向全关，这一项决定要不要补一行距离。单位米，**默认 0 = 任何距离都显示**；**-1 = 什么都不显示**；正数 = 只有超过这个距离才显示。没开「只显示爬升率」时这一行是灰的 —— 正常模式本来就有距离。",
+    "en": "Only used when CLIMB RATE ONLY is on: that mode hides all lateral guidance, and this decides whether a range line is added back. Metres, default 0 (show at any distance); -1 hides it entirely; a positive value shows it only beyond that range. Greyed out otherwise, since normal mode already shows the range."
   }
 }

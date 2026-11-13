@@ -749,6 +749,12 @@ public static class Program
         Check("zero gate shows the range at any distance",
             RevealRangeWhileClimbing(1, 0) && RevealRangeWhileClimbing(99999, 0));
         Check("negative gate hides the range", !RevealRangeWhileClimbing(99999, -1));
+        // 「只显示爬升率」默认关：爬升阶段照常给全套横向引导
+        Check("climb-rate-only is off by default", !new HudConfig().FormationVerticalFirst);
+        Check("climb-rate-only needs the switch",
+            !VerticalFirstActive(new HudConfig(), true)
+            && VerticalFirstActive(new HudConfig { FormationVerticalFirst = true }, true)
+            && !VerticalFirstActive(new HudConfig { FormationVerticalFirst = true }, false));
 
         Check("turn assist off stays off",
             AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
@@ -3614,20 +3620,21 @@ public static class Program
                     double altShown = SmoothVertError(altErr, snap.ElapsedSeconds);
                     double vertGate = Math.Max(5, cfg.FormationVertGateM);
 
-                    // ---- 两阶段（2026-11-12）----
-                    // 阶段 1：先爬到目标高度层，这段时间**只给爬升率**，横向引导完全不画
-                    //         （圈、航向、距离、油门都不出）—— 爬升很简单，飞行员自己完成。
-                    // 阶段 2：高度进入门槛后才开始横向引导。
+                    // ---- 垂直两阶段（2026-11-12；0.4.24 起默认关）----
+                    // 开「只显示爬升率」时：高度没到位就只给爬升率，横向引导完全不画
+                    // （圈、航向、距离、油门都不出），爬进门槛后才开始横向。
+                    // ★ 默认关：飞行员反馈「只给距离、不知道往哪转」更难受，所以默认全套一起显示。
                     // 迟滞：进入用门槛，退出用 60% 门槛，否则在门槛附近会一小时里反复切换。
                     bool altStage = formationStage == FormationStage.Converge
                                     && (altitudeStageActive
                                         ? Math.Abs(altErr) > vertGate * 0.6
                                         : Math.Abs(altErr) > vertGate);
                     altitudeStageActive = altStage;
+                    bool vertFirst = VerticalFirstActive(cfg, altStage);
 
-                    // 远距例外：爬升阶段本来只给爬升率，但被甩开 2 km 还不给距离就是坑。
-                    // 只放距离行，不放圈/航向/油门 —— 横向仍然等高度到位再开始。
-                    double? farRange = altStage && RevealRangeWhileClimbing(leadRange, cfg.FormationFarRangeM)
+                    // 「爬升显示距离」只在只显示爬升率时才有意义：横向全关时补一行距离。
+                    // 默认模式本来就有距离行，这一项不参与。
+                    double? farRange = vertFirst && RevealRangeWhileClimbing(leadRange, cfg.FormationFarRangeM)
                         ? leadRange
                         : null;
 
@@ -3635,7 +3642,7 @@ public static class Program
                         altShown,
                         VerticalRateCmd(altShown, cfg.FormationVertMaxMs),
                         opt.AltDiffStale,
-                        altStage,
+                        vertFirst,
                         Math.Abs(altErr) <= vertGate,
                         farRange,
                         farRange is null ? null : slot.RangeM);
@@ -4588,6 +4595,14 @@ public static class Program
         vertSmooth = SmoothStep(vertSmooth, raw, dt, VerticalDisplayTauS);
         return vertSmooth;
     }
+
+    /// <summary>
+    /// 这次是不是要「只显示爬升率」：开关打开**且**确实在爬升阶段。
+    /// <para>抽出来是为了让「默认关」这条能被自检盯住 —— 它决定爬升阶段给不给横向引导，
+    /// 改错了不会报错，只会让飞行员觉得「怎么什么都没了」。</para>
+    /// </summary>
+    internal static bool VerticalFirstActive(HudConfig cfg, bool altitudeStage)
+        => cfg.FormationVerticalFirst && altitudeStage;
 
     /// <summary>
     /// 爬升阶段是否因为「离得太远」而破例放出距离行。
