@@ -116,7 +116,7 @@ internal sealed class MfdItemsPage : MfdPageBase
             {
                 Slot = cell / 2,                    // 行
                 Column = cell % 2,                  // 列
-                Text = () => L10n.Get(LangScope.Screen, item.LabelKey),
+                Text = () => item.Label,
                 Target = MfdCommand.Of("items.select", idx.ToString(), InputSource.RealButton),
                 ActivateBy = new[] { "SIDE" + cell },
                 // 联动（B 只在 A 开启时可用）：不可用时 Command() 直接返回 null，
@@ -177,7 +177,7 @@ internal sealed class MfdItemsPage : MfdPageBase
                                                     : enabled ? MfdTheme.Green : MfdTheme.Muted);
                     g.FillRectangle(mark, x, y + rowH / 2 - 5 * s, 9 * s, 9 * s);
                 }
-                g.DrawString(L10n.Get(LangScope.Screen, item.LabelKey), label, fgBrush,
+                g.DrawString(item.Label, label, fgBrush,
                              x + 16 * s, y + 4 * s, StringFormat.GenericTypographic);
                 var val = enabled ? item.ValueText(cfg)
                                   : item.DisabledText?.Invoke(cfg) ?? item.ValueText(cfg);

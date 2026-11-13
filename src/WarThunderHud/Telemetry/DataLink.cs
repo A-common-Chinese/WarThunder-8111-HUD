@@ -54,7 +54,9 @@ internal sealed class DataLink : IDisposable
     public const int Port = 48017;
     /// <summary>3 秒收不到就当对方掉线。公开出来是因为上层要区分「掉线」和「数据错误」。</summary>
     internal const int StaleMs = 3000;          // 3 秒收不到就当对方掉线
-    private const double SendIntervalS = 0.25; // 4 Hz，高度是慢变量，够用
+    /// <summary>发包间隔（秒）。4 Hz，高度是慢变量，够用。
+    /// <para>★ 公开是因为面板要拿它算「判定余量」：一包间隔 × 速度 = 位置的平均滞后。</para>
+    public const double SendIntervalS = 0.25;
     private const int MaxPayloadBytes = 256;   // 一行文本撑死 60 字节，超了必是畸形包
 
     /// <summary>本机在编队里的角色。写到报文的第 10 段，僚机端靠它认出谁是长机。</summary>

@@ -802,6 +802,107 @@ public static class Program
         Check("map latch releases after the hold window",
             !WtHud.Hud.FormationResolver.LatchVisible(false, ref latch, ref hitAt, 1.9));
 
+        // ---- 角色行：读推导值、只在角色变化时套队形 ----
+        var roleCfg = new HudConfig { LeadMode = false, FormationSlot = 0 };
+        roleCfg.FormationAssist = false;
+        roleCfg.DataLinkEnabled = false;
+        WtHud.UI.Mfd.MfdPages.SetRole(roleCfg, 2);                 // 僚机#2
+        Check("role writes wing identity",
+            !roleCfg.LeadMode && roleCfg.FormationSlot == 1);
+        Check("role arms assist and the link",
+            roleCfg.FormationAssist && roleCfg.DataLinkEnabled);
+        Check("role applies the echelon preset for that number",
+            roleCfg.FormationShape == WtHud.Hud.FormationGeometry.ShapeEchelon
+            && Math.Abs(roleCfg.FormationWingOffsetM - 500) < 0.1
+            && Math.Abs(roleCfg.FormationStationBackM - 900) < 0.1
+            && Math.Abs(roleCfg.FormationUpM - 50) < 0.1);
+
+        // 手改过之后重复点同一个角色：不能把手改重置成标准队形
+        roleCfg.FormationWingOffsetM = 640;
+        roleCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
+        WtHud.UI.Mfd.MfdPages.SetRole(roleCfg, 2);
+        Check("re-selecting the same role keeps hand edits",
+            Math.Abs(roleCfg.FormationWingOffsetM - 640) < 0.1);
+
+        // 切长机：身份变了，但队形一个数都不许动
+        double backBefore = roleCfg.FormationStationBackM;
+        WtHud.UI.Mfd.MfdPages.SetRole(roleCfg, 0);
+        Check("lead role leaves the formation alone",
+            roleCfg.LeadMode && Math.Abs(roleCfg.FormationStationBackM - backBefore) < 0.1
+            && Math.Abs(roleCfg.FormationWingOffsetM - 640) < 0.1);
+        Check("role index reads back from the two fields",
+            WtHud.UI.Mfd.MfdPages.RoleIndex(roleCfg) == 0);
+
+        // ---- 判定余量：门槛 vs 链路一拍 ----
+        var marginCfg = new HudConfig
+        {
+            FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom,
+            FormationStationBackM = 400, FormationDonePct = 10,
+        };
+        string marginOk = WtHud.UI.Mfd.MfdPages.MarginText(marginCfg, 35);
+        Check("margin shows the band and the latency",
+            marginOk.Contains("40 m") && marginOk.Contains("35 m") && !marginOk.EndsWith("✗"));
+        Check("margin flags latency beyond the band",
+            WtHud.UI.Mfd.MfdPages.MarginText(marginCfg, 55).EndsWith("✗"));
+
+        // ---- 配置包：往返、清洗、应用范围 ----
+        var profCfg = new HudConfig
+        {
+            LeadMode = false, FormationSlot = 1,
+            FormationShape = WtHud.Hud.FormationGeometry.ShapeEchelon,
+            FormationWingSide = -1, FormationWingOffsetM = 500, FormationStationBackM = 900,
+            FormationUpM = 50, FormationDonePct = 8, FormationDoneHoldS = 2.5, FormationDropPct = 25,
+            FormationMapOnly = false, FormationAssist = true, LeadIcon = "Fighter",
+        };
+        var prof = WtHud.Hud.FormationProfile.From(profCfg);
+        string packet = WtHud.Telemetry.ConfigPacket.Build(prof, "48213", "老|阳", "f-4s", 0.31, 0.42, true);
+        Check("config packet round-trips",
+            WtHud.Telemetry.ConfigPacket.TryParse(packet, out var parsed)
+            && parsed.NodeId == "48213" && parsed.Name == "老阳"      // 分隔符被清洗
+            && parsed.Type == "f-4s"
+            && parsed.Profile.Slot == 1 && parsed.Profile.Side == -1
+            && Math.Abs(parsed.Profile.BackM - 900) < 0.001
+            && Math.Abs(parsed.Profile.DonePct - 8) < 0.001
+            && parsed.Profile.MapOnly == false && parsed.Profile.Assist
+            && parsed.Profile.LeadIcon == "Fighter"
+            && parsed.HasAnchor && Math.Abs(parsed.AnchorXn - 0.31) < 1e-6 && parsed.AnchorFriendly);
+        Check("config packet rejects junk",
+            !WtHud.Telemetry.ConfigPacket.TryParse("hello", out _)
+            && !WtHud.Telemetry.ConfigPacket.TryParse("CFG0|1|2", out _));
+
+        var applyTo = new HudConfig
+        {
+            FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom,
+            FormationWingOffsetM = 150, FormationStationBackM = 400,
+        };
+        parsed.Profile.ApplyTo(applyTo);
+        Check("config apply writes the numbers",
+            Math.Abs(applyTo.FormationWingOffsetM - 500) < 0.001
+            && Math.Abs(applyTo.FormationStationBackM - 900) < 0.001
+            && applyTo.FormationShape == WtHud.Hud.FormationGeometry.ShapeEchelon
+            && applyTo.FormationSlot == 1);
+        Check("config apply snapshots the old custom values",
+            applyTo.FormationCustomSet && Math.Abs(applyTo.FormationCustomWingOffsetM - 150) < 0.001);
+        Check("config diff is empty right after applying",
+            WtHud.UI.Mfd.MfdPages.DiffKeys(applyTo, parsed.Profile).Count == 0);
+
+        // 长机发来的配置不能把僚机的编号顶掉
+        var leadProf = parsed.Profile with { SenderLead = true, Slot = 0 };
+        var wingCfg = new HudConfig
+        {
+            FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom, FormationSlot = 2,
+        };
+        leadProf.ApplyTo(wingCfg);
+        Check("a lead profile does not overwrite the wing number", wingCfg.FormationSlot == 2);
+
+        // 配置包走独立端口：对端地址只说明机器，端口固定 48018
+        var cfgTargets = WtHud.Telemetry.ConfigLink.ResolveTargets(new[] { "192.168.1.7:48017" });
+        Check("config targets switch to the config port",
+            cfgTargets.Length == 1 && cfgTargets[0].Port == WtHud.Telemetry.ConfigPacket.Port);
+        var cfgBroadcast = WtHud.Telemetry.ConfigLink.ResolveTargets(Array.Empty<string>());
+        Check("config targets fall back to broadcast",
+            cfgBroadcast.Length == 1 && cfgBroadcast[0].Address.Equals(System.Net.IPAddress.Broadcast));
+
         // ---- 长机僚机表：按槽位排序、含「数据错误」行、状态词带数字 ----
         var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
             0, WtHud.Telemetry.DataLink.LinkRole.Wing, 5,
@@ -2297,6 +2398,15 @@ public static class Program
             ApplyDataLinkPeers(cfg);
         }
 
+        // 配置互传：独立端口 48018，**不看数据链开关**。
+        // 新装机第一件事就是收别人的配置，那时候链路通常还没开 —— 这里要是也 follow 开关，
+        // 「上线就能飞」的第一步就卡死了。
+        configLink = new WtHud.Telemetry.ConfigLink();
+        configLink.TeamCheck = VerifyTeamAnchor;
+        configLink.Start();
+        Console.WriteLine($"config link: udp {WtHud.Telemetry.ConfigPacket.Port}" +
+                          (configLink.Listening ? "" : "  ** BIND FAILED - port busy or blocked **"));
+
         WtHud.UI.L10n.LoadFromConfig(cfg.Language);
         var envPanel = Environment.GetEnvironmentVariable("WT_MFD_PANEL");
         if (!string.IsNullOrEmpty(envPanel)) WtHud.UI.L10n.Panel = envPanel == "zh" ? WtHud.UI.Lang.Zh : WtHud.UI.Lang.En;
@@ -3313,6 +3423,7 @@ public static class Program
         }
 
         cursorStop = true;
+        configLink?.Dispose();
         telemetry.Dispose();
         Console.WriteLine($"overlay closed after {frames} frames");
         return 0;
@@ -3426,6 +3537,9 @@ public static class Program
         // 「长机机型」只在数据链不生效时用来筛友机：
         //   数据链能收到节点 → 靠位置配对认长机（同机型多机也分得开）；
         //   纯 8111 单机 → 只能按机型过滤，否则最近的友机会被当成长机。
+        CurrentTasKmh = snap.TasKmh;
+        if (!string.IsNullOrEmpty(snap.VehicleType)) CurrentVehicleType = snap.VehicleType;
+
         bool linkUsable = cfg.DataLinkEnabled && dataLink != null && dataLink.NodeCount > 0;
         map.LeadIconFilter = EffectiveLeadIcon(linkUsable, cfg.LeadIcon);
         opt.FormationAssist = formationOn;
@@ -3433,6 +3547,7 @@ public static class Program
         opt.Friendlies.Clear();
         friendPos.Clear();          // 与 opt.Friendlies 同序的归一化位置，配对用
         opt.Guide = null;
+        opt.FormationLinkText = "";
         opt.LeadStatusMain = "";
         opt.LeadStatusSub = "";
         opt.LeadWingRows.Clear();
@@ -3735,6 +3850,7 @@ public static class Program
             {
                 double leadRange = target.RangeM;
                 double leadBearing = target.RelBearingDeg;
+                UpdateFormationLinkLine(cfg, opt, dataLink, target, snap.ElapsedSeconds);
 
                 // 长机航向 / 转向率：油门前馈和转弯提前量共用，放在 PID 之前算好。
                 // 有数据链就用长机自报值，没有就用本机航向近似 / 本地估算（实测差别不大）。
@@ -4578,6 +4694,41 @@ public static class Program
     }
 
     /// <summary>
+    /// 僚机侧的「连的是哪个长机」。收敛阶段常驻，进入保持 3 s 后淡出，掉队立刻回来。
+    /// <para>只有在**真的认出长机**时才画；认不出来由 <see cref="HudOptions.FormationHint"/> 说原因，
+    /// 两者同一格，不会再叠一行字。</para>
+    /// </summary>
+    private static void UpdateFormationLinkLine(HudConfig cfg, HudOptions opt,
+                                                WtHud.Telemetry.DataLink? link,
+                                                FormationTarget target, double nowS)
+    {
+        if (cfg.LeadMode || target.Source == FormationSource.None) return;
+
+        // 收敛/掉队阶段：每帧把隐藏时刻往后推，等于常驻；进入保持后停止推，3 s 后自己消失
+        if (formationStage != FormationStage.Maintain) linkLineHideAt = nowS + 3.0;
+        if (nowS >= linkLineHideAt) return;
+
+        if (link != null && link.TryGetLeadNode(out var lead))
+        {
+            double age = lead.AgeMs / 1000.0;
+            opt.FormationLinkText = string.Format(
+                WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "formation.linkLead"),
+                lead.Id, age.ToString("0.0"));
+            // 超过一秒的包说明对方刚卡过/快掉线了，先变黄，别等彻底断了才说
+            opt.FormationLinkOk = lead.AgeMs < 1000;
+            return;
+        }
+
+        // 没有链路但地图上有友军：明确写清「现在跟的是地图上最近的那架」，
+        // 否则飞行员会以为链路在起作用，回头查为什么距离数不对。
+        if (target.Source == FormationSource.Map)
+        {
+            opt.FormationLinkText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "formation.linkMapOnly");
+            opt.FormationLinkOk = false;
+        }
+    }
+
+    /// <summary>
     /// 选编队目标。**这是两条路径唯一的分叉点**：
     /// 有链路就按节点认（不依赖 map_obj 的友机列表），否则退回最近的友机。
     /// 之后 PID、两阶段、垂直引导、绘制全部共用一份。
@@ -5008,6 +5159,8 @@ public static class Program
     private enum FormationStage { Converge, Maintain, Disabled }
 
     private static FormationStage formationStage = FormationStage.Converge;
+    /// <summary>连接行隐藏时刻。收敛阶段每帧往后推 3 s（等于常驻），进保持后就不再推、3 s 后消失。</summary>
+    private static double linkLineHideAt = double.NegativeInfinity;
     private static double formationStageSince;
     private static double formationDoneSince = -1;   // 进入 40 m 的起始时刻（要持续 2 s 才算完成）
     private static double formationNoticeUntil = -1; // 「编队完成 / 已解除」提示显示到什么时候
@@ -5223,6 +5376,141 @@ public static class Program
 
     // 数据链（交换高度 + 航向/转向率）。null = 没开。
     private static WtHud.Telemetry.DataLink? dataLink;
+
+    // 配置互传（48018）。null = 没起来（端口被占或被防火墙挡）。
+    private static WtHud.Telemetry.ConfigLink? configLink;
+
+    /// <summary>最近一帧的 TAS（面板「判定余量」用：延迟 = 速度 × 一个发包间隔）。</summary>
+    internal static double CurrentTasKmh { get; private set; }
+
+    /// <summary>当前机型（配置包 type 段 + 确认页显示）。</summary>
+    internal static string CurrentVehicleType { get; private set; } = "";
+
+    /// <summary>
+    /// 链路一拍能飞多远 —— 这就是链路位置的平均滞后量，也是「判定余量」要对比的东西。
+    /// <para>500 km/h 时 34.7 m；122 m 的站位上，这已经超过 12 m 的完成门槛。</para>
+    /// </summary>
+    internal static double FormationLatencyM
+        => CurrentTasKmh / 3.6 * WtHud.Telemetry.DataLink.SendIntervalS;
+
+    /// <summary>上一次配置动作的提示（面板 toast 用）。</summary>
+    internal static string? ConfigActionText { get; private set; }
+
+    private static string CfgText(string key)
+        => WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, key);
+
+    internal static WtHud.Telemetry.ConfigOffer[] ConfigOffers()
+        => configLink?.Offers ?? Array.Empty<WtHud.Telemetry.ConfigOffer>();
+
+    internal static string ConfigInboxSummary()
+    {
+        int n = ConfigOffers().Length;
+        return n == 0 ? CfgText("cfg.none") : string.Format(CfgText("cfg.have"), n);
+    }
+
+    /// <summary>广播本机编队配置：连发 3 包，对方在 48018 上收。</summary>
+    internal static void BroadcastFormationConfig(HudConfig cfg)
+    {
+        if (configLink is null)
+        {
+            ConfigActionText = CfgText("cfg.noChannel");
+            return;
+        }
+
+        bool hasAnchor = CurrentAnchor(out double ax, out double ay, out bool af);
+        var profile = WtHud.Hud.FormationProfile.From(cfg);
+        int targets = configLink.Send(profile,
+            cfg.DataLinkId > 0 ? cfg.DataLinkId.ToString(System.Globalization.CultureInfo.InvariantCulture) : "",
+            cfg.PlayerName ?? "", CurrentVehicleType,
+            hasAnchor ? ax : null, hasAnchor ? ay : null, af,
+            cfg.DataLinkPeers);
+
+        ConfigActionText = targets == 0
+            ? CfgText("cfg.noChannel")
+            : string.Format(CfgText("cfg.broadcast"), targets);
+    }
+
+    /// <summary>导出到文件：**不带机场锚点** —— 换一局/换张图之后锚点必然对不上，带上只会互相挡。</summary>
+    internal static void ExportFormationConfig(HudConfig cfg)
+    {
+        using var dlg = new SaveFileDialog
+        {
+            Title = CfgText("cfg.exportTitle"),
+            Filter = "WtHud formation (*.wtcfg)|*.wtcfg|All files (*.*)|*.*",
+            FileName = "wt-hud-formation.wtcfg",
+        };
+        if (dlg.ShowDialog(Form.ActiveForm) != DialogResult.OK) return;
+
+        try
+        {
+            var profile = WtHud.Hud.FormationProfile.From(cfg);
+            string line = WtHud.Telemetry.ConfigPacket.Build(profile,
+                cfg.DataLinkId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                cfg.PlayerName ?? "", CurrentVehicleType, null, null, false);
+            File.WriteAllText(dlg.FileName, line, new System.Text.UTF8Encoding(false));
+            ConfigActionText = string.Format(CfgText("cfg.exported"), Path.GetFileName(dlg.FileName));
+        }
+        catch (Exception ex)
+        {
+            ConfigActionText = string.Format(CfgText("cfg.failed"), ex.Message);
+        }
+    }
+
+    /// <summary>从文件导入：用户挑了文件本身就是确认，直接写进草稿（仍需 SAVE）。</summary>
+    internal static void ImportFormationConfigFile(HudConfig cfg)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = CfgText("cfg.importTitle"),
+            Filter = "WtHud formation (*.wtcfg)|*.wtcfg|All files (*.*)|*.*",
+            CheckFileExists = true,
+        };
+        if (dlg.ShowDialog(Form.ActiveForm) != DialogResult.OK) return;
+
+        try
+        {
+            if (!WtHud.Telemetry.ConfigPacket.TryParse(File.ReadAllText(dlg.FileName), out var offer))
+            {
+                ConfigActionText = CfgText("cfg.badPacket");
+                return;
+            }
+            ApplyConfigOffer(cfg, offer);
+        }
+        catch (Exception ex)
+        {
+            ConfigActionText = string.Format(CfgText("cfg.failed"), ex.Message);
+        }
+    }
+
+    /// <summary>把收到的配置写进草稿。★ 只是草稿：磁盘仍要 SAVE，否则别人一发就改了你在飞的设置。</summary>
+    internal static void ApplyConfigOffer(HudConfig cfg, WtHud.Telemetry.ConfigOffer offer)
+    {
+        try
+        {
+            offer.Profile.ApplyTo(cfg);
+            ConfigActionText = CfgText("cfg.imported");
+        }
+        catch (Exception ex)
+        {
+            ConfigActionText = string.Format(CfgText("cfg.failed"), ex.Message);
+        }
+    }
+
+    /// <summary>本机机场锚点：与状态包同一套（最近的**友军**机场，两边永远可见）。</summary>
+    internal static bool CurrentAnchor(out double xn, out double yn, out bool friendly)
+    {
+        xn = yn = 0;
+        friendly = false;
+        var map = Volatile.Read(ref _linkMapSnapshot);
+        if (map?.Self is not { } self) return false;
+        if (!TryNearestAirfield(map.Airfields, self.X, self.Y, out var field,
+                                friendlyOnly: true, tolerance: 2.0))
+            return false;
+        xn = field.X;
+        yn = field.Y;
+        friendly = field.Friendly;
+        return true;
+    }
     private static double lastFlaps = -1;
     private static long lastFlapsChangeTicks;
     private static double lastAirbrake = -1;
@@ -5367,13 +5655,26 @@ public static class Program
     public static string DataLinkLeadStateText(HudConfig cfg)
     {
         if (cfg.LeadMode) return "-";                       // 长机自己不需要跟谁
-        int want = cfg.DataLinkLeadId;
-        if (want <= 0) return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadAuto");
+        string zh(string key) => WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, key);
+
         var link = dataLink;
-        if (link != null)
-            foreach (var n in link.Snapshot())
-                if (n.Id == want) return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadOnline");
-        return WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "val.leadOffline");
+        if (link is null) return zh("cfg.noChannel");
+
+        // 自动模式以前只说「未指定」，等于什么都没说；现在直接报认出的是谁、多久前的一包。
+        if (link.TryGetLeadNode(out var lead, out var source, out bool ambiguous))
+        {
+            string age = (lead.AgeMs / 1000.0).ToString("0.0");
+            string src = source switch
+            {
+                WtHud.Telemetry.DataLink.LeadSource.ByConfig => zh("val.srcConfig"),
+                WtHud.Telemetry.DataLink.LeadSource.ByRole => zh("val.srcRole"),
+                WtHud.Telemetry.DataLink.LeadSource.SingleNode => zh("val.srcSingle"),
+                _ => zh("val.srcRecent"),
+            };
+            return $"#{lead.Id} · {src} · {age}s" + (ambiguous ? " ?" : "");
+        }
+
+        return cfg.DataLinkLeadId > 0 ? zh("val.leadOffline") : zh("val.leadAuto");
     }
 
     /// <summary>长机是怎么认出来的，面板上一行字。</summary>
@@ -5885,7 +6186,10 @@ public static class Program
             else if (view == "wing") { form.PreviewOpen(1, 6); form.PreviewSub(6); }    // 编队 → 僚机参数
             else if (view == "lead") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 长机参数
             else if (view == "dl") { form.PreviewOpen(2, 0); }                          // 数据链模块
-            else if (view == "dlstatus") { form.PreviewOpen(2, 4); form.PreviewSub(4); } // 数据链 → 链路状态
+            // 数据链页从 0.4.29 起第 1 行插了「地图判定」，链路状态顺延到 5；配置传递在 6
+            else if (view == "dlstatus") { form.PreviewOpen(2, 5); form.PreviewSub(5); } // 数据链 → 链路状态
+            else if (view == "cfg") { form.PreviewOpen(2, 6); form.PreviewSub(6); }       // 数据链 → 配置传递
+            else if (view == "cfginbox") { form.PreviewOpen(2, 6); form.PreviewSub(6); form.PreviewSub(1); }
             else if (view == "diag") { form.PreviewOpen(9, 0); }                        // 诊断（顶部数据链入口）
             else if (view == "diagstatus") { form.PreviewOpen(9, 0); form.PreviewSub(0); }  // 诊断 → 链路状态（同一个页）
             else if (view == "dlfromform") { form.PreviewOpen(1, 8); form.PreviewSub(8); }  // 编队 → 数据链（跳板）

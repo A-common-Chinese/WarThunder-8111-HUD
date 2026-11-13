@@ -172,6 +172,16 @@ public sealed class HudOptions
     public string FormationHint { get; set; } = "";
 
     /// <summary>
+    /// 僚机侧的「连的是哪个长机」：<c>长机 #48213 · 0.2s</c>。空 = 不画。
+    /// <para>与 <see cref="FormationHint"/> 同一格（互斥）：有错误提示时先显示错误，
+    /// 正常状态才显示这一行 —— 两者同时出现只会互相压字。</para>
+    /// </summary>
+    public string FormationLinkText { get; set; } = "";
+
+    /// <summary>连接行是不是「新鲜」：true 用正常色，false 用警示色（包龄久 / 退化为地图友机）。</summary>
+    public bool FormationLinkOk { get; set; } = true;
+
+    /// <summary>
     /// 系统希望我飞的航向（度）。航向带上画一个琥珀色三角指过去。
     /// <para>nil = 不画（没有目标航向时，比如长机开了全向跟随）。</para>
     /// </summary>
@@ -930,6 +940,16 @@ public sealed class HudGeometry
                 Kind = HudPrimKind.Text, Text = _opt.FormationHint, Align = HudAlign.Center,
                 FontSize = font * 1.15, Color = _opt.WarnColor,
                 // 7.6°：FPM 最高到 6.7°（迎角上限 6 + 半径 0.7），再往上会贴字
+                Points = { (cx, cy + 7.6 * pxDeg) },
+            });
+        }
+        else if (_opt.FormationLinkText.Length > 0)
+        {
+            // 连上谁了：正常状态的一行确认，不抢眼（比错误提示小一号）
+            prims.Add(new HudPrim
+            {
+                Kind = HudPrimKind.Text, Text = _opt.FormationLinkText, Align = HudAlign.Center,
+                FontSize = font * 1.0, Color = _opt.FormationLinkOk ? _opt.Color : _opt.WarnColor,
                 Points = { (cx, cy + 7.6 * pxDeg) },
             });
         }

@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 49,
+  "_version": 50,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -369,8 +369,8 @@
     "en": "Lateral offset in metres. Default 150 (left -150, right +150). With SIDE set to TRAIL it is multiplied by zero and has no effect. Together with the back distance it gives the slant range sqrt(lateral^2 + back^2)."
   },
   "row.fStationBack": {
-    "zh": "后距（米）。默认 400。**所有侧位共用这一个后距** —— 侧位只决定左右，不再各自带一套后距。改它，斜距和到位判定一起跟着变。",
-    "en": "Back distance in metres. Default 400. All sides share this one value: SIDE only chooses left/right now. Changing it moves the slant range and the on-station band together."
+    "zh": "侧位僚机的纵向后距。默认 400 m，它是斜距的另一半（见「侧位横偏」）。下限 200 m：再近的话 4 Hz 链路的滞后就超过完成门槛（看上面「判定余量」那行），那个距离本来也是目视编队更稳。",
+    "en": "Longitudinal distance for the side slots. Default 400 m; it is the other half of the slant range. The minimum is 200 m: any closer and the 4 Hz link lag exceeds the completion band (see MARGIN above) - at that range visual formation is steadier anyway."
   },
   "row.fDoneHold": {
     "zh": "进入门槛需要持续多久才算完成。默认 2 s。防止只是掠过站位就报完成（长机会据此开始机动）。",
@@ -647,5 +647,77 @@
   "row.fFarRange": {
     "zh": "只在「两段式」下有效：那种模式横向全关，这一项决定要不要补一行距离。单位米，**默认 0 = 任何距离都显示**；**-1 = 什么都不显示**；正数 = 只有超过这个距离才显示。一段式下这一行是灰的 —— 正常模式本来就有距离。",
     "en": "Only used in TWO-STAGE: that mode hides all lateral guidance, and this decides whether a range line is added back. Metres, default 0 (show at any distance); -1 hides it entirely; a positive value shows it only beyond that range. Greyed out otherwise, since normal mode already shows the range."
+  },
+  "row.role": {
+    "zh": "你是长机还是僚机。选「僚机#N」会一次写好四件事：辅助开关打开、数据链打开、编号=N、队形套上「梯队·N」。★ 只在角色真的变化时才套队形 —— 手调过数值再回来点同一个角色，数值不会被重置。切长机不动队形。",
+    "en": "Whether you fly lead or wing. Picking WING #N sets four things at once: assist on, data link on, number = N, and the ECHELON preset for that number. The preset is applied only when the role actually changes, so hand-tuned numbers survive re-selecting the same role. Switching to LEAD leaves the formation untouched."
+  },
+  "row.fMargin": {
+    "zh": "完成门槛（斜距 × 完成误差%）对链路一拍的位移（当前速度 × 0.25 s）。延迟超过门槛时带 ✗ —— 这个距离上「到位」基本等不到，那是数据精度不够，不是你没飞好。500 km/h 时一拍约 35 m。",
+    "en": "The completion band (slant x done %) against the distance flown between two link packets (speed x 0.25 s). A ✗ means latency already exceeds the band, so ON STATION will practically never trigger there - data resolution, not your flying. About 35 m per packet at 500 km/h."
+  },
+  "page.cfgMenu": {
+    "zh": "编队配置的四种走法：广播给局域网里的队友、接收别人发来的、导出成文件、从文件导入。只传编队相关（队形数值、门槛、地图判定、机型过滤），不传按键和显示。",
+    "en": "Four ways to move a formation config: broadcast, receive, export to a file, import from a file. Only formation settings travel - never key bindings or display options."
+  },
+  "row.cfgBroadcast": {
+    "zh": "把本机编队配置广播出去（连发 3 包，端口 48018）。对方不用先开数据链也能收到，这就是「新装机上线就能飞」的入口。队标不符的包会被对方丢掉。",
+    "en": "Broadcasts this aircraft's formation config (three packets on port 48018). The peer receives it even with the data link off, which is the point. Packets from the other team are dropped by the receiver."
+  },
+  "row.cfgInbox": {
+    "zh": "收到的配置包（最多 4 个来源，30 秒过期）。值列出现「● N 个配置」就说明有人发了。进去先看是谁发的，确认页会列出会改你哪些项。",
+    "en": "Config packets received (up to four senders, expiring after 30 s). A bullet in the value column means someone sent one; the next pages show who and what would change."
+  },
+  "row.cfgExport": {
+    "zh": "把编队配置存成 .wtcfg 文件，发给队友或留档。文件里不带机场锚点 —— 换局换图之后必然对不上。",
+    "en": "Saves the formation config as a .wtcfg for a teammate or for reference. No airfield anchor is written: it would never match after a different match or map."
+  },
+  "row.cfgImport": {
+    "zh": "从 .wtcfg 读入编队配置。挑文件这个动作本身就是确认，直接写进草稿 —— 仍然要按 SAVE 才落盘。",
+    "en": "Reads a .wtcfg. Picking the file is the confirmation, so it goes into the draft - SAVE still writes it out."
+  },
+  "page.cfgInbox": {
+    "zh": "配置来源列表：每行是一台发过配置的机器，右侧是节点号（带 ? 说明队标没法校验）。进去才看得到会改什么。",
+    "en": "Senders that broadcast a config. The right column is the node id; a ? means the anchor could not be verified."
+  },
+  "page.cfgConfirm": {
+    "zh": "确认导入：对方是谁、什么机型、什么角色、队形是什么，以及会改你哪些项。确认后只改草稿，按 SAVE 才落盘。",
+    "en": "Confirmation: who sent it, their type and role, the formation, and which of your rows would change. Confirming edits the draft only - SAVE writes it out."
+  },
+  "row.cfgFrom": {
+    "zh": "发送方昵称（没填就显示 IP）与机型。",
+    "en": "Sender name (IP when unset) and type."
+  },
+  "row.cfgNode": {
+    "zh": "节点号、收到多久之前，以及队标是否通过校验（? = 没带锚点或本机还没读到机场表）。",
+    "en": "Node id, age, and whether the team anchor matched (? = no anchor, or no airfield table yet)."
+  },
+  "row.cfgRole": {
+    "zh": "对方当时是长机还是几号僚机。长机发来的配置不会改你的编号。",
+    "en": "Whether the sender was lead or wing N. A lead's config never overwrites your number."
+  },
+  "row.cfgForm": {
+    "zh": "对方当时的队形：预设名 · 编号 · 斜距。",
+    "en": "Their formation: preset · number · slant."
+  },
+  "row.cfgDiff": {
+    "zh": "导入会改你哪些项（只列名字，最多 4 个）。「与当前一致」说明这份配置你已经有了。",
+    "en": "Which of your rows the import would change (names only, four at most)."
+  },
+  "row.cfgApply": {
+    "zh": "把这份配置写进草稿。按 SAVE 才落盘，返回则丢弃。",
+    "en": "Writes this config into the draft. SAVE persists it; going back discards."
+  },
+  "row.cfgOffer": {
+    "zh": "一个收到的配置包。",
+    "en": "One received config packet."
+  },
+  "row.cfgNone": {
+    "zh": "现在没有可用的配置包。让对方在「配置传递」里按「广播本机配置」。",
+    "en": "No config packet available. Ask the sender to press BROADCAST."
+  },
+  "row.dataLinkLeadState": {
+    "zh": "僚机现在跟的是谁：节点号 · 怎么认出来的（手填 / 角色 / 唯一节点 / 最近）· 多久前的一包。「无」= 数据链没开或还没收到任何节点。",
+    "en": "Who the wing is following: node id, how it was picked (by id, by role, only node, most recent) and the age of the last packet. NONE means the link is off or nothing has arrived yet."
   }
 }

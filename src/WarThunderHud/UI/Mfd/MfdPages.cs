@@ -27,6 +27,16 @@ internal enum ItemKind
 internal sealed class MfdItem
 {
     public required string LabelKey { get; init; }
+
+    /// <summary>
+    /// 动态行的原文标签（例如「老阳 · F-4S」这种 L10n 里不可能有的文本）。
+    /// <para>null = 查 L10n；设置后优先用它。只影响显示，帮助页仍按 <see cref="LabelKey"/> 查。</para>
+    /// </summary>
+    public string? LabelText { get; init; }
+
+    /// <summary>渲染用的标签文本。</summary>
+    public string Label => LabelText ?? L10n.Get(LangScope.Screen, LabelKey);
+
     public ItemKind Kind { get; init; } = ItemKind.Toggle;
     public double Step { get; init; } = 1;
     public double Min { get; init; } = double.MinValue;
@@ -458,6 +468,53 @@ internal static class MfdPages
         c.SnapshotCustom();
     }
 
+    /// <summary>角色序号：0 = 长机，1..3 = 僚机#N。读的是现有两个字段，不新增配置项。</summary>
+    internal static int RoleIndex(HudConfig c)
+        => c.LeadMode ? 0 : Math.Clamp(c.FormationSlot, 0, 2) + 1;
+
+    /// <summary>角色身份串（只用来判断「值有没有变」）。</summary>
+    private static string RoleId(HudConfig c)
+        => c.LeadMode ? "L" : "W" + (Math.Clamp(c.FormationSlot, 0, 2) + 1);
+
+    /// <summary>
+    /// 选角色：一次把「能飞」需要的东西配好。
+    /// <para>★ 只在角色值真的变化时才动队形，否则「手调完数值、回面板看一眼角色」
+    /// 就会把微调重置成标准队形 —— 那是最容易被骂的一种体贴。</para>
+    /// <para>长机不碰队形：长机没有站位，把它的编号套给谁都会撞位。</para>
+    /// </summary>
+    internal static void SetRole(HudConfig c, int index)
+    {
+        string before = RoleId(c);
+        if (index <= 0)
+        {
+            c.LeadMode = true;
+        }
+        else
+        {
+            c.LeadMode = false;
+            c.FormationSlot = Math.Clamp(index - 1, 0, 2);
+        }
+        if (RoleId(c) == before) return;      // 同一个角色：只写字段，不动其它
+
+        c.FormationAssist = true;
+        c.FormationOnly = true;
+        c.DataLinkEnabled = true;
+        if (index > 0) ApplyShapePreset(c, WtHud.Hud.FormationGeometry.ShapeEchelon);
+    }
+
+    /// <summary>
+    /// 判定余量（只读）：完成门槛 vs 链路一拍能飞多远。
+    /// <para>这一行存在的唯一目的，是让人在做不到的距离上当场看出「做不到」，
+    /// 而不是飞起来才发现到位提示永远等不到。</para>
+    /// </summary>
+    internal static string MarginText(HudConfig c, double latencyM)
+    {
+        double band = WtHud.Hud.FormationGeometry.Station(c).RangeM
+                      * Math.Max(1.0, c.FormationDonePct) / 100.0;
+        if (latencyM <= 0.5) return $"门槛 {band:0} m / 延迟 —";
+        return $"门槛 {band:0} m / 延迟 {latencyM:0} m" + (latencyM > band ? " ✗" : "");
+    }
+
     /// <summary>
     /// 队形（三级页）。
     /// <para>★ 0.4.21 起「预设」只是填数按钮：真正的几何永远是下面四行数值；改任一行立刻落回自定义。
@@ -499,15 +556,19 @@ internal static class MfdPages
             // 派生几何：只读，改下面任何一项立刻跟着变
             Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Station(c).RangeM:0} m"),
             Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Station(c).SideM:0} m"),
-            Info("row.fBackM", c => $"{WtHud.Hud.FormationGeometry.Station(c).BackM:0} m"),
+            // 判定余量：完成门槛（斜距 × 完成%）对链路一拍的位移（TAS × 0.25 s）。
+            // ★ 原来这里是「纵向」只读行，它和后距输入行是同一个数，占着一格没有新信息。
+            Info("row.fMargin", c => MarginText(c, WtHud.Program.FormationLatencyM)),
             // 四个真正的输入：改哪个都立刻落回自定义
             Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
                  c => c.FormationWingSide + 1,
                  (c, i) => { c.FormationWingSide = i - 1; ValuesEdited(c); }),
             Number("row.fWingOffset", c => c.FormationWingOffsetM,
                    (c, v) => { c.FormationWingOffsetM = v; ValuesEdited(c); }, 10, 0, 600, "m"),
+            // 下限 200 m：再近的话 4 Hz 链路的滞后就超过完成门槛（见上面那行判定余量），
+            // 那个距离上本来也是目视编队更稳。
             Number("row.fStationBack", c => c.FormationStationBackM,
-                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 100, 1500, "m"),
+                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 200, 1500, "m"),
             Number("row.fUpM", c => c.FormationUpM,
                    (c, v) => { c.FormationUpM = v; ValuesEdited(c); }, 5, -200, 200, "m"),
         },
@@ -552,10 +613,12 @@ internal static class MfdPages
         Items =
         {
             // ---- 角色与开关：两边都要看的留在这一页 ----
+            // 角色第 1 行：换角色是"我要飞哪种位子"的第一件事，比辅助开关更靠前
+            Enum("row.role", new[] { "opt.roleLead", "opt.roleWing1", "opt.roleWing2", "opt.roleWing3" },
+                 RoleIndex,
+                 (c, i) => SetRole(c, i)),
             Toggle("row.formation", c => c.FormationAssist,
                    (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
-            // 长机模式决定你是哪一边，所以它必须在通用页：藏进角色页会让人找不到怎么换角色
-            Toggle("row.leadMode", c => c.LeadMode, (c, v) => c.LeadMode = v),
 
             // 队形几何（形状 + 槽位 + 三个距离）：两边必须用同一个队形，放通用页
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
@@ -720,8 +783,147 @@ internal static class MfdPages
             // 名字一样的两行「链路状态」，一行能按一行不能按，是最容易点错的那种设计。
             Submenu("row.dlStatusMenu", () => DataLinkStatusPage("page.datalink"),
                     _ => WtHud.Program.DataLinkStatusText()),
+            // 配置传递：广播/接收/导出/导入。紧挨状态入口 —— 联调时这两件事总是一起做
+            Submenu("row.cfgMenu", () => ConfigMenuPage()),
         },
     };
+
+    /// <summary>
+    /// 配置传递（三级页）：广播 / 接收 / 导出 / 从文件导入。
+    /// <para>★ 广播走独立端口 48018：对方连数据链都没开也能收到，这正是「新装机上线就能飞」要走的路。</para>
+    /// </summary>
+    private static MfdPage ConfigMenuPage() => new()
+    {
+        Key = "datalink.cfg",
+        TitleKey = "page.cfgMenu",
+        ParentTitleKey = "page.datalink",
+        MenuKey = "page.cfgMenu",
+        MenuHintKey = "menu.hint.cfgMenu",
+        Items =
+        {
+            ActionDirectMsg("row.cfgBroadcast", c => WtHud.Program.BroadcastFormationConfig(c),
+                            _ => WtHud.Program.ConfigActionText),
+            // 这一行既是入口也是状态：收到包时摘要会写「● 1 个配置」，不用进去才知道
+            Submenu("row.cfgInbox", ConfigInboxPage, _ => WtHud.Program.ConfigInboxSummary()),
+            ActionDirectMsg("row.cfgExport", c => WtHud.Program.ExportFormationConfig(c),
+                            _ => WtHud.Program.ConfigActionText),
+            ActionDirectMsg("row.cfgImport", c => WtHud.Program.ImportFormationConfigFile(c),
+                            _ => WtHud.Program.ConfigActionText),
+        },
+    };
+
+    /// <summary>收到的配置包列表。每行是「谁发来的」，进去才是确认页。</summary>
+    private static MfdPage ConfigInboxPage()
+    {
+        var page = new MfdPage
+        {
+            Key = "datalink.cfg.inbox",
+            TitleKey = "page.cfgInbox",
+            ParentTitleKey = "page.cfgMenu",
+            MenuKey = "page.cfgInbox",
+            MenuHintKey = "menu.hint.cfgInbox",
+        };
+
+        var offers = WtHud.Program.ConfigOffers();
+        if (offers.Length == 0)
+        {
+            // 空列表必须说明「为什么空」，否则用户会以为是入口坏了
+            page.Items.Add(Info("row.cfgNone", _ => ""));
+            return page;
+        }
+
+        foreach (var offer in offers)
+        {
+            var captured = offer;       // 闭包捕获：每行绑定自己那份
+            page.Items.Add(new MfdItem
+            {
+                LabelKey = "row.cfgOffer",
+                LabelText = captured.Label,
+                Kind = ItemKind.Submenu,
+                SubPage = () => ConfigConfirmPage(captured),
+                SubSummary = _ => (captured.NodeId.Length > 0 ? "#" + captured.NodeId : captured.Address)
+                                  + (captured.TeamVerified ? "" : " · ?"),
+            });
+        }
+        return page;
+    }
+
+    /// <summary>确认页：谁发的、他是什么角色、会改你哪些项。确认后才写进草稿，落盘仍靠 SAVE。</summary>
+    private static MfdPage ConfigConfirmPage(WtHud.Telemetry.ConfigOffer offer) => new()
+    {
+        Key = "datalink.cfg.confirm." + offer.Address + "." + offer.NodeId,
+        TitleKey = "page.cfgConfirm",
+        ParentTitleKey = "page.cfgInbox",
+        MenuKey = "page.cfgConfirm",
+        MenuHintKey = "menu.hint.cfgConfirm",
+        Items =
+        {
+            Info("row.cfgFrom", _ => offer.Label
+                + (offer.Type.Length > 0 ? " · " + offer.Type : "")),
+            Info("row.cfgNode", _ => (offer.NodeId.Length > 0 ? "#" + offer.NodeId : offer.Address)
+                + " · " + offer.AgeS.ToString("0") + "s"
+                + (offer.TeamVerified ? "" : " · ?")),
+            Info("row.cfgRole", _ => offer.Profile.SenderLead
+                ? L10n.Get(LangScope.Screen, "opt.roleLead")
+                : string.Format(L10n.Get(LangScope.Screen, "opt.roleWingN"), offer.Profile.Slot + 1)),
+            Info("row.cfgForm", _ => ProfileSummary(offer.Profile)),
+            Info("row.cfgDiff", c => DiffText(c, offer.Profile)),
+            ActionDirectMsg("row.cfgApply", c => WtHud.Program.ApplyConfigOffer(c, offer),
+                            _ => WtHud.Program.ConfigActionText),
+        },
+    };
+
+    /// <summary>一份档案的队形摘要：形状 · 编号 · 斜距。</summary>
+    internal static string ProfileSummary(WtHud.Hud.FormationProfile p)
+    {
+        string shape = WtHud.Hud.FormationGeometry.IsKnownShape(p.Shape)
+            ? p.Shape : WtHud.Hud.FormationGeometry.ShapeCustom;
+        string name = L10n.Get(LangScope.Screen, "opt.shape" + char.ToUpperInvariant(shape[0]) + shape[1..]);
+        double slant = Math.Sqrt(p.LateralM * p.LateralM + p.BackM * p.BackM);
+        return name + " · " + (p.Slot + 1) + " · " + slant.ToString("0") + " m";
+    }
+
+    /// <summary>
+    /// 会改哪些项（返回 L10n 行键，便于双语与自检）。
+    /// <para>只报「名字」，不报新旧值：MFD 一行放不下两列数字，值进二级页反而更乱。</para>
+    /// </summary>
+    internal static List<string> DiffKeys(HudConfig c, WtHud.Hud.FormationProfile p)
+    {
+        var keys = new List<string>();
+        string shape = WtHud.Hud.FormationGeometry.IsKnownShape(p.Shape)
+            ? p.Shape : WtHud.Hud.FormationGeometry.ShapeCustom;
+
+        if (!p.SenderLead && Math.Clamp(p.Slot, 0, 2) != Math.Clamp(c.FormationSlot, 0, 2))
+            keys.Add("row.fSlot");
+        if (shape != c.FormationShape) keys.Add("row.fShape");
+        if (Math.Abs(p.LateralM - c.FormationWingOffsetM) > 0.5) keys.Add("row.fWingOffset");
+        if (Math.Abs(p.BackM - c.FormationStationBackM) > 0.5) keys.Add("row.fStationBack");
+        if (Math.Abs(p.UpM - c.FormationUpM) > 0.5) keys.Add("row.fUpM");
+        if (Math.Abs(p.DonePct - c.FormationDonePct) > 0.1) keys.Add("row.fDonePct");
+        if (Math.Abs(p.HoldS - c.FormationDoneHoldS) > 0.01) keys.Add("row.fDoneHold");
+        if (Math.Abs(p.DropPct - c.FormationDropPct) > 0.1) keys.Add("row.fDropPct");
+        if (p.MapOnly != c.FormationMapOnly) keys.Add("row.fMapOnly");
+        if (p.Assist != c.FormationAssist) keys.Add("row.formation");
+        if ((p.LeadIcon ?? "").Trim() != (c.LeadIcon ?? "").Trim()) keys.Add("row.leadIcon");
+        return keys;
+    }
+
+    /// <summary>
+    /// 差异文案：短名、最多 3 项，多的折成「等 N 项」。
+    /// <para>★ 不能直接用行标签（「预设队形」「侧位横偏」）：一格放不下，右对齐的长文本会从左边
+    /// 溢出去压住隔壁那一格 —— 这是 0.4.34 出图时肉眼发现的。</para>
+    /// </summary>
+    internal static string DiffText(HudConfig c, WtHud.Hud.FormationProfile p)
+    {
+        var keys = DiffKeys(c, p);
+        if (keys.Count == 0) return L10n.Get(LangScope.Screen, "cfg.diff.none");
+        // 不带「将改：」前缀：这一行的标签已经是「将改动」，前缀只会把值挤到左边压住标签
+        var shown = keys.Take(3).Select(k => L10n.Get(LangScope.Screen, "cfg.short." + k));
+        string text = string.Join(L10n.Screen == Lang.Zh ? "、" : ", ", shown);
+        if (keys.Count > 3)
+            text += string.Format(L10n.Get(LangScope.Screen, "cfg.diff.more"), keys.Count - 3);
+        return text;
+    }
 
     /// <summary>
     /// 数据链状态（三级页，**两个入口共用**）：数据链页底部一行、诊断页顶部一行。
