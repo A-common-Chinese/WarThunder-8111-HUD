@@ -319,7 +319,7 @@ public static class L10n
         ["slot.2"] = ("2", "2"),
         ["slot.3"] = ("3", "3"),
         ["hint.presetOnly"] = ("仅预设队形可改", "PRESET ONLY"),
-        ["hint.vertFirstOnly"] = ("仅「只显示爬升率」时有效", "CLIMB-RATE-ONLY MODE"),
+        ["hint.vertFirstOnly"] = ("仅爬升率模式", "CLIMB ONLY"),
         ["row.wingSide"] = ("侧位", "SIDE"),
 
         // ---- 编队调参页（僚机制导增益，平时不用动） ----
