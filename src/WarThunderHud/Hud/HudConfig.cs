@@ -531,6 +531,8 @@ public sealed class HudConfig
                 {
                     try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
                     cfg.MigrateFormation();
+                    // 迁移结果立刻落盘：否则每次启动都会重跑一遍、重写一次 .bak
+                    cfg.SaveTo(path);
                 }
                 return cfg;
             }
