@@ -6,18 +6,20 @@ namespace WtHud.Hud;
 
 /// <summary>
 /// 僚机站位相对长机的几何。横向右为正、纵向用「后退量」（站位永远在长机后方，所以是负值）。
-/// <para>★ 斜距必须逐个站位算：自定义队形三个站位的斜距都等于尾随距离（150²+370²≈400²），
-/// 但梯队/纵队/菱形的槽位斜距各不相同，速度前馈与到位判定都读这个值。</para>
+/// <para>★ 斜距逐个站位按真实几何算 —— 自定义也不例外。默认 150²+370²≈399.25，
+/// 与尾随位的 400 只差 0.19%，看上去像相等；但把横偏/后距改大之后两者就分开了，
+/// 判定必须跟着真实斜距走。</para>
 /// </summary>
-public readonly record struct FormationSlotSpec(double SideM, double BackM, double? RangeOverrideM = null,
-                                                double UpM = 0)
+public readonly record struct FormationSlotSpec(double SideM, double BackM, double UpM = 0)
 {
     /// <summary>
-    /// 斜距。具名队形按真实几何算；自定义队形沿用历史口径 —— 三个站位**共用**
-    /// 「尾随距离」这一个目标距离（150²+370²=399.25，但老代码按 400 判定）。
-    /// ★ 这条覆盖值是刻意的：改掉它会让 1G/2G 的历史仿真数据整体偏移（实测 swAt 3.2→6.0）。
+    /// 斜距（水平面内）。单纯由横偏与后距算出：<c>√(Side² + Back²)</c>。
+    /// <para>★ 曾经把自定义队形三个站位的斜距**统一覆盖成尾随距离**（400 m）。后果是
+    /// 改动横偏/后距后判定仍按 400 走：真实 500 m 的站位误差 25%，既到不了「到位」
+    /// 也报不出「掉队」，而长机那边自报的站位却是「到位」—— 两边说法会打架。
+    /// 0.4.20 起改为真实斜距，判定与面板上那行只读「斜距」永远是同一个数。</para>
     /// </summary>
-    public double RangeM => RangeOverrideM ?? Math.Sqrt(SideM * SideM + BackM * BackM);
+    public double RangeM => Math.Sqrt(SideM * SideM + BackM * BackM);
 
     /// <summary>内圈/外圈的判据：右侧 +1、左侧 −1、正后 0。原来直接用 FormationWingSide 的符号。</summary>
     public int SideSign => Math.Sign(SideM);
@@ -64,7 +66,7 @@ public static class FormationGeometry
             case ShapeEchelon:
                 // 逐架累加：第 2 架 (500, 900)，第 3 架 (750, 1350)，斜距 1030 / 1545
                 // 高度也逐级抬高 25 m：真实梯队常带阶梯，且能把视觉上的重叠分开
-                return new FormationSlotSpec(-250.0 * (i + 1), -450.0 * (i + 1), null, 25.0 * (i + 1));
+                return new FormationSlotSpec(-250.0 * (i + 1), -450.0 * (i + 1), 25.0 * (i + 1));
             case ShapeColumn:
                 return new FormationSlotSpec(0, -400.0 * (i + 1));
             case ShapeDiamond:
@@ -72,7 +74,7 @@ public static class FormationGeometry
                 return i switch
                 {
                     1 => new FormationSlotSpec(300, -400),
-                    2 => new FormationSlotSpec(0, -600, null, 30.0),
+                    2 => new FormationSlotSpec(0, -600, 30.0),
                     _ => new FormationSlotSpec(-300, -400),
                 };
             default:
@@ -87,18 +89,21 @@ public static class FormationGeometry
         Slot(cfg.FormationShape, cfg.FormationSlot, cfg);
 
     /// <summary>
-    /// 参数化之前的三个站位（尾随 / 左 / 右）。自定义队形走这条路，
-    /// 保证历史行为逐字不变 —— 仿真回归就是盯它。
+    /// 参数化之前的三个站位（尾随 / 左 / 右），自定义队形走这条路。
+    /// <para>★ 侧位的斜距不再覆盖成尾随距离，而是按 √(横偏²+后距²) 算：默认值下
+    /// 399.25 与 400 只差 0.19%（历史仿真数据的差异也在这个量级），但把横偏/后距
+    /// 改大之后，判定才会跟着真实几何走。</para>
     /// </summary>
     public static FormationSlotSpec LegacySlot(int wingSide, HudConfig cfg) =>
         wingSide == 0
-            ? new FormationSlotSpec(0, -cfg.FormationRangeM, cfg.FormationRangeM, cfg.FormationUpM)
+            ? new FormationSlotSpec(0, -cfg.FormationRangeM, cfg.FormationUpM)
             : new FormationSlotSpec(wingSide * cfg.FormationWingOffsetM, -cfg.FormationStationBackM,
-                                    cfg.FormationRangeM, cfg.FormationUpM);
+                                    cfg.FormationUpM);
 
     /// <summary>
-    /// 仿真要遍历的站位表。自定义队形仍是原来三个（尾随、左、右），保持 1G/2G 历史数据可比；
-    /// 具名队形按自己的槽位表逐个跑。
+    /// 仿真要遍历的站位表。自定义队形仍是原来三个（尾随、左、右）；具名队形按自己的槽位表逐个跑。
+    /// <para>★ 侧位斜距自 0.4.20 起按真实几何算，默认参数下比旧口径小 0.75 m（399.25 vs 400），
+    /// 与历史 1G/2G 数据对比时要把这点算进去。</para>
     /// </summary>
     public static List<(FormationSlotSpec Spec, int SideSign, string Label)> SimSlots(HudConfig cfg)
     {

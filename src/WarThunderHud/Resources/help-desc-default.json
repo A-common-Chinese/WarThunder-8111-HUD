@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 35,
+  "_version": 36,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -365,15 +365,15 @@
     "en": "Speed feed lower bound. Default 0.80. 0.50 was tried and over-braked the inner slot at 10 deg/s."
   },
   "row.fRange": {
-    "zh": "尾随站位：长机正后方的距离。默认 400 m。改大 = 队形更松、更好飞但更难看清长机；改小 = 更紧。★ 编队完成的判定是 40 m 绝对误差，站位放到 800 m 时会相对变严，建议一起放宽。",
-    "en": "Trail slot distance behind the lead. Default 400 m. Larger is a looser formation that is easier to fly; smaller is tighter. The 40 m completion check is an absolute number, so at 800 m it becomes relatively stricter."
+    "zh": "尾随站位：长机正后方的距离。默认 400 m。改大 = 队形更松、更好飞但更难看清长机；改小 = 更紧。★ 编队完成的判定是「槽位斜距的百分比」（默认 10%），400 m 时约 40 m；自定义队形的侧位斜距按 √(横偏²+后距²) 算，不再固定等于这个值。",
+    "en": "Trail slot distance behind the lead. Default 400 m. Larger is a looser formation that is easier to fly; smaller is tighter. The completion check is a percentage of the slot's slant range (10% by default, about 40 m at 400 m). Under CUSTOM the side slots use their own sqrt(lateral^2 + back^2), not this value."
   },
   "row.fWingOffset": {
-    "zh": "侧位僚机的横向偏移。默认 150 m（左僚机 −150、右僚机 +150）。与侧位后距一起决定斜距：默认 150² + 370² ≈ 400²，三个站位到长机都是 400 m，所以换侧位不用重新标定速度前馈。改了就不再相等。",
-    "en": "Lateral offset for the side slots. Default 150 m (left -150, right +150). Together with the station back distance it gives the slant range: 150^2 + 370^2 is about 400^2, so all three slots sit 400 m from the lead."
+    "zh": "侧位僚机的横向偏移。默认 150 m（左僚机 −150、右僚机 +150）。与侧位后距一起决定斜距：默认 150² + 370² → 399.25 m，和尾随位的 400 m 基本相等，换侧位不用重新标定速度前馈。改大之后斜距跟着变，到位判定也按新的真实斜距判（0.4.20 起不再固定按尾随距离）。",
+    "en": "Lateral offset for the side slots. Default 150 m (left -150, right +150). Together with the station back distance it gives the slant range: 150^2 + 370^2 gives 399.25 m, essentially the trail slot's 400 m. Change it and the slant - and therefore the on-station check - follows the real geometry (no longer pinned to the trail distance as of 0.4.20)."
   },
   "row.fStationBack": {
-    "zh": "侧位僚机的纵向后距。默认 370 m。它是斜距的另一半（见「侧位横偏」）。单独改动会让左右两翼离长机更远或更近，与尾随位的距离不再一致。",
+    "zh": "侧位僚机的纵向后距。默认 370 m。它是斜距的另一半（见「侧位横偏」）。单独改动会让左右两翼离长机更远或更近，与尾随位的距离不再一致，到位判定也会按新的斜距重新算。",
     "en": "Longitudinal distance for the side slots. Default 370 m. It is the other half of the slant range; changing it alone makes the wing slots sit further or closer than the trail slot."
   },
   "row.fDoneHold": {
@@ -553,12 +553,12 @@
     "en": "Formation shape. CUSTOM uses the three distances below to describe the slot by hand; ECHELON steps each aircraft 450 m further back and 250 m further left; COLUMN stacks them 400 m apart straight astern; DIAMOND gives left-rear / right-rear / astern. Changing shape resets the slot to 1."
   },
   "row.fSlot": {
-    "zh": "第几个位置（1 起）。同一局里多架僚机必须各选不同槽位，否则会全挤在同一个点上。自定义队形只有一个位置，这一行会变灰。",
-    "en": "Which slot (1-based). Several wingmen in one sortie must pick different slots or they will all converge on the same point. CUSTOM has a single slot, so this row greys out."
+    "zh": "第几个位置（1 起）。同一局里多架僚机必须各选不同槽位，否则会全挤在同一个点上。自定义队形的站位由下面「侧位」决定，这一行只当僚机编号用 —— 也要给三架选不同号，长机那张表才分得清 W1/W2/W3（0.4.20 起不再变灰）。",
+    "en": "Which slot (1-based). Several wingmen in one sortie must pick different slots or they will all converge on the same point. Under CUSTOM the station comes from WING SIDE below, so this row only numbers the wing - still give each aircraft a different one so the lead's table can tell W1 from W2 (no longer greyed out as of 0.4.20)."
   },
   "row.fSlant": {
-    "zh": "这个槽位到长机的斜距（水平面内），由形状与槽位算出，只读。到位判定与速度前馈都用它 —— 梯队第 2 位 515 m、第 3 位 1545 m，与尾随位的 400 m 完全不同，所以「完成误差」按百分比给才有意义。",
-    "en": "Slant range from this slot to the lead, computed from shape and slot; read-only. The completion band and the speed feedforward both use it - echelon slot 2 is 515 m and slot 3 is 1545 m, nothing like the 400 m trail slot, which is why the done band is a percentage."
+    "zh": "这个槽位到长机的斜距（水平面内），由形状与槽位算出，只读。到位判定与速度前馈都用它 —— 梯队第 2 位 1030 m、第 3 位 1545 m，与尾随位的 400 m 完全不同，所以「完成误差」按百分比给才有意义。",
+    "en": "Slant range from this slot to the lead, computed from shape and slot; read-only. The completion band and the speed feedforward both use it - echelon slot 2 is 1030 m and slot 3 is 1545 m, nothing like the 400 m trail slot, which is why the done band is a percentage."
   },
   "row.fSideM": {
     "zh": "槽位相对长机的横向偏移（右为正）。只读，由形状与槽位算出。",

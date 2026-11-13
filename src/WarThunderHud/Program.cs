@@ -292,12 +292,22 @@ public static class Program
         shapeCfg.FormationSlot = 0;
         var d1 = WtHud.Hud.FormationGeometry.Current(shapeCfg);
         Check("diamond slot1 is left side", d1.SideM == -300 && d1.SideSign == -1);
-        // 自定义：左右侧位真实斜距 399.25，但目标距离按历史口径取 400
+        // 自定义：侧位按真实斜距 √(横偏²+后距²)，不再覆盖成尾随距离
         shapeCfg.FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom;
         shapeCfg.FormationWingSide = -1;
         var leg = WtHud.Hud.FormationGeometry.Current(shapeCfg);
-        Check("custom keeps legacy target range",
-            leg.SideM == -150 && leg.BackM == -370 && Math.Abs(leg.RangeM - 400) < 0.001);
+        Check("custom side slot uses true slant",
+            leg.SideM == -150 && leg.BackM == -370 && Math.Abs(leg.RangeM - 399.25) < 0.01);
+        // 把横偏/后距改大，判定基准必须跟着变 —— 不能还停在尾随距离上
+        shapeCfg.FormationWingOffsetM = 300;
+        shapeCfg.FormationStationBackM = 400;
+        Check("custom side slot follows the geometry it is given",
+            Math.Abs(WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM - 500) < 0.001);
+        // 完成带按同一斜距的百分比算：500 m 的 10% 是 50 m
+        Check("done band scales with the custom side slant",
+            Math.Abs(FormationRangeErrorPct(550, 500) - 10) < 1e-9);
+        shapeCfg.FormationWingOffsetM = 150;
+        shapeCfg.FormationStationBackM = 370;
         shapeCfg.FormationWingSide = 0;
         Check("custom trail slot",
             Math.Abs(WtHud.Hud.FormationGeometry.Current(shapeCfg).RangeM - 400) < 0.001);

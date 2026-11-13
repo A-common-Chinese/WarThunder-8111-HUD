@@ -449,11 +449,12 @@ internal static class MfdPages
                      c.FormationShape = WtHud.Hud.FormationGeometry.ShapeIds[i];
                      c.FormationSlot = 0;
                  }),
+            // 槽位：具名队形是真正的站位；自定义下它只是「我是第几号僚机」的编号 ——
+            // 几何由下面那行「侧位」决定（FormationGeometry.LegacySlot 忽略槽位号）。
+            // ★ 自定义下也放开，否则三架僚机会全部自报 W1，长机那张表分不清谁是谁。
             Enum("row.fSlot", new[] { "slot.1", "slot.2", "slot.3" },
                  c => Math.Clamp(c.FormationSlot, 0, 2),
-                 (c, i) => c.FormationSlot = i,
-                 c => c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom,
-                 "hint.shapeCustomOnly"),
+                 (c, i) => c.FormationSlot = i),
             // 派生几何：只读，改了形状/槽位立刻跟着变，用来看「这个站位到底在哪」
             Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Current(c).RangeM:0} m"),
             Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Current(c).SideM:0} m"),
