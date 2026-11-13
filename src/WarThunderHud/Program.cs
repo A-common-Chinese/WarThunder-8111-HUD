@@ -220,6 +220,53 @@ public static class Program
         Check("blk airbrake binding H", WtHud.Input.WtControlsFile.BuildBinding(new[] { 35 }) == "H");
         Check("blk scoreboard binding CTRL+N",
             WtHud.Input.WtControlsFile.BuildBinding(new[] { 29, 49 }) == "CTRL+N");
+        // 没绑键盘键的动作也要留痕：只绑鼠标时要能和「文件里没有」区分开
+        var wtMouse = WtHud.Input.WtControlsFile.Parse("ID_AIR_BRAKE { mouseKey:i=0; }");
+        Check("blk keeps a mouse-only action as an empty entry",
+            wtMouse.TryGetValue("ID_AIR_BRAKE", out var abMouse) && abMouse.Length == 0);
+
+        // ---- 导入小结：三种结局必须说成三句不同的话 ----
+        // 背景：以前「已经是这个键位」被并进「文件里没有键位」，重复导入同一份文件就会误报。
+        var exported = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ID_AIR_BRAKE"] = new[] { 48 },                     // B
+            ["ID_MPSTATSCREEN"] = new[] { 29, 49 },              // CTRL+N
+        };
+        var imp1 = new HudConfig { AirbrakeKey = "H", ScoreboardKey = "TAB" };
+        var sum1 = WtHud.Input.WtControlsImport.Apply(imp1, exported, WtHud.UI.Lang.Zh);
+        Check("import writes both bindings",
+            imp1.AirbrakeKey == "B" && imp1.ScoreboardKey == "CTRL+N" && sum1.StartsWith("已导入"));
+
+        var imp2 = new HudConfig { AirbrakeKey = "B", ScoreboardKey = "CTRL+N" };
+        var sum2 = WtHud.Input.WtControlsImport.Apply(imp2, exported, WtHud.UI.Lang.Zh);
+        Check("re-importing the same file says no change needed",
+            sum2.StartsWith("无需修改") && !sum2.Contains("文件里没有"));
+
+        var imp3 = new HudConfig { AirbrakeKey = "H", ScoreboardKey = "TAB" };
+        var sum3 = WtHud.Input.WtControlsImport.Apply(imp3,
+            new Dictionary<string, int[]>(), WtHud.UI.Lang.Zh);
+        Check("import of a non-controls file reports zero actions",
+            sum3.Contains("0 个动作") && imp3.AirbrakeKey == "H");
+
+        var imp4 = new HudConfig { AirbrakeKey = "H", ScoreboardKey = "TAB" };
+        var sum4 = WtHud.Input.WtControlsImport.Apply(imp4,
+            new Dictionary<string, int[]>
+            {
+                ["ID_AIR_BRAKE"] = Array.Empty<int>(),
+                ["ID_MPSTATSCREEN"] = new[] { 29, 49 },
+            }, WtHud.UI.Lang.Zh);
+        Check("import reports a mouse-only airbrake and still takes the scoreboard",
+            sum4.Contains("鼠标") && imp4.AirbrakeKey == "H" && imp4.ScoreboardKey == "CTRL+N");
+
+        // 飞机和直升机两条都写了：取飞机那条，不能被后写的直升机覆盖
+        var imp5 = new HudConfig { AirbrakeKey = "H" };
+        WtHud.Input.WtControlsImport.Apply(imp5,
+            new Dictionary<string, int[]>
+            {
+                ["ID_AIR_BRAKE"] = new[] { 48 },                 // B
+                ["ID_AIR_BRAKE_HELICOPTER"] = new[] { 46 },      // C
+            }, WtHud.UI.Lang.Zh);
+        Check("airbrake takes the fixed-wing action first", imp5.AirbrakeKey == "B");
 
         // SPLASH 解析：只认「击落了」，剥掉联队/颜色标记（^DFCN^ 等）和零宽字符
         const string killLine = "^DFCN^ ACCvTARDISdevice (F/A-18A) 击\u200B落\u200B了 =FdX= The_Gho\u0161t (F-4S)";

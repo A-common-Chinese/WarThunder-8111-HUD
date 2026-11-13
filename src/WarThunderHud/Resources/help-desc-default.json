@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 47,
+  "_version": 48,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -461,8 +461,8 @@
     "en": "Fixed, not rebindable: CTRL+ALT+R toggles roll coupling between 0 and 1 (third-person to cockpit 1:1). It changes the coupling value, not the ROLL COUPLING MODE row."
   },
   "row.importWt": {
-    "zh": "从战雷导出的 controls .blk 里读减速板 / 计分板的热键，省得手填。会弹文件选择框；读完提示读到了什么，没读到通常是文件选错、或这两项在游戏里本来没绑。",
-    "en": "Reads the airbrake and scoreboard bindings out of a War Thunder controls .blk so you do not have to type them. Opens a file dialog and reports what it found; nothing found usually means the wrong file or those actions are unbound."
+    "zh": "从战雷导出的 controls .blk 读减速板 / 计分板的热键，省得手填。页脚会说结果：\n「已导入」= 改好了，按 SAVE 保存；\n「无需修改」= 本来就是这两个键（重复导入同一份文件会这样，不是出错）；\n「只绑了鼠标/手柄」= 游戏里没设键盘键，手填；「解析到 0 个动作」= 文件选错了。",
+    "en": "Reads the airbrake / scoreboard keys out of a War Thunder controls .blk. The footer says what happened: IMPORTED = changed, press SAVE; NO CHANGE NEEDED = both already matched, which is what re-importing the same file does (not an error); MOUSE/HOTAS ONLY = that action has no keyboard key in the game; 0 ACTIONS PARSED = wrong file."
   },
   "page.formationTune": {
     "zh": "编队（通用）：两边都要用的都在这一页 —— 辅助开关、长机模式、队形、完成/掉队判定，外加三个入口：「僚机参数」放识别、站位、增益、油门与提前量；「长机参数」放航向、马赫、转向辅助；「数据链」放连接与状态。★ 长机模式是决定你是哪一边的开关，所以它留在通用页，不藏进角色页。",

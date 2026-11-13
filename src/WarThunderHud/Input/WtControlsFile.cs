@@ -13,15 +13,12 @@ namespace WtHud.Input;
 /// </summary>
 public static class WtControlsFile
 {
-    /// <summary>Action id in the .blk file -> config property name used by SettingsForm.</summary>
-    public static readonly (string Action, string Field, string Label)[] Supported =
-    {
-        ("ID_AIR_BRAKE", "AirbrakeKey", "减速板"),
-        ("ID_AIR_BRAKE_HELICOPTER", "AirbrakeKey", "减速板（直升机）"),
-        ("ID_MPSTATSCREEN", "ScoreboardKey", "计分板"),
-    };
-
-    /// <summary>Parses action id -> scan codes from a controls .blk export.</summary>
+    /// <summary>
+    /// Parses action id -> scan codes from a controls .blk export.
+    /// <para>★ 没有 keyboardKey 的动作也会留一条**空数组**：这说明「动作在文件里，但只绑了鼠标/手柄」，
+    /// 与「文件里根本没有这个动作」是两回事 —— 导入提示要把这两种情况分开说。
+    /// 同一动作出现多次（战雷会重复写）时，非空的覆盖空的，不会把已有键盘键冲掉。</para>
+    /// </summary>
     public static Dictionary<string, int[]> Parse(string text)
     {
         var map = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
@@ -32,6 +29,7 @@ public static class WtControlsFile
                              .Select(m => int.Parse(m.Groups[1].Value))
                              .ToArray();
             if (codes.Length > 0) map[action] = codes;
+            else if (!map.ContainsKey(action)) map[action] = Array.Empty<int>();
         }
         return map;
     }
