@@ -613,9 +613,10 @@ internal static class MfdPages
             Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h"),
 
             // ---- 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」----
-            // 只显示爬升率：打开后高度没到位就只给爬升率，圈/航向/距离/油门全关。
-            // ★ 默认关 —— 只给距离、不知道往哪转，飞行员反馈更难受。
-            Toggle("row.fVertFirst", c => c.FormationVerticalFirst, (c, v) => c.FormationVerticalFirst = v),
+            // 引导模式：一段式 = 全套一起显示（默认）；两段式 = 高度没到位只给爬升率
+            Enum("row.fVertFirst", new[] { "opt.oneStage", "opt.twoStage" },
+                 c => c.FormationVerticalFirst ? 1 : 0,
+                 (c, i) => c.FormationVerticalFirst = i == 1),
             Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
             Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
             // 爬升显示距离：只在「只显示爬升率」模式下有意义，-1 = 不显示

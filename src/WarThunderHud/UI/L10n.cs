@@ -307,7 +307,9 @@ public static class L10n
         ["row.fSideM"] = ("横向", "LATERAL"),
         ["row.fBackM"] = ("纵向", "LONGITUDINAL"),
         ["row.fUpM"] = ("站位高度", "ALTITUDE"),
-        ["row.fVertFirst"] = ("只显示爬升率", "CLIMB RATE ONLY"),
+        ["row.fVertFirst"] = ("引导模式", "GUIDANCE"),
+        ["opt.oneStage"] = ("一段式", "ONE-STAGE"),
+        ["opt.twoStage"] = ("两段式", "TWO-STAGE"),
         ["row.fVertGate"] = ("高度到位门槛", "ALT GATE"),
         ["row.fVertMax"] = ("升降率上限", "VERT RATE MAX"),
         ["row.fFarRange"] = ("爬升显示距离", "CLIMB RANGE"),
@@ -319,7 +321,7 @@ public static class L10n
         ["slot.2"] = ("2", "2"),
         ["slot.3"] = ("3", "3"),
         ["hint.presetOnly"] = ("仅预设队形可改", "PRESET ONLY"),
-        ["hint.vertFirstOnly"] = ("仅爬升率模式", "CLIMB ONLY"),
+        ["hint.vertFirstOnly"] = ("仅两段式", "TWO-STAGE ONLY"),
         ["row.wingSide"] = ("侧位", "SIDE"),
 
         // ---- 编队调参页（僚机制导增益，平时不用动） ----
