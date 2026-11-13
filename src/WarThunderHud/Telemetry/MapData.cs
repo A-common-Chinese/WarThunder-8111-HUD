@@ -41,7 +41,6 @@ public sealed class MapData : IDisposable
 
     private readonly Queue<(double T, double X, double Y)> _track = new();
     private DateTime _lastGoodMap = DateTime.MinValue;   // 上次拿到非空 map_obj 的时间
-    private DateTime _lastSample = DateTime.MinValue;
 
     /// <summary>Airfields on this map (friendly + enemy), static positions.</summary>
     public List<MapPoint> Airfields { get; private set; } = new();

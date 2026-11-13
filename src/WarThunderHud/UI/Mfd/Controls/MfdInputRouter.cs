@@ -87,12 +87,6 @@ internal sealed class MfdInputRouter
         return true;
     }
 
-    public void ReleaseSlot(string slotName)
-    {
-        var real = _realButtons.FirstOrDefault(b => b.SlotName == slotName);
-        if (real != null) real.Pressed = false;
-    }
-
     /// <summary>CONFIRM / Enter: activate the selected row.</summary>
     public MfdCommand? ActivateSelected() =>
         SelectedIndex >= 0 && SelectedIndex < _buttons.Count
@@ -128,10 +122,6 @@ internal sealed class MfdInputRouter
     {
         foreach (var b in _buttons) b.Pressed = false;
     }
-
-    /// <summary>Screen position of the selected button (for drawing the highlight).</summary>
-    public RectangleF? SelectedRect() =>
-        SelectedIndex >= 0 && SelectedIndex < _buttons.Count ? _layout.RectFor(_buttons[SelectedIndex]) : null;
 
     /// <summary>Drops duplicate commands fired in the same instant by different input paths.</summary>
     private MfdCommand? Emit(VirtualButton button, InputSource source)

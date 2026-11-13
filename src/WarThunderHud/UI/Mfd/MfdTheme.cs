@@ -33,9 +33,6 @@ internal static class MfdTheme
         ("red",    Color.FromArgb(250, 224, 224), Color.FromArgb(255, 120, 120)),
     };
 
-    public static string PresetName(string key) =>
-        Presets.FirstOrDefault(p => p.Key == key).Key ?? "green";
-
     /// <summary>Applies the configured text (ink) and highlight (accent) colors.</summary>
     public static void ApplyColors(string inkKey, string accentKey)
     {
@@ -87,9 +84,6 @@ internal static class MfdTheme
 
     public static RectangleF Scale(RectangleF r, float scale) =>
         new(r.X * scale, r.Y * scale, r.Width * scale, r.Height * scale);
-
-    public static RectangleF Inset(RectangleF r, float amount) =>
-        new(r.X + amount, r.Y + amount, r.Width - amount * 2, r.Height - amount * 2);
 }
 
 

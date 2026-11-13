@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 51,
+  "_version": 53,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -73,8 +73,8 @@
     "en": "Show HUD: master switch for the overlay; it keeps running but draws nothing when off."
   },
   "row.formation": {
-    "zh": "编队辅助：打开后开始显示编队引导（引导圈、速度条、油门条），并**同时切到精简界面** —— 只留航向带、编队引导和三个读数，其余 HUD 元素暂时隐去，把视野让给长机。关掉则两者一起恢复。飞密集编队时留着满屏俯仰梯反而挡视线，所以这一版把它们绑在一个开关上。",
-    "en": "Formation assist: turns on the guidance (ring, speed bar, throttle bar) and switches to the minimal layout at the same time - only the heading tape, the guidance and three readouts remain, everything else is hidden so you can keep the lead in sight. Turning it off restores both. They are bound to one switch because a full pitch ladder only gets in the way in close formation."
+    "zh": "编队辅助：打开后开始显示编队引导（引导圈、速度条、油门条）。它只管引导，不改界面 —— 想只留精简 HUD 用下面那行「只显示编队」。（0.4.36 起拆开：以前开辅助会顺手把整个 HUD 变成极简，选个角色就把界面换了。）",
+    "en": "Formation assist: turns on the guidance (ring, speed bar, throttle bar). It only controls guidance, not the layout - use MINIMAL HUD below for that. Split apart in 0.4.36: it used to switch the whole layout at the same time, so picking a role silently changed the HUD."
   },
   "row.fov": {
     "zh": "FOV 视场角：垂直视场角，用于把角度换算成像素。",
@@ -283,10 +283,6 @@
   "row.version": {
     "zh": "当前程序版本号。",
     "en": "Current program version."
-  },
-  "row.leadMode": {
-    "zh": "长机模式：打开后不追僚机，只按「长机马赫」保持自己的姿态，并且只报状态（编队完成 / 僚机掉队 / 距离过近）不给任何数字 —— 长机不该被引导去追僚机。关掉就是僚机模式：追到长机后方 400 m。注意两人必须约定好角色，都设成僚机会互相追。",
-    "en": "Lead mode: does not chase the wingman; it holds its own heading and Mach and reports status only (FORMATION / WINGMAN LATE / TOO CLOSE), no numbers - a lead should never be steered at its wingman. Off means wingman mode: close to 400 m behind the lead. Both aircraft must agree on roles; two wingmen will chase each other."
   },
   "row.formationOmni": {
     "zh": "全向跟随（仅长机模式）：关 = 按锁存的航向直飞，偏离就提示转回；开 = 不锁航向，你可以任意方向机动，僚机按你的实时航向跟随。测试版建议打开 —— 这样长机想往哪转都行，不用先「转回设定航向」。",
@@ -572,10 +568,6 @@
     "zh": "本机站位相对长机的横向偏移（右为正）。只读，由侧位与横偏算出。",
     "en": "Lateral offset of your station from the lead, right positive. Read-only, derived from SIDE and the lateral offset."
   },
-  "row.fBackM": {
-    "zh": "本机站位相对长机的纵向位置（负值 = 在长机后方）。只读，等于后距取负。",
-    "en": "Longitudinal position of your station (negative means behind the lead). Read-only; the back distance with a minus sign."
-  },
   "page.formationShape": {
     "zh": "队形：上面是预设（填数按钮）与编号，下面四行是真正的几何输入 —— 侧位、横偏、后距、高度。中间三行只读值告诉你这个站位到底在哪（斜距 / 横向 / 纵向）。改任何一行数值，标签立刻变回自定义。",
     "en": "Formation: the top rows are the preset (a fill-in button) and the wing number; the four rows below are the real geometry inputs - side, lateral, back, altitude. The read-only rows in between show where the station actually sits (slant / lateral / longitudinal). Editing any value drops the label back to CUSTOM."
@@ -719,5 +711,9 @@
   "row.dataLinkLeadState": {
     "zh": "僚机现在跟的是谁：节点号 · 怎么认出来的（手填 / 角色 / 唯一节点 / 最近）· 多久前的一包。「无」= 数据链没开或还没收到任何节点。",
     "en": "Who the wing is following: node id, how it was picked (by id, by role, only node, most recent) and the age of the last packet. NONE means the link is off or nothing has arrived yet."
+  },
+  "row.formationOnly": {
+    "zh": "只显示编队：隐去其余 HUD 元素，只留航向带、编队引导和三个读数，把视野让给长机。和「编队辅助」是两件事：不开辅助也能只留精简界面（那时没有友机方位，只有你自己的读数）。飞密集编队时满屏俯仰梯反而挡视线。",
+    "en": "Minimal HUD: hides everything except the heading tape, the formation guidance and three readouts, so the lead stays in sight. Separate from FORMATION ASSIST - you can keep the minimal layout without guidance (no friend bearing then, just your own readouts). A full pitch ladder only gets in the way in close formation."
   }
 }

@@ -157,11 +157,14 @@ public sealed class MfdFrameForm : Form
     /// <summary>进入下一级页面。实例按 Key 缓存，退出再进来选中位置不变。</summary>
     private void EnterSubPage(MfdPage page)
     {
-        if (!_subCache.TryGetValue(page.CacheKey, out var ui))
+        // 动态页（内容会变）每次都重建：MfdItemsPage 构造时绑定 Items，缓存等于冻结内容。
+        Pages.MfdItemsPage? ui = null;
+        if (!page.NoCache) _subCache.TryGetValue(page.CacheKey, out ui);
+        if (ui is null)
         {
             ui = new Pages.MfdItemsPage(page, () => _work, _itemLayout!, Activate);
             ui.Build();
-            _subCache[page.CacheKey] = ui;
+            if (!page.NoCache) _subCache[page.CacheKey] = ui;
         }
         _subPage = page;
         _subPageUI = ui;
@@ -1876,7 +1879,16 @@ public sealed class MfdFrameForm : Form
         if (_mode == Mode.Confirm) _confirmPage?.Handle(MfdCommand.Of("confirm.cancel"));
         L10n.StoreToConfig(_work.Language);
         _cfg.CopyFrom(_work);
-        if (_savePath != null) _cfg.SaveTo(_savePath); else _cfg.Save();
+        var saved = _savePath != null ? _cfg.SaveTo(_savePath) : _cfg.Save();
+
+        if (!saved.Ok)
+        {
+            // 保存失败就**不关窗、不清 dirty、不写快照**：关掉等于把用户刚改的全丢了，
+            // 而以前这里是 catch{} —— 按 SAVE 看着像成功，重启才发现没写进去。
+            _toast = SaveFailureText(saved);
+            Invalidate();
+            return;
+        }
 
         // 以前这里会把「全局告警阈值」写进当前机型档案（StoreAlertOverrides），形成第二套
         // per-aircraft 数据源，和 perVehicleOverrides 打架。现在按机型的值只走覆盖表，
@@ -1888,6 +1900,23 @@ public sealed class MfdFrameForm : Form
         _dirty = false;
         _forceClose = true;   // 已保存：关闭时不要再弹放弃确认
         Close();
+    }
+
+    /// <summary>
+    /// 保存失败的页脚提示：短句 + 截断后的原因。
+    /// <para>页脚只有一行，Windows 的异常原文动辄上百字符，不截断等于看不到结论。</para>
+    /// </summary>
+    internal static string SaveFailureText(HudConfig.SaveResult result)
+    {
+        string key = result.Error switch
+        {
+            HudConfig.SaveError.Access => "cfg.saveAccess",
+            HudConfig.SaveError.Busy => "cfg.saveBusy",
+            _ => "cfg.saveOther",
+        };
+        string detail = result.Detail ?? "";
+        if (detail.Length > 36) detail = detail[..36] + "…";
+        return string.Format(L10n.Get(LangScope.Screen, key), detail);
     }
 
     /// <summary>F1 反复开关时不让贝塞尔底图堆在 GC 队列里。</summary>

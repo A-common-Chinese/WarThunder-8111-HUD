@@ -92,16 +92,4 @@ internal sealed class MfdPageLayout
         var b = _layout.BottomButtons[Math.Clamp(index, 0, _layout.BottomButtons.Length - 1)];
         return new RectangleF(b.X - 6 * _s, b.Y, b.Width + 12 * _s, b.Height);
     }
-
-    /// <summary>Maps a virtual button slot name (SIDE0-9 / TOP0-4 / BOT0-4) to a rectangle.</summary>
-    public RectangleF RectForSlot(string slot)
-    {
-        if (slot.StartsWith("SIDE", StringComparison.OrdinalIgnoreCase))
-            return ListRowRect(slot[4] is >= '5' ? 1 : 0, slot[4] is >= '5' ? slot[4] - '5' : slot[4] - '0');
-        if (slot.StartsWith("TOP", StringComparison.OrdinalIgnoreCase))
-            return RectFor(new RealButton("t", RealButtonGroup.Top, slot[3] - '0'));
-        if (slot.StartsWith("BOT", StringComparison.OrdinalIgnoreCase))
-            return RectFor(new RealButton("b", RealButtonGroup.Bottom, slot[3] - '0'));
-        return RectangleF.Empty;
-    }
 }

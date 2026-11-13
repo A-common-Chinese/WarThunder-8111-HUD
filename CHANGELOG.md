@@ -3,6 +3,54 @@
 > 首页只放这一页版本历史：每版一节，最新在最上面。
 > 0.4.7 起由发布说明并入；0.4.6 及以前是逐版工程记录。
 
+## v0.4.36 — 全项目体检：两个必修 bug、事件缓存、死代码（预发布）
+
+2026-11-14
+
+### 修复（真 bug）
+- **「接收配置」页被缓存，永远不刷新**：面板的子页缓存只认 Key，而 `MfdItemsPage` 在构造时把
+  条目绑死。第一次打开时没包 → 空态被永久缓存；之后有人广播，摘要写着 `● 1 个配置`，
+  点进去还是空的。给 `MfdPage` 加 `NoCache`，接收列表与确认页每次进入都重建。
+- **确认页同样被缓存**：Key 只含 IP + 节点号，对方改了队形再广播，点进去仍是上次那份档案，
+  「导入」会把旧配置写进去。同样走 `NoCache`。
+- **SAVE 静默失败 + 非原子写**：`SaveTo` 原先是 `File.WriteAllText` 加 `catch { }`。
+  文件被占用 / 目录只读 / 磁盘满时按 SAVE 看着正常，重启全丢；写一半崩掉还会留下截断的 JSON。
+  改为写 `.tmp` 再 `File.Replace`，失败返回 `SaveResult`：面板留在原地并显示
+  「保存失败：没有写权限 / 文件被占用或磁盘只读」，命令行路径打到控制台。
+- **地图停更时位置外推硬推 0.5 s**：`map_obj` 卡住（换局、8111 抽风）时 `Self` 停在旧值、
+  年龄却一直涨，500 km/h 下会凭空偏移 69 m，恢复那帧又跳回来。上限收到 0.3 s，
+  且年龄 > 0.6 s 直接不外推（数据已不可信，用原值）。
+- **配置差异漏了「间距」**：两个预设四个数值恰好相同时，只有间距不同，导入会静默改掉它。
+  差异表补上 `row.fSpacing`。
+
+### 架构收口
+- **`编队辅助` 与 `只显示编队` 拆成两个开关**。以前开辅助会顺手把 `FormationOnly` 也置上，
+  于是「选个角色」= 整个 HUD 只剩编队信息；两件事共用一个开关，谁也不知道界面为什么变了。
+  现在辅助只管引导，精简界面单独一行（默认关）。角色也不再动界面。
+- **数据链开关的值列会说「重启生效」**：收发包线程只在启动时建一次，运行中改开关不生效。
+  以前面板写「开」而实际没在监听 —— 队员说「我开了」对面却收不到，是最难查的假象。
+- **相对方位公式去重**：地图友机列表原先内联了一份与 `FormationResolver.Relative` 相同的算法，
+  改一处就会让两条路的方位悄悄分家。现在统一调用。
+- **`Program.cs` 第一步拆分**：自检 1284 行移到 `Program.SelfTest.cs`（`partial`），
+  主文件 6482 → 5197 行。断言输出逐行对比一致。
+- 时间基准说明写进 `ResolveFormationTarget` 的注释：`nowS` 是遥测时基，包龄/地图年龄是墙钟，
+  两套不能相减。
+
+### 死代码清理
+- 删除 12 个零调用方法：`ExtrapolateAttitude`、`WithFlaps`、`PresetRow`、`MfdTheme.PresetName`、
+  `MfdTheme.Inset`、`MfdLayout.RectForSlot`、`MfdInputRouter.ReleaseSlot`、`MfdInputRouter.SelectedRect`、
+  `ConfigSnapshots.History`、`AirframeDb.Ensure`、`OverlayWindow.AttachTo`、`OverlayWindow.SetCursorHoleAt`，
+  以及随之失效的 `OverlayWindow._parent`、`MapData._lastSample`。
+- 删除 20 个失效文案键（`row.leadMode`、`row.fBackM`、`row.formationLeadFeed`、`help.body`、
+  `hint.nav/lang/help`、`opt.ias/mach`、`overspeed`/`aoaAlert`/`stallAlert` 等）与 3 条对应帮助条目。
+- **保留** `MfdGeometry.Raw`：分析器报「从未实例化」，实际由 `JsonSerializer` 反射构造，删了就崩。
+
+### 验证
+- 自检 **354 PASS / 0 FAIL**（新增 11 条：缓存标记、角色不碰界面、间距差异、原子写/失败上报、
+  数据链重启提示）。
+- `formationsim` 与 0.4.35 外推组**逐行一致**（这次改动不碰制导）。
+- 出图核对：编队页 10 行整页放得下；数据链页显示 `开 · 重启生效`。
+
 ## v0.4.35 — 位置外推：把「一包 250 ms」补回来（预发布）
 
 2026-11-14

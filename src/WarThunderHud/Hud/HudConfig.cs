@@ -551,8 +551,12 @@ public sealed class HudConfig
                         try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
                     }
                     cfg.MigrateFormation();
-                    // 迁移结果立刻落盘：否则每次启动都会重跑一遍
-                    cfg.SaveTo(path);
+                    // 迁移结果立刻落盘：否则每次启动都会重跑一遍、重写一次 .bak。
+                    // 失败只影响「下次再迁一次」，不该因此拒绝启动 —— 但要留痕。
+                    var migrated = cfg.SaveTo(path);
+                    if (!migrated.Ok)
+                        Console.WriteLine($"config migration: ** could not write {path} ({migrated.Error}) - "
+                                          + "will migrate again next launch **");
                 }
                 return cfg;
             }
@@ -646,17 +650,69 @@ public sealed class HudConfig
         FormationUpM = FormationCustomUpM;
     }
 
-    public void Save() => SaveTo(PathFor());
+    public SaveResult Save() => SaveTo(PathFor());
 
-    /// <summary>Writes the config to an explicit path (used by the standalone scratch panel).</summary>
-    public void SaveTo(string path)
+    /// <summary>保存失败的原因，只够用来给用户一句短话 —— 完整异常在 <see cref="SaveResult.Detail"/>。</summary>
+    public enum SaveError
     {
+        None,
+        /// <summary>没有写权限（目录只读、UAC、文件属性）。</summary>
+        Access,
+        /// <summary>文件被占用、磁盘满、路径失效之类。</summary>
+        Busy,
+        Other,
+    }
+
+    /// <summary>保存结果。**失败必须报出去**：以前 catch{} 吞掉，按 SAVE 看着正常、重启全丢。</summary>
+    public readonly record struct SaveResult(bool Ok, SaveError Error, string Detail)
+    {
+        public static readonly SaveResult Success = new(true, SaveError.None, "");
+    }
+
+    /// <summary>
+    /// 写盘：先写 <c>.tmp</c> 再替换，**不留半截文件**。
+    /// <para>直接 <c>File.WriteAllText</c> 覆盖时，写一半崩掉 / 断电就留下截断的 JSON，
+    /// 下次启动解析失败会当成「配置全丢」——这个代价比多一次 rename 大得多。</para>
+    /// <para>返回结果而不是抛异常：调用点遍布命令行与面板，抛出去就变成崩溃。</para>
+    /// </summary>
+    public SaveResult SaveTo(string path)
+    {
+        string tmp = path + ".tmp";
         try
         {
-            File.WriteAllText(path,
-                JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            string json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(tmp, json);
+            if (File.Exists(path))
+            {
+                try { File.Replace(tmp, path, null); }
+                catch (PlatformNotSupportedException) { File.Move(tmp, path, overwrite: true); }
+            }
+            else
+            {
+                File.Move(tmp, path);
+            }
+            return SaveResult.Success;
         }
-        catch { }
+        catch (UnauthorizedAccessException ex)
+        {
+            TryDelete(tmp);
+            return new SaveResult(false, SaveError.Access, ex.Message);
+        }
+        catch (IOException ex)
+        {
+            TryDelete(tmp);
+            return new SaveResult(false, SaveError.Busy, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            TryDelete(tmp);
+            return new SaveResult(false, SaveError.Other, ex.Message);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     /// <summary>

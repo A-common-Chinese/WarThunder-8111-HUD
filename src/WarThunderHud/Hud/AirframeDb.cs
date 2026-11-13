@@ -121,25 +121,6 @@ public static class AirframeDb
         Add("mig_29m_9_15", false, "est", "telemetry", 0, "俯仰符号记录为 -1");
     }
 
-    /// <summary>Creates a new entry for an unknown airframe and persists the file.</summary>
-    public static AirframeProfile Ensure(string vehicleType, bool radarAltitude, string attitude, string airbrake)
-    {
-        EnsureLoaded();
-        if (string.IsNullOrWhiteSpace(vehicleType)) return new AirframeProfile();
-        if (_map.TryGetValue(vehicleType, out var existing)) return existing;
-
-        var profile = new AirframeProfile
-        {
-            RadarAltitude = radarAltitude,
-            Attitude = attitude,
-            Airbrake = airbrake,
-            Note = "自动创建：可在 airframes.json 中补充",
-        };
-        _map[vehicleType] = profile;
-        Save();
-        return profile;
-    }
-
 
     /// <summary>
     /// Refreshes the auto-detected capabilities of one airframe (called when a match starts, so

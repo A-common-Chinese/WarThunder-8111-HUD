@@ -231,16 +231,6 @@ public sealed class OverlayWindow : IDisposable
         Console.WriteLine($"overlay frame -> {x},{y} {width}x{height}");
     }
 
-    /// <summary>Cuts the hole at an absolute position inside the overlay (usually the game cursor).</summary>
-    public void SetCursorHoleAt(int x, int y)
-    {
-        var dx = x - _winW / 2;
-        var dy = y - _winH / 2;
-        if (dx == _holeDx && dy == _holeDy) return;
-        _holeDx = dx; _holeDy = dy;
-        ApplyCursorHoleRegion(_winW, _winH);
-    }
-
     /// <summary>Moves the cursor hole by an offset from the window centre (game viewport offset).</summary>
     public void SetCursorHoleCenter(int dx, int dy)
     {
@@ -430,42 +420,12 @@ public sealed class OverlayWindow : IDisposable
         {
             ApplyDpiScale();
             ApplyCursorHoleRegion(_winW, _winH);
-            // A child window must not be pushed to the topmost band.
-            IntPtr insertAfter = _parent != IntPtr.Zero ? IntPtr.Zero : (IntPtr)NativeMethods.HWND_TOPMOST;
-            NativeMethods.SetWindowPos(_hwnd, insertAfter, _originX, _originY, Width, Height,
+            NativeMethods.SetWindowPos(_hwnd, (IntPtr)NativeMethods.HWND_TOPMOST, _originX, _originY, Width, Height,
                 NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
         }
     }
 
     public bool IsVisible => _visible;
-
-    private IntPtr _parent;
-
-    /// <summary>
-    /// Re-parents the overlay under the game's window. A topmost popup covering the game makes
-    /// the game believe the pointer left its client area, so the game re-shows the OS cursor;
-    /// as a child of the game window the overlay is part of it and that check keeps working.
-    /// </summary>
-    public void AttachTo(IntPtr parentHwnd)
-    {
-        if (parentHwnd == IntPtr.Zero || parentHwnd == _parent) return;
-        _parent = parentHwnd;
-
-        var style = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE).ToInt64();
-        style = (style | NativeMethods.WS_CHILD) & ~(long)NativeMethods.WS_POPUP;
-        NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWL_STYLE, new IntPtr(style));
-        NativeMethods.SetParent(_hwnd, parentHwnd);
-
-        int w = Width, h = Height;
-        if (NativeMethods.GetClientRect(parentHwnd, out var rc) && rc.Right > 0 && rc.Bottom > 0)
-        {
-            w = rc.Right - rc.Left;
-            h = rc.Bottom - rc.Top;
-        }
-        NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, w, h,
-            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
-        Console.WriteLine($"overlay attached to game window {parentHwnd} client {w}x{h}");
-    }
 
     private IntPtr WndProcImpl(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {

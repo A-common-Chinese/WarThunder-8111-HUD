@@ -127,17 +127,6 @@ public static class ConfigSnapshots
         catch (Exception ex) { Console.WriteLine("snapshot save failed: " + ex.Message); }
     }
 
-    /// <summary>Newest first, excluding the cancel point.</summary>
-    public static IReadOnlyList<string> History()
-    {
-        if (!System.IO.Directory.Exists(Directory)) return Array.Empty<string>();
-        return System.IO.Directory.GetFiles(Directory, "*.json")
-            .Where(f => !string.Equals(Path.GetFileName(f), "_cancel.json", StringComparison.OrdinalIgnoreCase)
-                        && !IsRestoreAudit(f))
-            .OrderByDescending(f => f)
-            .ToList();
-    }
-
     /// <summary><c>*-restore.json</c> 只是恢复动作的审计留痕，不占历史快照的名额、也不进列表。</summary>
     private static bool IsRestoreAudit(string path) =>
         Path.GetFileName(path).EndsWith("-restore.json", StringComparison.OrdinalIgnoreCase);

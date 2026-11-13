@@ -77,11 +77,19 @@ internal sealed class MfdItem
     /// <summary>子页摘要，显示在值列（例如「梯队 · 2」）。null = 只显示一个箭头。</summary>
     public Func<HudConfig, string>? SubSummary { get; init; }
 
+    /// <summary>
+    /// 值列的覆盖文本（null = 按 <see cref="Kind"/> 给默认值）。
+    /// <para>用于「默认值之外还要说一句」的行：数据链开关在运行中改不了，值列会写
+    /// 「开 · 重启生效」，而不是只写「开」让人以为已经生效。</para>
+    /// </summary>
+    public Func<HudConfig, string>? ValueOverride { get; init; }
+
     /// <summary>当前是否可用。绘制与命令分派都从这里取，避免两处判断不一致。</summary>
     public bool IsEnabled(HudConfig cfg) => EnabledWhen?.Invoke(cfg) ?? true;
 
     public string ValueText(HudConfig cfg)
     {
+        if (ValueOverride is not null) return ValueOverride(cfg);
         switch (Kind)
         {
             case ItemKind.Toggle:
@@ -161,6 +169,17 @@ internal sealed class MfdPage
     public string? ParentTitleKey { get; init; }
 
     public string CacheKey => Key.Length > 0 ? Key : TitleKey;
+
+    /// <summary>
+    /// 内容会变的页面：每次进入都重建渲染实例，不进缓存。
+    /// <para>★ 缓存本身是为了「返回后还停在原来那一行」，但 <c>MfdItemsPage</c> 在构造时就把
+    /// <see cref="Items"/> 绑死了 —— 一个会变的页面被缓存下来，等于把第一次打开时的内容冻住。
+    /// 「接收配置」就是这么坏的：摘要实时算（`● 1 个配置`），点进去还是空的。</para>
+    /// <para>动态页请一律设 true，不要靠把内容拼进 <see cref="Key"/> 绕 —— Key 还兼作
+    /// 详情页/帮助页的标识，拼长了会连带影响别处。</para>
+    /// </summary>
+    public bool NoCache { get; init; }
+
     public List<MfdItem> Items { get; init; } = new();
 
     /// <summary>首页显示的数量：动态页面（如回归快照）用它替代 <see cref="Items"/>.Count。</summary>
@@ -176,11 +195,13 @@ internal static class MfdPages
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set,
-                                  Func<HudConfig, bool>? enabledWhen = null, string? disabledKey = null) =>
+                                  Func<HudConfig, bool>? enabledWhen = null, string? disabledKey = null,
+                                  Func<HudConfig, string>? valueOverride = null) =>
         new()
         {
             LabelKey = label, Kind = ItemKind.Toggle, GetBool = get, SetBool = set, EnabledWhen = enabledWhen,
             DisabledText = disabledKey is null ? null : _ => L10n.Get(LangScope.Screen, disabledKey),
+            ValueOverride = valueOverride,
         };
 
     private static MfdItem Number(string label, Func<HudConfig, double> get, Action<HudConfig, double> set,
@@ -215,11 +236,6 @@ internal static class MfdPages
     private static MfdItem Info(string label, Func<HudConfig, string> text,
                                 Func<HudConfig, bool>? enabledWhen = null) =>
         new() { LabelKey = label, Kind = ItemKind.ReadOnly, GetText = text, EnabledWhen = enabledWhen };
-
-
-    private static MfdItem PresetRow(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
-                                     Func<HudConfig, bool>? enabledWhen = null) =>
-        new() { LabelKey = label, Kind = ItemKind.Preset, GetPreset = get, SetPreset = set, EnabledWhen = enabledWhen };
 
     private static MfdItem Airframe(string id) =>
         new()
@@ -497,8 +513,10 @@ internal static class MfdPages
         if (RoleId(c) == before) return;      // 同一个角色：只写字段，不动其它
 
         c.FormationAssist = true;
-        c.FormationOnly = true;
         c.DataLinkEnabled = true;
+        // ★ 不动 FormationOnly：那是「只显示编队、隐藏其余 HUD」的显示偏好，
+        //   由用户自己在编队页决定。选个角色把整个 HUD 变成极简，是以前两件事共用一个
+        //   开关留下的副作用（0.4.36 拆开）。
         if (index > 0) ApplyShapePreset(c, WtHud.Hud.FormationGeometry.ShapeEchelon);
     }
 
@@ -617,8 +635,12 @@ internal static class MfdPages
             Enum("row.role", new[] { "opt.roleLead", "opt.roleWing1", "opt.roleWing2", "opt.roleWing3" },
                  RoleIndex,
                  (c, i) => SetRole(c, i)),
-            Toggle("row.formation", c => c.FormationAssist,
-                   (c, v) => { c.FormationAssist = v; c.FormationOnly = v; }),
+            // 编队辅助只写辅助开关。以前它顺手把 FormationOnly 也置上，
+            // 于是「开编队辅助」= 整个 HUD 只剩编队信息，两个概念一个开关。
+            Toggle("row.formation", c => c.FormationAssist, (c, v) => c.FormationAssist = v),
+            // 只显示编队：显示偏好，和辅助分开。灰掉只在没开辅助时说明原因，
+            // 不强制清零 —— 有人就想要「极简 HUD + 不画友机方位」。
+            Toggle("row.formationOnly", c => c.FormationOnly, (c, v) => c.FormationOnly = v),
 
             // 队形几何（形状 + 槽位 + 三个距离）：两边必须用同一个队形，放通用页
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
@@ -761,7 +783,10 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.datalink",
         Items =
         {
-            Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v),
+            // 数据链的收发包线程只在启动时建一次：运行中改这个开关要重启才生效，
+            // 值列必须说出来（A4「成对字段靠约定同步」的收口）。
+            Toggle("row.dataLinkOn", c => c.DataLinkEnabled, (c, v) => c.DataLinkEnabled = v,
+                   valueOverride: WtHud.Program.DataLinkStateText),
             // 地图判定：数据链认出的长机在地图上没显示时给不给水平引导（全真 1 km 外不显示友机）
             Toggle("row.fMapOnly", c => c.FormationMapOnly, (c, v) => c.FormationMapOnly = v,
                    c => !c.LeadMode, "hint.wingOnly"),
@@ -818,6 +843,8 @@ internal static class MfdPages
         var page = new MfdPage
         {
             Key = "datalink.cfg.inbox",
+            // 内容随收到的包变：缓存下来就永远停在第一次打开时那份列表
+            NoCache = true,
             TitleKey = "page.cfgInbox",
             ParentTitleKey = "page.cfgMenu",
             MenuKey = "page.cfgInbox",
@@ -849,9 +876,11 @@ internal static class MfdPages
     }
 
     /// <summary>确认页：谁发的、他是什么角色、会改你哪些项。确认后才写进草稿，落盘仍靠 SAVE。</summary>
-    private static MfdPage ConfigConfirmPage(WtHud.Telemetry.ConfigOffer offer) => new()
+    internal static MfdPage ConfigConfirmPage(WtHud.Telemetry.ConfigOffer offer) => new()
     {
         Key = "datalink.cfg.confirm." + offer.Address + "." + offer.NodeId,
+        // 同一台机器改了队形再广播，Key 还是一样的 —— 不重建就会把旧档案写进去
+        NoCache = true,
         TitleKey = "page.cfgConfirm",
         ParentTitleKey = "page.cfgInbox",
         MenuKey = "page.cfgConfirm",
@@ -899,6 +928,10 @@ internal static class MfdPages
         if (Math.Abs(p.LateralM - c.FormationWingOffsetM) > 0.5) keys.Add("row.fWingOffset");
         if (Math.Abs(p.BackM - c.FormationStationBackM) > 0.5) keys.Add("row.fStationBack");
         if (Math.Abs(p.UpM - c.FormationUpM) > 0.5) keys.Add("row.fUpM");
+        // 间距按「对方那个预设下会用到的值」比：自定义没有间距，不参与
+        if (shape != WtHud.Hud.FormationGeometry.ShapeCustom
+            && Math.Abs(p.SpacingM - WtHud.Hud.FormationGeometry.Spacing(c, shape)) > 0.5)
+            keys.Add("row.fSpacing");
         if (Math.Abs(p.DonePct - c.FormationDonePct) > 0.1) keys.Add("row.fDonePct");
         if (Math.Abs(p.HoldS - c.FormationDoneHoldS) > 0.01) keys.Add("row.fDoneHold");
         if (Math.Abs(p.DropPct - c.FormationDropPct) > 0.1) keys.Add("row.fDropPct");
