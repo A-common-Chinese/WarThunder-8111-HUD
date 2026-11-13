@@ -268,10 +268,10 @@ public sealed class HudConfig
     [JsonPropertyName("formationVertMaxMs")] public double FormationVertMaxMs { get; set; } = 10;
 
     /// <summary>
-    /// 远距例外：距离超过这个米数时，即使还在爬升阶段（高度没到位）也把距离行放出来。**默认 0 = 关**。
-    /// <para>两阶段的本意是「先爬高度、别分心」，所以 0.4.22 起默认严格两阶段：爬升阶段屏幕上
-    /// 只有一条爬升率。长机跑远时想看见差距，把它调到 1500–2000 就会在超距时多给一行距离。</para>
-    /// <para>0 = 关掉例外，爬升阶段什么都不显示。</para>
+    /// 爬升阶段（高度未到位）要不要显示距离行，单位米。**默认 0 = 任何距离都显示。**
+    /// <para>0.4.22 之前这是「远距例外」，默认 2000：只有被甩开 2 km 才破例显示。
+    /// 现在默认常显 —— 爬升时看不见距离，飞行员根本不知道自己正在被甩开。</para>
+    /// <para>★ **-1 = 什么都不显示**（严格两阶段）；0 = 任何距离都显示；正数 = 超过它才显示。</para>
     /// </summary>
     [JsonPropertyName("formationFarRangeM")] public double FormationFarRangeM { get; set; }
 

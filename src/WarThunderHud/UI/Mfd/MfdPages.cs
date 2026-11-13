@@ -616,7 +616,7 @@ internal static class MfdPages
             Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
             Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
             // 远距例外：超过这个距离，爬升阶段也放一行距离（0 = 关掉）
-            Number("row.fFarRange", c => c.FormationFarRangeM, (c, v) => c.FormationFarRangeM = v, 100, 0, 20000, "m"),
+            Number("row.fFarRange", c => c.FormationFarRangeM, (c, v) => c.FormationFarRangeM = v, 100, -1, 20000, "m"),
 
             // ---- 跟随增益（级联 PID）----
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头

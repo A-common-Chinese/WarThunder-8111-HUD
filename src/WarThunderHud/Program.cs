@@ -745,7 +745,10 @@ public static class Program
         Check("far range hidden just under gate", !RevealRangeWhileClimbing(1999.9, 2000));
         Check("far range shown at gate", RevealRangeWhileClimbing(2000, 2000));
         Check("far range shown beyond gate", RevealRangeWhileClimbing(5200, 2000));
-        Check("far range disabled at zero gate", !RevealRangeWhileClimbing(99999, 0));
+        // ★ 0 = 任何距离都显示（距离恒 ≥ 0，门槛等于没有）；负数才是关闭
+        Check("zero gate shows the range at any distance",
+            RevealRangeWhileClimbing(1, 0) && RevealRangeWhileClimbing(99999, 0));
+        Check("negative gate hides the range", !RevealRangeWhileClimbing(99999, -1));
 
         Check("turn assist off stays off",
             AdvanceTurnAssist(st, 9.0, 1.0).Stage == TurnAssistStage.Off);
@@ -4591,10 +4594,12 @@ public static class Program
     /// <para>两阶段的分界是高度，但长机一跑起来距离是按秒变的：先爬 20 s 高度，
     /// 编队可能已经甩开 2 km。这时候屏幕上只剩一条爬升率，飞行员不知道自己正在被甩掉 ——
     /// 破例给一行距离，比严守「只给爬升率」更有用。</para>
-    /// <para>门槛 0 表示关掉例外（严格两阶段）；负数按 0 处理，免得配置手滑关不掉。</para>
+    /// <para>★ 判定用**负数**表示关闭：<c>-1</c> = 什么都不显示；<c>0</c> = 任何距离都显示
+    /// （距离恒 ≥ 0，所以 0 这个门槛等于没有门槛）；正数 = 超过它才显示。
+    /// 旧写法把 0 当关闭，结果「0 = 任何距离」这个直觉读法反而失效了。</para>
     /// </summary>
     internal static bool RevealRangeWhileClimbing(double rangeM, double gateM)
-        => gateM > 0 && rangeM >= gateM;
+        => gateM >= 0 && rangeM >= gateM;
 
     /// <summary>状态机位置：Off / 等方向（Arming）/ 已锁方向（Active）。</summary>
     internal enum TurnAssistStage { Off, Arming, Active }
