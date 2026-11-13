@@ -127,6 +127,15 @@ internal sealed class DataLink : IDisposable
 
         public long TickAt;
         public int Packets;
+
+        /// <summary>
+        /// 按连续两包位置差出来的速度（归一化单位/秒），EMA 平滑过。
+        /// <para>用途只有一个：把「这一包比现在旧了 AgeMs」补回来。4 Hz 上差分噪声不小，
+        /// 但只需要它把 250 ms 的位移补上 —— 误差 20% 也只差 7 m。</para>
+        /// </summary>
+        public double VelXn, VelYn;
+        public double? PrevXn, PrevYn;
+        public long PrevTickMs;
     }
 
     private readonly Dictionary<int, Remote> _nodes = new();
@@ -205,7 +214,9 @@ internal sealed class DataLink : IDisposable
                                            int Slot = -1,
                                            int ErrM = 0,
                                            // 对方自报「我跟的长机」节点 ID（第 12 段）。0 = 没指定。
-                                           int LeadId = 0);
+                                           int LeadId = 0,
+                                           // 位置差分估出的速度（归一化单位/秒）。0 = 还不够两包。
+                                           double VelXn = 0, double VelYn = 0);
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -386,7 +397,8 @@ internal sealed class DataLink : IDisposable
             ambiguous = amb;
             lead = new LinkNode(entries[idx].Id, r.AltM, r.VyMs, r.HeadingDeg, r.TurnRateDeg,
                                 r.Xn, r.Yn, (int)(now - r.TickAt), r.TargetBankDeg,
-                                r.Role, r.Packets, r.Wing, r.Slot, r.ErrM, r.LeadId);
+                                r.Role, r.Packets, r.Wing, r.Slot, r.ErrM, r.LeadId,
+                                r.VelXn, r.VelYn);
             return true;
         }
     }
@@ -991,6 +1003,7 @@ internal sealed class DataLink : IDisposable
             // 坐标同理：老版本不发 → null，配对会跳过这个节点，但高度仍可用于单长机场景
             node.Xn = xn;
             node.Yn = yn;
+            UpdateVelocity(node, xn, yn);
             node.TargetBankDeg = targetBank;
             node.Role = role;
             node.Wing = wing;
@@ -1009,6 +1022,33 @@ internal sealed class DataLink : IDisposable
                                  0, wing, slot, errM, leadId), Unmap(from).ToString()); }
             catch { /* 调试回调不能影响接收 */ }
         }
+    }
+
+    /// <summary>
+    /// 用连续两包的位置差估对方速度（归一化单位/秒），EMA 平滑。
+    /// <para>★ 时间用收到包的时刻，不是对方的发送时刻 —— 网络抖动会被算进速度里，
+    /// 但 4 Hz 局域网上抖动远小于 250 ms，平滑之后可以忽略。</para>
+    /// </summary>
+    private static void UpdateVelocity(Remote node, double? xn, double? yn)
+    {
+        if (xn is not double x || yn is not double y) return;
+
+        long now = Environment.TickCount64;
+        if (node.PrevXn is double px && node.PrevYn is double py)
+        {
+            double dt = (now - node.PrevTickMs) / 1000.0;
+            if (dt >= 0.05 && dt <= 2.0)
+            {
+                double vx = (x - px) / dt;
+                double vy = (y - py) / dt;
+                // α=0.35：大约三包跟上一个新速度；太大抖动会串进引导，太小转弯时拖尾
+                node.VelXn = node.VelXn * 0.65 + vx * 0.35;
+                node.VelYn = node.VelYn * 0.65 + vy * 0.35;
+            }
+        }
+        node.PrevXn = x;
+        node.PrevYn = y;
+        node.PrevTickMs = now;
     }
 
     /// <summary>

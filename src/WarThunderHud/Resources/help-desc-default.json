@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 50,
+  "_version": 51,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -653,8 +653,8 @@
     "en": "Whether you fly lead or wing. Picking WING #N sets four things at once: assist on, data link on, number = N, and the ECHELON preset for that number. The preset is applied only when the role actually changes, so hand-tuned numbers survive re-selecting the same role. Switching to LEAD leaves the formation untouched."
   },
   "row.fMargin": {
-    "zh": "完成门槛（斜距 × 完成误差%）对链路一拍的位移（当前速度 × 0.25 s）。延迟超过门槛时带 ✗ —— 这个距离上「到位」基本等不到，那是数据精度不够，不是你没飞好。500 km/h 时一拍约 35 m。",
-    "en": "The completion band (slant x done %) against the distance flown between two link packets (speed x 0.25 s). A ✗ means latency already exceeds the band, so ON STATION will practically never trigger there - data resolution, not your flying. About 35 m per packet at 500 km/h."
+    "zh": "完成门槛（斜距 × 完成误差%）对链路一拍的位移（当前速度 × 0.25 s）。延迟超过门槛时带 ✗ —— 这个距离上「到位」基本等不到，那是数据精度不够，不是你没飞好。500 km/h 时一拍约 35 m。（链路与本机位置都已按速度外推到同一时刻，所以这里比的是残差。）",
+    "en": "The completion band (slant x done %) against the distance flown between two link packets (speed x 0.25 s). A ✗ means latency already exceeds the band, so ON STATION will practically never trigger there - data resolution, not your flying. About 35 m per packet at 500 km/h. (Both positions are already advanced to a common instant, so this compares the residual.)"
   },
   "page.cfgMenu": {
     "zh": "编队配置的四种走法：广播给局域网里的队友、接收别人发来的、导出成文件、从文件导入。只传编队相关（队形数值、门槛、地图判定、机型过滤），不传按键和显示。",

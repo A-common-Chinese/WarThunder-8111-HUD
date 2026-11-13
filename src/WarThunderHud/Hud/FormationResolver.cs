@@ -71,6 +71,20 @@ internal static class FormationResolver
         return (range, Normalize(bearing - navHeading));
     }
 
+    /// <summary>
+    /// 把位置按速度外推到「现在」。速度是归一化单位/秒（坐标系与 <see cref="Relative"/> 一致，
+    /// 所以不需要再管地图边长或 yFlip）。
+    /// <para>★ 链路和地图都是 4 Hz、各自采样时刻不同：只修一边没用，修的是**两者年龄之差**。
+    /// 500 km/h 时 250 ms 就是 35 m —— 比 122 m 站位的完成门槛（12 m）大 3 倍。</para>
+    /// <para>最多外推 1 秒：更旧的包本身该按掉线处理，继续外推只会把噪声放大。</para>
+    /// </summary>
+    public static (double X, double Y) Advance(double x, double y, double vxPerS, double vyPerS, double ageS)
+    {
+        if (ageS <= 0 || !double.IsFinite(vxPerS) || !double.IsFinite(vyPerS)) return (x, y);
+        double t = Math.Min(ageS, 1.0);
+        return (x + vxPerS * t, y + vyPerS * t);
+    }
+
     /// <summary>把角度收进 (-180, 180]。</summary>
     public static double Normalize(double deg)
     {

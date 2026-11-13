@@ -802,6 +802,32 @@ public static class Program
         Check("map latch releases after the hold window",
             !WtHud.Hud.FormationResolver.LatchVisible(false, ref latch, ref hitAt, 1.9));
 
+        // ---- 延迟外推：链路一包比本机地图旧 250 ms，年龄差会直接变成距离误差 ----
+        const double mapSize = 65000;
+        double vEast = 500 / 3.6;                        // 500 km/h 向东
+        double leadX = 0.5 + 400 / mapSize, leadY = 0.5;  // 长机在正东 400 m
+        double staleLeadX = leadX - vEast * 0.25 / mapSize;   // 那一包是 250 ms 之前的
+
+        var (rawRangeM, _) = WtHud.Hud.FormationResolver.Relative(
+            0.5, 0.5, staleLeadX, leadY, mapSize, mapSize, false, 90);
+        Check("one stale packet reads as a shorter range", Math.Abs(rawRangeM - 365) < 1.5);
+
+        var (fixedX, fixedY) = WtHud.Hud.FormationResolver.Advance(
+            staleLeadX, leadY, vEast / mapSize, 0, 0.25);
+        var (fixedRangeM, _) = WtHud.Hud.FormationResolver.Relative(
+            0.5, 0.5, fixedX, fixedY, mapSize, mapSize, false, 90);
+        Check("advancing recovers the true range", Math.Abs(fixedRangeM - 400) < 0.5);
+
+        // 没有年龄 / 没有速度（第一包）都不能动位置；外推封顶 1 s
+        var (sameX, sameY) = WtHud.Hud.FormationResolver.Advance(0.5, 0.5, 1, 1, 0);
+        Check("advance without age is a no-op", sameX == 0.5 && sameY == 0.5);
+        var (noVelX, _) = WtHud.Hud.FormationResolver.Advance(0.5, 0.5, 0, 0, 0.25);
+        Check("advance without velocity is a no-op", noVelX == 0.5);
+        var (cappedX, _) = WtHud.Hud.FormationResolver.Advance(0.5, 0.5, 0.001, 0, 5.0);
+        Check("advance caps at one second", Math.Abs(cappedX - 0.501) < 1e-9);
+        var (nanX, _) = WtHud.Hud.FormationResolver.Advance(0.5, 0.5, double.NaN, 0, 0.25);
+        Check("advance ignores a non-finite velocity", nanX == 0.5);
+
         // ---- 角色行：读推导值、只在角色变化时套队形 ----
         var roleCfg = new HudConfig { LeadMode = false, FormationSlot = 0 };
         roleCfg.FormationAssist = false;
@@ -1461,6 +1487,14 @@ public static class Program
         bool omegaMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "omega";
         // WT_SIM_MODE=staged：两阶段状态机 —— 先 CONVERGE（位置追踪）编好队，再 MAINTAIN（角速度）保持
         bool stagedMode = Environment.GetEnvironmentVariable("WT_SIM_MODE") == "staged";
+        // 延迟模型：链路/地图都是 4 Hz，引导看到的是**上一拍**的位置，不是此刻真值。
+        // 默认 0.25 s（=一个发包间隔）；WT_SIM_LAT=0 回到 0.4.34 的「瞬时知道」理想化。
+        double simLatS = 0.25;
+        if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_LAT"),
+                            NumberStyles.Any, CultureInfo.InvariantCulture, out double latEnv))
+            simLatS = Math.Clamp(latEnv, 0, 1.0);
+        // WT_SIM_NOCORR=1：只延迟、不修正 —— 用来量「不修的话到底差多少」
+        bool simNoCorr = Environment.GetEnvironmentVariable("WT_SIM_NOCORR") == "1";
         // WT_SIM_NOLINK=<秒>：从该时刻起模拟「数据链断掉」——拿不到 ω_L、状态机强制回落 CONVERGE
         double linkLostAt = double.MaxValue;
         if (double.TryParse(Environment.GetEnvironmentVariable("WT_SIM_NOLINK"),
@@ -1497,6 +1531,8 @@ public static class Program
         var leaders = new List<(double x, double y)>[3];
         var tracks = new List<(double x, double y)>[3][];
         var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"# lag: " + (simLatS <= 0 ? "none (idealised)" 
+            : $"{simLatS * 1000:F0} ms" + (simNoCorr ? ", NOT corrected" : ", extrapolated")));
         summary.AppendLine($"# mode: " + (stagedMode
             ? $"staged (CONVERGE=station, MAINTAIN=omega k={kAng:F2})"
             : omegaMode ? $"omega (w_L feedforward, k={kAng:F2})"
@@ -1560,6 +1596,9 @@ public static class Program
                 double firstSwitchAt = -1;
                 var leadTrack = new List<(double, double)>();
                 var wingTrack = new List<(double, double)>();
+                // 延迟模型：链路看到的是**上一拍**的采样。prev = 上一拍，prevPrev = 再上一拍（估速度用）
+                double prevLeadX = 0, prevLeadY = 0, prevPrevLeadX = 0, prevPrevLeadY = 0;
+                int latSamples = 0;
 
                 for (int i = 0; i <= steps; i++)
                 {
@@ -1580,7 +1619,38 @@ public static class Program
                     // 僚机「看得到」的 ω_L：断链后前馈失效，只能退回几何法
                     bool linkLost = nowS >= linkLostAt;
                     double omegaSeen = linkLost ? 0.0 : omegaNow;
-                    double ex = lx - wx, ey = ly - wy;
+                    // ★ 两个 4 Hz 源是**独立采样**的：链路那一包可能刚好旧 250 ms，
+                    //   而本机地图刚好是刚刷新的 —— 取这个最坏相位来建模（两边同龄会互相抵消，
+                    //   那是理想情况，不是现实）。
+                    double seenLeadX = prevLeadX, seenLeadY = prevLeadY;
+                    double seenVelX = latSamples >= 2 ? (prevLeadX - prevPrevLeadX) / dt : 0;
+                    double seenVelY = latSamples >= 2 ? (prevLeadY - prevPrevLeadY) / dt : 0;
+                    prevPrevLeadX = prevLeadX; prevPrevLeadY = prevLeadY;
+                    prevLeadX = lx; prevLeadY = ly;
+                    latSamples++;
+
+                    double ex, ey;
+                    if (simLatS > 0 && latSamples >= 2)
+                    {
+                        if (simNoCorr)
+                        {
+                            ex = seenLeadX - wx;
+                            ey = seenLeadY - wy;
+                        }
+                        else
+                        {
+                            // 与机上一致：链路那位按两拍差分估速度外推；本机位置本来就是新的，不动
+                            var (clx, cly) = WtHud.Hud.FormationResolver.Advance(
+                                seenLeadX, seenLeadY, seenVelX, seenVelY, simLatS);
+                            ex = clx - wx;
+                            ey = cly - wy;
+                        }
+                    }
+                    else
+                    {
+                        ex = lx - wx;
+                        ey = ly - wy;
+                    }
                     double R = Math.Sqrt(ex * ex + ey * ey);
                     double bearing = Math.Atan2(ex, ey) * 180.0 / Math.PI;
                     double rel = NormalizeDeg(bearing - psiW);
@@ -3844,8 +3914,14 @@ public static class Program
             // 两条路径的差别只在这一步：有链路就直接认节点（不依赖 map_obj 的友机列表，
             // 也就不会把「最近的僚机」当成长机）；无链路才退回「最近的友机」。
             // 两者都需要自机坐标才能给水平量 —— 拿不到就只留垂直引导。
+            // 本机速度（归一化单位/秒）：把地图给的位置外推到「现在」用。
+            // 方向取 navHeading（无罗盘时已退化为航迹角），与 Relative() 的方位定义一致。
+            double hdgRad = navHeading * Math.PI / 180.0;
+            double selfVxPerS = snap.TasKmh / 3.6 * Math.Sin(hdgRad) / sizeX;
+            double selfVyPerS = snap.TasKmh / 3.6 * Math.Cos(hdgRad) / (sizeY * (cfg.MapYFlip ? -1 : 1));
+
             var target = ResolveFormationTarget(cfg, map, dataLink, opt, sizeX, sizeY, navHeading,
-                                                snap.ElapsedSeconds);
+                                                snap.ElapsedSeconds, selfVxPerS, selfVyPerS);
             if (target.Source != FormationSource.None)
             {
                 double leadRange = target.RangeM;
@@ -4735,14 +4811,34 @@ public static class Program
     /// </summary>
     private static FormationTarget ResolveFormationTarget(HudConfig cfg, WtHud.Telemetry.MapData map,
         WtHud.Telemetry.DataLink? link, HudOptions opt, double sizeX, double sizeY, double navHeading,
-        double nowS = 0)
+        double nowS = 0, double selfVxPerS = 0, double selfVyPerS = 0)
     {
         var byLink = default(FormationTarget);
         var leadNode = default(WtHud.Telemetry.DataLink.LinkNode);
         bool haveLink = link != null && link.TryGetLeadNode(out leadNode);
         if (haveLink)
         {
-            byLink = FormationResolver.ByLink(leadNode, map.Self?.X, map.Self?.Y,
+            // ★ 两边都外推到「现在」：链路位置旧 AgeMs，本机地图位置旧 (now − UpdatedAtMs)。
+            //   只补一边等于把误差从一边挪到另一边 —— 要补的是两者**年龄之差**。
+            var correctedLead = leadNode;
+            if (leadNode.Xn is double lx0 && leadNode.Yn is double ly0)
+            {
+                var (lx, ly) = FormationResolver.Advance(lx0, ly0, leadNode.VelXn, leadNode.VelYn,
+                                                         leadNode.AgeMs / 1000.0);
+                correctedLead = leadNode with { Xn = lx, Yn = ly };
+            }
+
+            double? selfX = map.Self?.X, selfY = map.Self?.Y;
+            if (selfX is double sx && selfY is double sy)
+            {
+                // 地图年龄上限 0.5 s：超过这个数说明地图停了，那时候外推只是瞎猜
+                double selfAgeS = Math.Clamp((Environment.TickCount64 - map.UpdatedAtMs) / 1000.0, 0, 0.5);
+                var (nx, ny) = FormationResolver.Advance(sx, sy, selfVxPerS, selfVyPerS, selfAgeS);
+                selfX = nx;
+                selfY = ny;
+            }
+
+            byLink = FormationResolver.ByLink(correctedLead, selfX, selfY,
                                               sizeX, sizeY, cfg.MapYFlip, navHeading);
             if (byLink.HasHorizontal)
             {

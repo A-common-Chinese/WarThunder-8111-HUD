@@ -29,6 +29,13 @@ public sealed class MapData : IDisposable
     /// <summary>Player position in normalised map space (0..1) or null when unknown.</summary>
     public (double X, double Y)? Self { get; private set; }
 
+    /// <summary>
+    /// 上一次成功解析 map_obj 的时刻（<see cref="Environment.TickCount64"/> 毫秒）。
+    /// <para>★ 本机位置只能从这里拿，所以它天然比"现在"旧 0~250 ms。
+    /// 编队引导要把链路位置外推到同一时刻，就得知道这个年龄 —— 否则两边年龄之差会直接变成距离误差。</para>
+    /// </summary>
+    public long UpdatedAtMs { get; private set; }
+
     /// <summary>Course over ground (deg, 0 = north) derived from position changes; null when slow.</summary>
     public double? CourseDeg { get; private set; }
 
@@ -140,6 +147,7 @@ public sealed class MapData : IDisposable
     {
         string json = await _http.GetStringAsync(ObjUrl, ct).ConfigureAwait(false);
         RawBytes = json.Length;
+        UpdatedAtMs = Environment.TickCount64;
 
         // The game legitimately answers 200 with an empty body when it has no map data for the
         // current battle (some modes never expose it). Parsing that would throw and take the
