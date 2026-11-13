@@ -84,19 +84,55 @@ internal static class FormationResolver
     /// 地图上是不是真的显示着这架友机。
     /// <para>判据用距离 + 相对方位，不是坐标：地图给的是相对量，链路给的是坐标，
     /// 两边采样时刻不同（链路 4 Hz、地图更慢），拿坐标硬比会一直对不上。</para>
-    /// <para>容差 500 m / 25°：1000 km/h 时 4 Hz 就漂 70 m，地图再慢一拍能到两三百米；
-    /// 500 m 既容得下延迟，也不至于把 1.2 km 外的长机认成 400 m 处那架僚机。</para>
+    /// <para>★ 容差必须按**米**给，不能只按角度：固定 25° 在 40 m 处只剩 17 m 横向余量，
+    /// 而 4 Hz 报文在 250 m/s 时就漂 60 m —— 两机贴在一起时判据必然在边界上抖，
+    /// 表现就是「提示一直闪」。所以拆成横向 / 纵向两个米制容差，并随距离放宽。</para>
+    /// <para>这项只是个「要不要用链路位置」的闸门，真正引导用的仍是链路位置，
+    /// 所以宁可放宽也不能抖：误放行的代价只是一次规则松动，误拦的代价是仪表一直闪。</para>
     /// </summary>
     public static bool VisibleOnMap(IReadOnlyList<FriendlyContact> friendlies,
                                     double rangeM, double relBearingDeg,
-                                    double rangeTolM = 500.0, double bearingTolDeg = 25.0)
+                                    double lateralFloorM = 120.0, double alongFloorM = 180.0,
+                                    double closeRangeM = 200.0)
     {
+        // 贴到 200 m 以内：地图图标本身就可能不画（近距重叠），这时候「图上有没有」
+        // 已经失去意义 —— 这个距离上肉眼都看得见对方。
+        if (rangeM <= closeRangeM) return true;
+        if (friendlies.Count == 0) return false;
+
+        double rad = relBearingDeg * Math.PI / 180.0;
+        double linkLat = rangeM * Math.Sin(rad);
+        double linkAhead = rangeM * Math.Cos(rad);
+        double latTol = Math.Max(lateralFloorM, rangeM * 0.15);
+        double alongTol = Math.Max(alongFloorM, rangeM * 0.20);
+
         foreach (var f in friendlies)
         {
-            if (Math.Abs(f.RangeM - rangeM) > rangeTolM) continue;
-            if (Math.Abs(Normalize(f.RelBearingDeg - relBearingDeg)) > bearingTolDeg) continue;
+            double fr = f.RelBearingDeg * Math.PI / 180.0;
+            if (Math.Abs(f.RangeM * Math.Sin(fr) - linkLat) > latTol) continue;
+            if (Math.Abs(f.RangeM * Math.Cos(fr) - linkAhead) > alongTol) continue;
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// 地图判定加迟滞：命中即锁存，连续 <paramref name="holdS"/> 秒都判不到才放掉。
+    /// <para>不加迟滞的话，即使容差够宽，在边界附近（尤其长机刚好飞出 1 km）也会逐帧翻转，
+    /// 屏幕上就是「长机不在图上」一闪一闪。留 0.8 s 正好压住抖动，又不至于让人等太久。</para>
+    /// </summary>
+    public static bool LatchVisible(bool hit, ref bool latched, ref double lastHitS,
+                                    double nowS, double holdS = 0.8)
+    {
+        if (hit)
+        {
+            lastHitS = nowS;
+            latched = true;
+        }
+        else if (nowS - lastHitS > holdS)
+        {
+            latched = false;
+        }
+        return latched;
     }
 }

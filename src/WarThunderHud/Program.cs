@@ -776,6 +776,31 @@ public static class Program
                 Array.Empty<WtHud.Hud.FriendlyContact>(), 400, 10));
         Check("map visibility tolerance is bounded",
             !WtHud.Hud.FormationResolver.VisibleOnMap(mapFr, 400, 40));
+        // ★ 实测反馈：两机贴在一起时提示一直闪。原因是判据只有固定角度（40 m 处 25° = 17 m），
+        //   而 4 Hz 报文在 250 m/s 时就漂 60 m —— 近距离必然在边界上抖。
+        Check("map visibility holds at close range even without a map icon",
+            WtHud.Hud.FormationResolver.VisibleOnMap(
+                Array.Empty<WtHud.Hud.FriendlyContact>(), 150, 10));
+        var mapClose = new List<WtHud.Hud.FriendlyContact> { new(40, 60, "Fighter") };
+        Check("map visibility tolerates close-range bearing jitter",
+            WtHud.Hud.FormationResolver.VisibleOnMap(mapClose, 55, 5));
+        var mapNear = new List<WtHud.Hud.FriendlyContact> { new(30, 210, "Fighter") };
+        Check("map visibility uses metres, not a fixed 25 degrees",
+            WtHud.Hud.FormationResolver.VisibleOnMap(mapNear, 210, 0));
+        Check("map visibility still rejects a hidden lead when another wingman is near",
+            !WtHud.Hud.FormationResolver.VisibleOnMap(
+                new List<WtHud.Hud.FriendlyContact> { new(0, 400, "Fighter") }, 1200, 0));
+
+        // 迟滞：命中后 0.8 s 内判不到也算可见，过了才放掉（压住边界闪烁）
+        bool latch = false;
+        double hitAt = double.NegativeInfinity;
+        Check("map latch starts hidden",
+            !WtHud.Hud.FormationResolver.LatchVisible(false, ref latch, ref hitAt, 0));
+        Check("map latch holds through a miss",
+            WtHud.Hud.FormationResolver.LatchVisible(true, ref latch, ref hitAt, 1.0)
+            && WtHud.Hud.FormationResolver.LatchVisible(false, ref latch, ref hitAt, 1.5));
+        Check("map latch releases after the hold window",
+            !WtHud.Hud.FormationResolver.LatchVisible(false, ref latch, ref hitAt, 1.9));
 
         // ---- 长机僚机表：按槽位排序、含「数据错误」行、状态词带数字 ----
         var wt1 = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, null, null, 0,
@@ -3388,6 +3413,8 @@ public static class Program
         guideIntegralLastT = 0;
         leadHeadingLockValid = false;
         altitudeStageActive = false;      // 重新开始编队时回到「先爬升」的判定
+        mapVisibleLatched = false;        // 地图判定也要忘掉上一次的锁存
+        mapVisibleLastHitS = double.NegativeInfinity;
         vertSmoothT = -1;                 // 平滑器一起重置，否则会从上一段的旧值慢慢爬过来
     }
 
@@ -3702,7 +3729,8 @@ public static class Program
             // 两条路径的差别只在这一步：有链路就直接认节点（不依赖 map_obj 的友机列表，
             // 也就不会把「最近的僚机」当成长机）；无链路才退回「最近的友机」。
             // 两者都需要自机坐标才能给水平量 —— 拿不到就只留垂直引导。
-            var target = ResolveFormationTarget(cfg, map, dataLink, opt, sizeX, sizeY, navHeading);
+            var target = ResolveFormationTarget(cfg, map, dataLink, opt, sizeX, sizeY, navHeading,
+                                                snap.ElapsedSeconds);
             if (target.Source != FormationSource.None)
             {
                 double leadRange = target.RangeM;
@@ -4486,6 +4514,10 @@ public static class Program
     /// <summary>是否处在「先爬升」阶段（带迟滞）。编队重编时由状态机重置。</summary>
     private static bool altitudeStageActive;
 
+    /// <summary>地图判定（只跟地图可见）的锁存状态与上次命中时刻，用来压住边界抖动。</summary>
+    private static bool mapVisibleLatched;
+    private static double mapVisibleLastHitS = double.NegativeInfinity;
+
     /// <summary>与 <see cref="HudOptions.Friendlies"/> 同序的归一化位置，供数据链按位置配对。</summary>
     private static readonly List<(double X, double Y)> friendPos = new();
 
@@ -4551,7 +4583,8 @@ public static class Program
     /// 之后 PID、两阶段、垂直引导、绘制全部共用一份。
     /// </summary>
     private static FormationTarget ResolveFormationTarget(HudConfig cfg, WtHud.Telemetry.MapData map,
-        WtHud.Telemetry.DataLink? link, HudOptions opt, double sizeX, double sizeY, double navHeading)
+        WtHud.Telemetry.DataLink? link, HudOptions opt, double sizeX, double sizeY, double navHeading,
+        double nowS = 0)
     {
         var byLink = default(FormationTarget);
         var leadNode = default(WtHud.Telemetry.DataLink.LinkNode);
@@ -4565,8 +4598,12 @@ public static class Program
                 // 「只跟地图可见」（默认开）：地图上没显示这架友机，就当没看见。
                 // 全真 1 km 外不给友机图标，这一条会把超距的链路位置挡回去 ——
                 // 关掉之后才允许纯报文位置，可以超过 1 km。
+                // ★ 锁存 0.8 s：判据在边界附近会逐帧翻转，不锁存的话提示一闪一闪
+                //   （近距离角度抖动、长机刚好压在 1 km 上，都会这样）。
                 if (cfg.FormationMapOnly
-                    && !FormationResolver.VisibleOnMap(opt.Friendlies, byLink.RangeM, byLink.RelBearingDeg))
+                    && !FormationResolver.LatchVisible(
+                        FormationResolver.VisibleOnMap(opt.Friendlies, byLink.RangeM, byLink.RelBearingDeg),
+                        ref mapVisibleLatched, ref mapVisibleLastHitS, nowS))
                     return byLink with { HasHorizontal = false, LeadHidden = true };
                 return byLink;
             }
