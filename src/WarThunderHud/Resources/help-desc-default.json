@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 46,
+  "_version": 47,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -489,8 +489,8 @@
     "en": "This machine's role in the formation, derived from LEAD MODE: on = lead, off = wing. The value rides in the 10th field of every packet so wingmen can identify the lead instead of guessing \"the most recently active node\". Two machines both in lead mode is a misconfiguration: the receiver sees two role=1 nodes and flags it as ambiguous."
   },
   "row.fMapOnly": {
-    "zh": "地图判定（数据链页，**默认开**）：数据链认出了长机、但地图上没有这架友机时（全真 1 km 外不显示友机图标），不给水平引导，提示「长机不在图上」。\\n\\n★★ **关掉之后后果自负**：那是拿对方自报的坐标绕过游戏给的可见性，报文只有 4 Hz（1000 km/h 时滞后 70 m），读数偏了、队形散了，与本软件无关。\\n\\n关掉后可用报文坐标继续引导，能超过 1 km；判定用距离 + 相对方位（容差 500 m / 25°），不比坐标——两边采样时刻不同。",
-    "en": "Map check (data-link page, **on by default**): when the link identifies a lead the map does not show (simulator battles hide friendlies beyond ~1 km), no lateral guidance is given and the HUD says LEAD NOT ON MAP. \\n\\n**Turning it off is at your own risk.** It uses the peer's self-reported position to bypass what the game shows you, and that report is only 4 Hz (70 m stale at 1000 km/h). If the readout drifts, that is on you. \\n\\nWith it off, guidance runs on the reported coordinates beyond 1 km; matching uses range and relative bearing (500 m / 25 deg), not coordinates, since the sources sample at different times."
+    "zh": "地图判定（数据链页，默认开）：数据链认出了长机、但地图上没有这架友机时，不提供水平引导，提示「长机不在图上」。\\n★★ 在全真模式对局关掉此开关后果自负 ★★\\n报文只有 4 Hz（1000 km/h 时滞后 70 m），读数偏了、队形散了，与本软件无关。\\n关掉后可用报文坐标继续引导，能超过 1 km；判定用距离 + 相对方位（容差 500 m / 25°），不比坐标——两边采样时刻不同。",
+    "en": "Map check (data-link page, on by default): when the link identifies a lead the map does not show, no lateral guidance is provided and the HUD says LEAD NOT ON MAP. \\n**Turning this off during a simulator battle is at your own risk.**\\nThe report is only 4 Hz (70 m stale at 1000 km/h): if the readout drifts or the formation falls apart, that is not this software's doing.\\nWith it off, guidance runs on the reported coordinates beyond 1 km; matching uses range and relative bearing (500 m / 25 deg), not coordinates - the two sources sample at different times."
   },
   "row.dataLinkLeadId": {
     "zh": "手动指定长机：填对方的节点 ID，0 = 自动。★ 本机「长机模式」开着时这一项被强制忽略并显示 0 —— 自己就是长机，再认一个长机会让僚机端看到两个自称长机的节点。自动顺序是「手填 ID → 唯一自称长机的节点 → 场上只有一个节点 → 最近活跃」。三方以上编队、或两台都开了长机模式时自动会分不清，这一行就是强制手段。★ 填了就必须真能收到这个 ID，否则僚机侧会一直显示认不出长机——这是有意的，宁可明说，也不拿别人的高度顶替。",
