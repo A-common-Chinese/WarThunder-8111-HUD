@@ -8,7 +8,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.4.35**（预发布） · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
+当前版本 **v0.4.37**（正式版；编队/数据链仍为 beta） · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -371,7 +371,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 **Read-only by design**: no injection, no memory reads, no file modification, no packet
 interception, no automation. It never draws enemy positions (no ESP).
 
-Current version **v0.4.35** (pre-release) · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
+Current version **v0.4.37** (stable; formation/data link still beta) · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 > **The interface defaults to Chinese.** Press `F1` → `LANGUAGE` to switch the panel, the HUD and
 > the alerts to English — step-by-step with a screenshot under
