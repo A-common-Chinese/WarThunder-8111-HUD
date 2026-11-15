@@ -133,7 +133,12 @@ public sealed class MfdFrameForm : Form
         var envFit = Environment.GetEnvironmentVariable("WT_MFD_FIT");
         if (float.TryParse(envFit, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var forced) && forced > 0.1f)
-            fit = Math.Clamp(forced, 0.2, MaxFitFor(_bezel.Width));
+        {
+            // ★ 强制值也要夹进工作区：窗口一旦超过屏幕，Windows 会把 ClientSize 截小，
+            //   而布局/字体仍按原尺寸算 —— 出图会看到「边框比窗口大、内容被裁」。实测踩过。
+            double room = Math.Min(work.Width * 0.98 / DesignWidth, work.Height * 0.98 / DesignHeight);
+            fit = Math.Clamp(forced, 0.2, Math.Min(MaxFitFor(_bezel.Width), room));
+        }
         var panelW = (int)(DesignWidth * fit);
         var panelH = (int)(DesignHeight * fit);
         Console.WriteLine($"panel: {panelW}x{panelH} fit={fit:F3} (bezel {_bezel.Width}px, "

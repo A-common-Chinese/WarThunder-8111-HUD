@@ -1299,6 +1299,9 @@ public static partial class Program
             }
             catch { }
         }
+        // ★ 版本号独立成一行打在最前：日志窗口一打开就能看到，不用从后面那串参数里
+        //   扒 ver=0.4.37.0（那是 AssemblyVersion 的四段式，且带 .0，一眼认不出）。
+        Console.WriteLine($"WtHud {ShortVersion}");
         Console.WriteLine($"overlay start {DateTime.Now:HH:mm:ss} {scrW}x{scrH} dpiScale={overlay.DpiScale:F3} " +
                           $"pid={Environment.ProcessId} ver={typeof(Program).Assembly.GetName().Version} " +
                           $"elevated={IsProcessElevated(Environment.ProcessId)}");
