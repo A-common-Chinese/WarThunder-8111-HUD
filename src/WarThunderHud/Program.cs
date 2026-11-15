@@ -2561,30 +2561,10 @@ public static partial class Program
                 }
                 else
                 {
-                    var wing = opt.Friendlies[NearestFriendlyIndex(opt.Friendlies)];
-                    double wingClosing = UpdateClosingRate(wing.RangeM, snap.ElapsedSeconds);
-                    // 长机同样要走到位判定：FORMATION SET 是给长机的「可以开始机动了」信号，
-                    // 只有僚机跑状态机的话，长机永远等不到这句。长机没有「站位」这回事，
-                    // 方位传 0 = 永远对齐，期望距离用长机自己的配置。
-                    // ★ 统一模型之后编号只是编号，推不出僚机的站位 —— 不再按僚机槽位取几何。
-                    // 没有僚机自报时才跑长机自己的状态机（无链路模式保留现状）
-                    if (wingRows.Count == 0)
-                        UpdateFormationStage(wing.RangeM, 0, snap.ElapsedSeconds, cfg);
-
-                    if (wing.RangeM < 200)
-                    {
-                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.close");
-                        warn = true;
-                    }
-                    else if (wing.RangeM > 1000 || (wing.RangeM > 600 && wingClosing < -10))
-                    {
-                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
-                        warn = true;
-                    }
-                    else
-                    {
-                        main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.formation");
-                    }
+                    // 长机只判「到位 / 未到位」：没有僚机自报时不知道谁在哪，就是未到位。
+                    // 不再按距离/接近率报「距离过近 / 僚机掉队」（飞行员反馈 2026-11-15）。
+                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.incomplete");
+                    warn = true;
                 }
 
                 // ★ 有僚机自报时以自报为准：主行只说整体，具体谁掉了看下面那张表。
@@ -2594,25 +2574,10 @@ public static partial class Program
                 //     否则说数据错误。规则集中在 WingVerdict，别在这里再抄一份。
                 if (wingRows.Count > 0)
                 {
-                    switch (WingVerdict(wingRows))
-                    {
-                        case LeadWingVerdict.Complete:
-                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.formation");
-                            warn = false;
-                            break;
-                        case LeadWingVerdict.Incomplete:
-                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.late");
-                            warn = true;
-                            break;
-                        case LeadWingVerdict.Offline:
-                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.lead.wingOffline");
-                            warn = true;
-                            break;
-                        default:
-                            main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr");
-                            warn = true;
-                            break;
-                    }
+                    bool allSet = WingVerdict(wingRows) == LeadWingVerdict.Complete;
+                    main = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
+                        allSet ? "guide.lead.formation" : "guide.lead.incomplete");
+                    warn = !allSet;
                 }
                 foreach (var n in wingRows)
                     opt.LeadWingRows.Add((WingLabel(n), WingStateText(n),
@@ -2749,9 +2714,14 @@ public static partial class Program
                 // ---- 垂直引导 ----
                 // 目标高度差 = 长机高度 + 槽位高度（UpM 正 = 站位比长机高），所以目标 ΔH = −UpM。
                 // 误差 = 当前 ΔH − 目标 ΔH，正 = 我偏低、要爬。
+                // 提升到这一层：到位判定也要用原始垂直误差（不再只判水平距离）。
+                double altErrNow = 0;
+                bool altKnown = false;
                 if (opt.AltDiffM is double currentDiff)
                 {
                     double altErr = currentDiff - slot.TargetDeltaHM;
+                    altErrNow = altErr;
+                    altKnown = true;
                     // 显示/指令用平滑值，阶段判定用原始值：4 Hz 的跳变不该让横带和数字抖
                     double altShown = SmoothVertError(altErr, snap.ElapsedSeconds);
                     double vertGate = Math.Max(5, cfg.FormationVertGateM);
@@ -2884,7 +2854,7 @@ public static partial class Program
                     // 槽位号直接用配置里的那个 —— 三人编队时它同时也是「我是第几号僚机」。
                     selfWingSlot = Math.Clamp(cfg.FormationSlot, 0, 8);
                     selfWingErrM = (int)Math.Round(Math.Clamp(err, -9999, 9999));
-                    selfWingState = WingStateFrom(err, aimDeg, slot.RangeM, cfg);
+                    selfWingState = WingStateFrom(err, altErrNow, altKnown, aimDeg, cfg);
 
                     // ---- 转弯提前量：把机头指向长机的未来位置 ----
                     // 优先用数据链里长机自报的转向率（准、无滞后）；没有就退化为相对方位变化率反推。
@@ -2929,8 +2899,9 @@ public static partial class Program
                     if (opt.Vertical is { Priority: true })
                         action = FormationAction.None;
 
-                    // 编队状态机：判定到位（40 m 持续 2 s）→ 提示「编队完成」
-                    UpdateFormationStage(leadRange, aimDeg, snap.ElapsedSeconds, cfg);
+                    // 编队状态机：固定门槛（水平 15 / 高度 10 m）+ 保持 2 s
+                    UpdateFormationStage(leadRange, slot.RangeM, aimDeg, altErrNow, altKnown,
+                                         snap.ElapsedSeconds, cfg);
 
                     // 解除后不画本轮引导（友机标记仍在航向带上，那是另一条线）
                     // ★ 这里必须带大括号：不带的写法会让下面的 Guide 赋值跑到 if/else 之外，
@@ -3512,23 +3483,27 @@ public static partial class Program
     }
 
     /// <summary>
-    /// 僚机自报的站位状态。判据与状态机「脱离 MAINTAIN」用同一条线，
-    /// 否则会出现「僚机屏幕上还在编队里、长机那边已经标掉队」。
-    /// <para><paramref name="errM"/> 正 = 比槽位远（掉队），负 = 冲到前面。</para>
+    /// 到位/掉出的固定门槛（米）。飞行员反馈（2026-11-15）：宽容度不该让用户设 ——
+    /// 原来是「槽位斜距的百分比」，400 m 站位上 10% 就是 40 m，明显太宽。
+    /// 现在开发者定死：水平 15 / 高度 10 m 算到位，水平 30 / 高度 20 m 算掉出。
+    /// </summary>
+    internal const double FormationDoneHorizM = 15.0;
+    internal const double FormationDoneVertM = 10.0;
+    internal const double FormationDropHorizM = 30.0;
+    internal const double FormationDropVertM = 20.0;
+
+    /// <summary>
+    /// 僚机自报的站位状态：长机只看「到位 / 未到位」，不再细分掉队/冲出/偏离。
     /// </summary>
     internal static WtHud.Telemetry.DataLink.WingState WingStateFrom(
-        double errM, double aimDeg, double slotRangeM, HudConfig cfg)
+        double errM, double vertErrM, bool hasVert, double aimDeg, HudConfig cfg)
     {
-        double pct = FormationRangeErrorPct(slotRangeM + errM, slotRangeM);
-        double dropPct = Math.Clamp(cfg.FormationDropPct, 1, 500);
-        if (pct > dropPct) return errM >= 0
-            ? WtHud.Telemetry.DataLink.WingState.Behind
-            : WtHud.Telemetry.DataLink.WingState.Ahead;
-
-        if (Math.Abs(aimDeg) > Math.Max(0.5, cfg.FormationAlignDeg) * 2.0)
-            return WtHud.Telemetry.DataLink.WingState.OffStation;
-
-        return WtHud.Telemetry.DataLink.WingState.InPosition;
+        bool inPos = Math.Abs(errM) <= FormationDoneHorizM
+                     && (!hasVert || Math.Abs(vertErrM) <= FormationDoneVertM)
+                     && Math.Abs(aimDeg) <= Math.Max(0.5, cfg.FormationAlignDeg);
+        return inPos
+            ? WtHud.Telemetry.DataLink.WingState.InPosition
+            : WtHud.Telemetry.DataLink.WingState.OffStation;
     }
 
     /// <summary>
@@ -3739,20 +3714,12 @@ public static partial class Program
     internal static string WingStateText(WtHud.Telemetry.DataLink.LinkNode n)
     {
         var alerts = WtHud.UI.LangScope.Alerts;
-        // 掉线优先于一切自报：包一停，最后那句"我在位"就只是历史。
-        if (n.AgeMs >= WtHud.Telemetry.DataLink.StaleMs)
-            return string.Format(WtHud.UI.L10n.Get(alerts, "guide.wing.offline"),
-                                 Math.Max(1, n.AgeMs / 1000));
-        return n.Wing switch
-        {
-            WtHud.Telemetry.DataLink.WingState.InPosition => WtHud.UI.L10n.Get(alerts, "guide.wing.ok"),
-            WtHud.Telemetry.DataLink.WingState.Behind => string.Format(
-                WtHud.UI.L10n.Get(alerts, "guide.wing.behind"), Math.Abs(n.ErrM)),
-            WtHud.Telemetry.DataLink.WingState.Ahead => string.Format(
-                WtHud.UI.L10n.Get(alerts, "guide.wing.ahead"), Math.Abs(n.ErrM)),
-            WtHud.Telemetry.DataLink.WingState.OffStation => WtHud.UI.L10n.Get(alerts, "guide.wing.off"),
-            _ => WtHud.UI.L10n.Get(alerts, "guide.wing.dataErr"),
-        };
+        // 长机侧只关心「到位 / 未到位」（飞行员反馈 2026-11-15）：
+        // 掉线、数据错误、掉队/冲出都不再细分，统一显示未到位。
+        return n.AgeMs < WtHud.Telemetry.DataLink.StaleMs
+               && n.Wing == WtHud.Telemetry.DataLink.WingState.InPosition
+            ? WtHud.UI.L10n.Get(alerts, "guide.wing.ok")
+            : WtHud.UI.L10n.Get(alerts, "guide.wing.notOk");
     }
 
     // ---- 队标校验（机场锚点）----
@@ -4100,24 +4067,22 @@ public static partial class Program
     /// 期望距离用哪个槽位算。-1 = 用本机配置的槽位（僚机侧就是自己的）；
     /// 长机侧要传**僚机自报的槽位** —— 否则三机时按长机自己的槽位算，永远对不上。
     /// </param>
-    private static void UpdateFormationStage(double rangeM, double aimDeg, double nowS, HudConfig cfg)
+    private static void UpdateFormationStage(double rangeM, double slotRangeM, double aimDeg,
+        double vertErrM, bool hasVert, double nowS, HudConfig cfg)
     {
         if (formationStage == FormationStage.Disabled) return;
 
-        // 按本机站位的斜距百分比判定：同一套松紧在 400 m 和 1545 m 的站位上都成立。
-        // ★ 统一模型之后几何只来自本机配置 —— 僚机的编号推不出它自己的站位。
-        double slotRange = WtHud.Hud.FormationGeometry.Station(cfg).RangeM;
-        double err = FormationRangeErrorPct(rangeM, slotRange);
+        // 固定门槛（米）：水平 / 高度分开判，不再按槽位斜距的百分比（飞行员反馈 2026-11-15）。
+        double err = Math.Abs(rangeM - slotRangeM);
+        double verr = hasVert ? Math.Abs(vertErrM) : 0.0;
 
-        // 站位：距离对上但没站在槽位上，不算「编队完成」。阈值和 Hold 用同一个配置，
-        // 脱离时放宽一倍 —— 否则在门槛上会反复切换「完成 / 收敛」。
         double alignDeg = Math.Max(0.5, cfg.FormationAlignDeg);
         bool aligned = Math.Abs(aimDeg) <= alignDeg;
         bool badlyAligned = Math.Abs(aimDeg) > alignDeg * 2.0;
 
         if (formationStage == FormationStage.Converge)
         {
-            if (err <= cfg.FormationDonePct && aligned)
+            if (err <= FormationDoneHorizM && verr <= FormationDoneVertM && aligned)
             {
                 if (formationDoneSince < 0) formationDoneSince = nowS;
                 else if (nowS - formationDoneSince >= Math.Max(0.1, cfg.FormationDoneHoldS))
@@ -4131,7 +4096,7 @@ public static partial class Program
             else formationDoneSince = -1;
         }
         else if (formationStage == FormationStage.Maintain
-                 && (err > cfg.FormationDropPct || badlyAligned))
+                 && (err > FormationDropHorizM || verr > FormationDropVertM || badlyAligned))
         {
             formationStage = FormationStage.Converge;
             formationStageSince = nowS;

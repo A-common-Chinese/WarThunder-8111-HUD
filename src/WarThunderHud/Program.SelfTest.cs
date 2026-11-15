@@ -551,20 +551,22 @@ public static partial class Program
         Check("no checker means no filtering",
             !WtHud.Telemetry.DataLink.RejectsAnchor(anchorOther, null));
 
-        // ---- 站位状态判定：与状态机脱离 MAINTAIN 同一条线 ----
-        var wc = new HudConfig { FormationDropPct = 30, FormationAlignDeg = 5 };
-        Check("200 m over a 400 m slot is behind",
-            WingStateFrom(200, 0, 400, wc) == WtHud.Telemetry.DataLink.WingState.Behind);
-        Check("50 m over a 400 m slot is in position",
-            WingStateFrom(50, 0, 400, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
-        Check("200 m short is ahead",
-            WingStateFrom(-200, 0, 400, wc) == WtHud.Telemetry.DataLink.WingState.Ahead);
+        // ---- 站位状态判定：固定门槛（水平 15 / 高度 10 m），长机只看到位/未到位 ----
+        var wc = new HudConfig { FormationAlignDeg = 5 };
+        Check("200 m over a 400 m slot is off station",
+            WingStateFrom(200, 0, false, 0, wc) == WtHud.Telemetry.DataLink.WingState.OffStation);
+        Check("10 m over is in position",
+            WingStateFrom(10, 0, false, 0, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
+        Check("200 m short is off station",
+            WingStateFrom(-200, 0, false, 0, wc) == WtHud.Telemetry.DataLink.WingState.OffStation);
         Check("close but 20 deg off is off-station",
-            WingStateFrom(50, 20, 400, wc) == WtHud.Telemetry.DataLink.WingState.OffStation);
+            WingStateFrom(10, 0, false, 20, wc) == WtHud.Telemetry.DataLink.WingState.OffStation);
         Check("close and 5 deg off is in position",
-            WingStateFrom(50, 5, 400, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
-        Check("zero slot range does not divide by zero",
-            WingStateFrom(50, 0, 0, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
+            WingStateFrom(10, 0, false, 5, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
+        Check("vertical error beyond 10 m is off station",
+            WingStateFrom(10, 25, true, 0, wc) == WtHud.Telemetry.DataLink.WingState.OffStation);
+        Check("missing vertical data does not fail the station",
+            WingStateFrom(10, 99, false, 0, wc) == WtHud.Telemetry.DataLink.WingState.InPosition);
 
         // ---- 长机侧：谁掉队，按偏离量从大到小 ----
         var nrOk = new WtHud.Telemetry.DataLink.LinkNode(11, 3000, 0, 0, 0, 0.5, 0.5, 0,
@@ -709,17 +711,16 @@ public static partial class Program
         Check("role index reads back from the two fields",
             WtHud.UI.Mfd.MfdPages.RoleIndex(roleCfg) == 0);
 
-        // ---- 判定余量：门槛 vs 链路一拍 ----
+        // ---- 判定余量：固定门槛 vs 链路一拍（只做参考，不再有 ✗）----
         var marginCfg = new HudConfig
         {
             FormationShape = WtHud.Hud.FormationGeometry.ShapeCustom,
-            FormationStationBackM = 400, FormationDonePct = 10,
+            FormationStationBackM = 400,
         };
         string marginOk = WtHud.UI.Mfd.MfdPages.MarginText(marginCfg, 35);
-        Check("margin shows the band and the latency",
-            marginOk.Contains("40 m") && marginOk.Contains("35 m") && !marginOk.EndsWith("✗"));
-        Check("margin flags latency beyond the band",
-            WtHud.UI.Mfd.MfdPages.MarginText(marginCfg, 55).EndsWith("✗"));
+        Check("margin shows the fixed band and the latency",
+            marginOk.Contains("15") && marginOk.Contains("10") && marginOk.Contains("35")
+            && !marginOk.Contains("✗"));
 
         // ---- 配置包：往返、清洗、应用范围 ----
         var profCfg = new HudConfig
@@ -872,12 +873,12 @@ public static partial class Program
         Check("wing table tolerates null", WingTable(null).Count == 0);
         Check("data-error wing stays in the table",
             WingTable(new[] { wt1, wt2, wt3, wt4 }).Count == 3);
-        Check("state text says behind with metres", WingStateText(wt1).Contains("480"));
-        Check("state text says on station", WingStateText(wt2).Length > 0
-            && WingStateText(wt2) != "guide.wing.ok");
-        Check("unknown state is spelled out as a data error",
-            WingStateText(wt3).Length > 0
-            && WingStateText(wt3) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.dataErr"));
+        Check("state text is binary: behind reads not-set",
+            WingStateText(wt1) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.notOk"));
+        Check("state text says on station",
+            WingStateText(wt2) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.ok"));
+        Check("unknown state also reads not-set",
+            WingStateText(wt3) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.notOk"));
 
         // ---- 主状态判定：数据错误/掉线不参与完整性，但没人判定时要说真话 ----
         Check("data-error wing does not break completeness",
@@ -894,7 +895,8 @@ public static partial class Program
             0, WtHud.Telemetry.DataLink.LinkRole.Wing, 9,
             WtHud.Telemetry.DataLink.WingState.InPosition, 1, 0);
         Check("offline wing keeps its slot", WingTable(new[] { wt2, wtOff }).Count == 2);
-        Check("offline state wins over the last report", WingStateText(wtOff).Contains("12"));
+        Check("offline wing also reads not-set",
+            WingStateText(wtOff) == WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "guide.wing.notOk"));
         Check("offline does not break completeness",
             WingVerdict(new[] { wt2, wtOff }) == LeadWingVerdict.Complete);
         Check("nobody judged and one offline says offline",
@@ -1410,16 +1412,10 @@ public static partial class Program
         Check("G row edit buffer has no unit letter", gRow.NumberText(ucfg) == "3.0");
         Check("G row accepts a typed value",
             gRow.TryParseNumber(ucfg, "3.0", out var gVal) && Math.Abs(gVal - 3.0) < 1e-9);
-        var pctRow = new WtHud.UI.Mfd.MfdItem
-        {
-            LabelKey = "row.fDonePct", Kind = WtHud.UI.Mfd.ItemKind.Number,
-            Step = 1, Min = 1, Max = 50, Unit = "%",
-            GetNumber = c => c.FormationDonePct,
-            SetNumber = (c, v) => c.FormationDonePct = v,
-        };
-        Check("percent row edit buffer has no sign", pctRow.NumberText(ucfg) == "10");
-        Check("percent row accepts a typed value",
-            pctRow.TryParseNumber(ucfg, "25", out var pctVal) && Math.Abs(pctVal - 25) < 1e-9);
+        // 到位/掉出门槛是开发者定死的米数（飞行员反馈：不该让用户调）
+        Check("done band is fixed in metres",
+            FormationDoneHorizM == 15 && FormationDoneVertM == 10
+            && FormationDropHorizM == 30 && FormationDropVertM == 20);
 
         // ---- HUD：真的画一次，看画出来的文本 ----
         var unitSnap = new TelemetrySnapshot

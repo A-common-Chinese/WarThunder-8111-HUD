@@ -368,6 +368,11 @@ public static class L10n
         ["row.fWingOffset"] = ("侧位横偏", "WING OFFSET"),
         ["row.fStationBack"] = ("后距", "STATION BACK"),
         ["row.fDonePct"] = ("完成误差 %", "DONE BAND %"),
+        ["row.fDoneBand"] = ("到位门槛", "DONE BAND"),
+        ["row.fDropBand"] = ("掉出门槛", "DROP BAND"),
+        ["guide.doneBand"] = ("水平 {0:0} m · 高度 {1:0} m", "HORIZ {0:0} m · VERT {1:0} m"),
+        ["guide.dropBand"] = ("水平 {0:0} m · 高度 {1:0} m", "HORIZ {0:0} m · VERT {1:0} m"),
+        ["val.margin"] = ("到位 {0} / 延迟 {1}", "BAND {0} / LAT {1}"),
         ["row.fAlignDeg"] = ("站位容差", "ALIGN TOL"),
         ["row.fDoneHold"] = ("完成保持", "DONE HOLD"),
         ["row.fDropPct"] = ("掉出门槛 %", "DROP BAND %"),
@@ -528,6 +533,14 @@ public static class L10n
         ["guide.altMatch"] = ("高度一致", "LEVEL"),
         ["guide.lead.formation"] = ("编队完整", "FORMATION"),
         ["guide.lead.late"] = ("僚机掉队", "WINGMAN LATE"),
+        // 长机只关心「到位 / 未到位」，不报掉队/冲出等细节（飞行员反馈 2026-11-15）
+        ["guide.lead.incomplete"] = ("僚机未到位", "WING NOT SET"),
+        ["guide.wing.notOk"] = ("未到位", "NOT SET"),
+        ["guide.doneBand"] = ("水平 {0:0} m · 高度 {1:0} m", "HORIZ {0:0} m · VERT {1:0} m"),
+        ["guide.dropBand"] = ("水平 {0:0} m · 高度 {1:0} m", "HORIZ {0:0} m · VERT {1:0} m"),
+        ["row.fDoneBand"] = ("到位门槛", "DONE BAND"),
+        ["row.fDropBand"] = ("掉出门槛", "DROP BAND"),
+        ["val.margin"] = ("到位 {0} / 延迟 {1}", "BAND {0} / LAT {1}"),
         // 长机看僚机自报（数据链第 11 段）：带槽位号，三人编队能直接点名
         // 长机 HUD 的僚机表：只有状态词，标签单独一列
         ["guide.wing.ok"] = ("到位", "ON STATION"),

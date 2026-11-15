@@ -706,11 +706,11 @@ internal static class MfdPages
     /// </summary>
     internal static string MarginText(HudConfig c, double latencyM)
     {
-        double band = WtHud.Hud.FormationGeometry.Station(c).RangeM
-                      * Math.Max(1.0, c.FormationDonePct) / 100.0;
-        if (latencyM <= 0.5) return $"门槛 {Units.DistancePlainSpaced(band, c.LengthUnits)} / 延迟 —";
-        return $"门槛 {Units.DistancePlainSpaced(band, c.LengthUnits)} / 延迟 {Units.DistancePlainSpaced(latencyM, c.LengthUnits)}"
-               + (latencyM > band ? " ✗" : "");
+        // 固定门槛改由开发者定（飞行员反馈 2026-11-15）：显示门槛与链路一拍，供参考。
+        string band = string.Format(L10n.Get(LangScope.Screen, "guide.doneBand"),
+            WtHud.Program.FormationDoneHorizM, WtHud.Program.FormationDoneVertM);
+        string lat = latencyM <= 0.5 ? "—" : Units.DistancePlainSpaced(latencyM, c.LengthUnits);
+        return string.Format(L10n.Get(LangScope.Screen, "val.margin"), band, lat);
     }
 
     /// <summary>
@@ -828,10 +828,12 @@ internal static class MfdPages
             // 队形几何（形状 + 槽位 + 三个距离）：两边必须用同一个队形，放通用页
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
 
-            // ---- 完成与脱离判定：长机也要跑同一套状态机，所以是通用项 ----
-            Number("row.fDonePct", c => c.FormationDonePct, (c, v) => c.FormationDonePct = v, 1, 1, 50, "%"),
+            // ---- 完成与脱离判定：门槛由开发者定死（飞行员反馈：不该让用户调）----
+            Info("row.fDoneBand", c => string.Format(L10n.Get(LangScope.Screen, "guide.doneBand"),
+                WtHud.Program.FormationDoneHorizM, WtHud.Program.FormationDoneVertM)),
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),
-            Number("row.fDropPct", c => c.FormationDropPct, (c, v) => c.FormationDropPct = v, 5, 5, 100, "%"),
+            Info("row.fDropBand", c => string.Format(L10n.Get(LangScope.Screen, "guide.dropBand"),
+                WtHud.Program.FormationDropHorizM, WtHud.Program.FormationDropVertM)),
 
             // ---- 两个角色页：各自的专属参数，进去才看得到 ----
             Submenu("row.fWingMenu", () => FormationWingPage(), WingPageSummary),
