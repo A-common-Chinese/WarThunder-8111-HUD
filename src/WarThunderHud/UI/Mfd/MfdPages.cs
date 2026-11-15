@@ -402,12 +402,56 @@ internal static class MfdPages
             Number("row.holeY", c => c.CursorHoleOffsetY, (c, v) => c.CursorHoleOffsetY = (int)v, 4, -1200, 1200, "px"),
             Number("row.hole", c => c.CursorHoleHalfPx, (c, v) => c.CursorHoleHalfPx = (int)v, 2, 0, 200, "px"),
             Toggle("row.ladder", c => c.ShowPitchLadder, (c, v) => c.ShowPitchLadder = v),
+            Number("row.ladderOffset", c => c.LadderOffsetYDeg, (c, v) => c.LadderOffsetYDeg = v, 0.25, -8, 8, "°"),
+            // 仪表块布局微调：速度带/高度带/航向带/数据块/导航/构型/编队，各自的偏移与字号。
+            Submenu("row.layoutTune", () => LayoutPage()),
             Toggle("row.fpm", c => c.ShowFpm, (c, v) => c.ShowFpm = v),
             Number("row.endurance", c => c.EnduranceScale, (c, v) => c.EnduranceScale = v, 0.05, 0.5, 3.0, ""),
             Toggle("row.configDebug", c => c.ConfigDebug, (c, v) => c.ConfigDebug = v),
             Toggle("row.splashEnabled", c => c.SplashEnabled, (c, v) => c.SplashEnabled = v),
             Text("row.playerName", c => c.PlayerName, (c, v) => c.PlayerName = v),
             // 诊断读数统一放 DIAG 页（这里不再重复）
+        },
+    };
+
+    /// <summary>
+    /// 仪表块布局微调（显示页的二级页）。每个块独立调「上下偏移 / 水平偏移 / 字号」。
+    /// <para>★ 只给仪表家具（速度带、高度带、航向带、数据块、导航、构型、编队块）；
+    /// 俯仰梯/地平线/FPM/坡度尺这些要和真地平线对齐的元素不在这里（缩了就是假数据）。</para>
+    /// <para>偏移单位是度（向上为正），字号是无量纲倍数。默认全 0 / 1.0 = 和以前完全一样。</para>
+    /// </summary>
+    private static MfdPage LayoutPage() => new()
+    {
+        Key = "display.layout",
+        TitleKey = "page.layout",
+        ParentTitleKey = "page.display",
+        MenuKey = "page.layout",
+        MenuHintKey = "menu.hint.layout",
+        Items =
+        {
+            // ---- 速度带 ----
+            Number("row.spdOffX", c => c.Layout.SpeedOffsetX, (c, v) => c.Layout.SpeedOffsetX = v, 0.5, -10, 10, "°"),
+            Number("row.spdOffY", c => c.Layout.SpeedOffsetY, (c, v) => c.Layout.SpeedOffsetY = v, 0.5, -10, 10, "°"),
+            Number("row.spdScale", c => c.Layout.SpeedScale, (c, v) => c.Layout.SpeedScale = v, 0.05, 0.8, 1.4, "×"),
+            // ---- 高度带 ----
+            Number("row.altOffX", c => c.Layout.AltOffsetX, (c, v) => c.Layout.AltOffsetX = v, 0.5, -10, 10, "°"),
+            Number("row.altOffY", c => c.Layout.AltOffsetY, (c, v) => c.Layout.AltOffsetY = v, 0.5, -10, 10, "°"),
+            Number("row.altScale", c => c.Layout.AltScale, (c, v) => c.Layout.AltScale = v, 0.05, 0.8, 1.4, "×"),
+            // ---- 航向带 ----
+            Number("row.hdgOffY", c => c.Layout.HeadingOffsetY, (c, v) => c.Layout.HeadingOffsetY = v, 0.5, -8, 8, "°"),
+            Number("row.hdgScale", c => c.Layout.HeadingScale, (c, v) => c.Layout.HeadingScale = v, 0.05, 0.8, 1.4, "×"),
+            // ---- 数据块（G/AOA/FUEL/ALT）----
+            Number("row.dbOffY", c => c.Layout.DataBlockOffsetY, (c, v) => c.Layout.DataBlockOffsetY = v, 0.5, -12, 12, "°"),
+            Number("row.dbScale", c => c.Layout.DataBlockScale, (c, v) => c.Layout.DataBlockScale = v, 0.05, 0.8, 1.5, "×"),
+            // ---- 导航行 ----
+            Number("row.navOffY", c => c.Layout.NavOffsetY, (c, v) => c.Layout.NavOffsetY = v, 0.5, -12, 12, "°"),
+            Number("row.navScale", c => c.Layout.NavScale, (c, v) => c.Layout.NavScale = v, 0.05, 0.8, 1.4, "×"),
+            // ---- 构型提示（GEAR/FLAPS/BINGO）----
+            Number("row.trOffY", c => c.Layout.TransitOffsetY, (c, v) => c.Layout.TransitOffsetY = v, 0.5, -10, 10, "°"),
+            Number("row.trScale", c => c.Layout.TransitScale, (c, v) => c.Layout.TransitScale = v, 0.05, 0.8, 1.4, "×"),
+            // ---- 编队块 ----
+            Number("row.fmOffY", c => c.Layout.FormationOffsetY, (c, v) => c.Layout.FormationOffsetY = v, 0.5, -8, 8, "°"),
+            Number("row.fmScale", c => c.Layout.FormationScale, (c, v) => c.Layout.FormationScale = v, 0.05, 0.8, 1.4, "×"),
         },
     };
 

@@ -1969,6 +1969,26 @@ public static partial class Program
             // 单位制：每帧同步，面板里一改立刻生效（不需要重启，和显示开关同一处理方式）。
             opt.SpeedUnit = cfg.SpeedUnits;
             opt.LengthUnit = cfg.LengthUnits;
+            // 俯仰梯偏移：同样每帧同步，夹到 ±8°（和面板的上下限一致，防手改 json 写成夸张值）。
+            opt.LadderOffsetYDeg = Math.Clamp(cfg.LadderOffsetYDeg, -8.0, 8.0);
+            // 仪表块布局微调：每帧同步（改完立即生效），偏移夹到 ±10°、字号夹到 0.8–1.4。
+            var l = cfg.Layout;
+            opt.Layout.SpeedOffsetX = Math.Clamp(l.SpeedOffsetX, -10, 10);
+            opt.Layout.SpeedOffsetY = Math.Clamp(l.SpeedOffsetY, -10, 10);
+            opt.Layout.SpeedScale = Math.Clamp(l.SpeedScale, 0.8, 1.4);
+            opt.Layout.AltOffsetX = Math.Clamp(l.AltOffsetX, -10, 10);
+            opt.Layout.AltOffsetY = Math.Clamp(l.AltOffsetY, -10, 10);
+            opt.Layout.AltScale = Math.Clamp(l.AltScale, 0.8, 1.4);
+            opt.Layout.HeadingOffsetY = Math.Clamp(l.HeadingOffsetY, -8, 8);
+            opt.Layout.HeadingScale = Math.Clamp(l.HeadingScale, 0.8, 1.4);
+            opt.Layout.DataBlockOffsetY = Math.Clamp(l.DataBlockOffsetY, -12, 12);
+            opt.Layout.DataBlockScale = Math.Clamp(l.DataBlockScale, 0.8, 1.5);
+            opt.Layout.NavOffsetY = Math.Clamp(l.NavOffsetY, -12, 12);
+            opt.Layout.NavScale = Math.Clamp(l.NavScale, 0.8, 1.4);
+            opt.Layout.TransitOffsetY = Math.Clamp(l.TransitOffsetY, -10, 10);
+            opt.Layout.TransitScale = Math.Clamp(l.TransitScale, 0.8, 1.4);
+            opt.Layout.FormationOffsetY = Math.Clamp(l.FormationOffsetY, -8, 8);
+            opt.Layout.FormationScale = Math.Clamp(l.FormationScale, 0.8, 1.4);
 
             // Full roll angle for the upright / inverted indicator. The bank estimate used by
             // the ladder is clamped to +/-80 deg, so it can never detect an inverted attitude;
@@ -4793,6 +4813,24 @@ public static partial class Program
             var up = unitsSpec.Split(',');
             if (up[0].Trim() is "kt" or "knots") opt.SpeedUnit = SpeedUnit.Knots;
             if (up.Length > 1 && up[1].Trim() is "ft" or "imperial") opt.LengthUnit = LengthUnit.Imperial;
+        }
+
+        // 俯仰梯偏移样张：WT_PREVIEW_LADDEROFF="4"（度，向上为正）
+        if (Environment.GetEnvironmentVariable("WT_PREVIEW_LADDEROFF") is { Length: > 0 } ladderSpec
+            && double.TryParse(ladderSpec, NumberStyles.Any, CultureInfo.InvariantCulture, out var ladderOff))
+            opt.LadderOffsetYDeg = ladderOff;
+
+        // 布局微调样张：WT_PREVIEW_LAYOUT="speedX,speedY,speedScale"（只做速度带，够看效果）
+        if (Environment.GetEnvironmentVariable("WT_PREVIEW_LAYOUT") is { Length: > 0 } layoutSpec)
+        {
+            var lp = layoutSpec.Split(',');
+            double Lv(int i, double dflt) => lp.Length > i
+                && double.TryParse(lp[i], NumberStyles.Any, CultureInfo.InvariantCulture, out var x) ? x : dflt;
+            opt.Layout.SpeedOffsetX = Lv(0, 0);
+            opt.Layout.SpeedOffsetY = Lv(1, 0);
+            opt.Layout.SpeedScale = Lv(2, 1);
+            opt.Layout.DataBlockOffsetY = Lv(3, 0);
+            opt.Layout.DataBlockScale = Lv(4, 1);
         }
 
         // 预览用的假友机：WT_PREVIEW_FRIENDS="30,1200;160,3400"（方位°,距离m）

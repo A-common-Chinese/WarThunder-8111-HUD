@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 56,
+  "_version": 58,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -100,9 +100,21 @@
     "zh": "雷达高度带：机型支持时高度带优先显示雷达高度。",
     "en": "Radar altitude tape: prefer radar altitude on aircraft that provide it."
   },
+  "row.layoutTune": {
+    "zh": "布局微调：单独调每个仪表块（速度带/高度带/航向带/数据块/导航/构型提示/编队块）的上下偏移、水平偏移和字号。偏移单位是度（向上为正），字号是无量纲倍数，默认全 0 / 1.0 = 和以前一样。俯仰梯、地平线、速度矢量、坡度尺不在这里 —— 它们要和真地平线对齐，给了缩放入口就会被调坏。",
+    "en": "Layout tuning: move and scale each instrument block independently (speed/altitude/heading tapes, data block, nav line, transit hints, formation block). Offsets are in degrees (positive = up), font is a dimensionless multiple; defaults 0 / 1.0 leave everything as before. The pitch ladder, horizon, flight marker and bank scale are NOT here - they must align with the real horizon, so scaling them would break the reading."
+  },
+  "page.layout": {
+    "zh": "布局微调：各仪表块的偏移与字号。",
+    "en": "Layout: offset and font size per instrument block."
+  },
   "row.ladder": {
     "zh": "俯仰梯：显示/隐藏俯仰刻度梯与地平线。",
     "en": "Pitch ladder: show or hide the pitch ladder and horizon line."
+  },
+  "row.ladderOffset": {
+    "zh": "俯仰梯偏移：把俯仰梯、地平线、机头基准线一起上下平移（向上为正，±8°）。只平移不缩放，机头基准线对准的刻度仍是当前俯仰，读数不错；代价是平飞时 0° 线与真实地平线错开这个量。会叠加在瞄准布局（按 Z）的自动下压上。",
+    "en": "Ladder offset: shifts the pitch ladder, horizon line and nose reference together up/down (positive = up, +/-8 deg). Translation only - the reading stays correct because the nose reference still points at the true pitch; the cost is that in level flight the 0-deg line sits this far off the real horizon. Adds to the aiming layout's automatic drop (Z)."
   },
   "row.fpm": {
     "zh": "飞行矢量：显示飞行轨迹标记（FPM）。",

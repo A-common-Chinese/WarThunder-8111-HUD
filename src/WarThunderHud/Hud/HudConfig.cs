@@ -18,6 +18,18 @@ public sealed class HudConfig
     [JsonPropertyName("layoutOffsetYDeg")] public double LayoutOffsetYDeg { get; set; } = 1.8;
 
     /// <summary>
+    /// 俯仰梯 + 地平线 + 机头基准线的用户上下偏移（度，向上为正，范围 ±8）。
+    /// <para>叠加在瞄准布局的自动下压之上。默认 0 = 和以前一样。只平移不缩放，读数不错。</para>
+    /// </summary>
+    [JsonPropertyName("ladderOffsetYDeg")] public double LadderOffsetYDeg { get; set; }
+
+    /// <summary>
+    /// 仪表块的布局微调（度 / 字号倍数）。只影响显示排版，不参与判定。
+    /// <para>旧配置缺这个键 = 全默认（偏移 0、字号 1.0），行为和以前完全一致，无需迁移。</para>
+    /// </summary>
+    [JsonPropertyName("layout")] public LayoutConfig Layout { get; set; } = new();
+
+    /// <summary>
     /// 速度单位：0 = km/h，1 = 节。**只影响显示与输入**，内部（快照/判定/数据链）永远 km/h。
     /// <para>默认 0，旧配置文件缺这两个键时行为和改造前完全一致，不需要迁移。</para>
     /// </summary>
@@ -780,6 +792,7 @@ public sealed class HudConfig
         DataLinkPeers = new List<string>(src.DataLinkPeers);
         Language = src.Language.Clone();
         Mfd = src.Mfd.Clone();
+        Layout = src.Layout.Clone();
     }
 
     // ---------------------------------------------------------------- language
@@ -830,4 +843,37 @@ public sealed class MfdSettings
 
     /// <summary>字段都是 string / bool / double（值类型或不可变引用），MemberwiseClone 即深拷贝。</summary>
     public MfdSettings Clone() => (MfdSettings)MemberwiseClone();
+}
+
+/// <summary>
+/// 仪表块布局微调的持久化形式。字段名 PascalCase（与同类一致），全部值类型。
+/// <para>度数用偏移（向上为正），字号是无量纲倍数。默认全 0 / 1.0 = 不改变任何东西。</para>
+/// </summary>
+public sealed class LayoutConfig
+{
+    public double SpeedOffsetX { get; set; }
+    public double SpeedOffsetY { get; set; }
+    public double SpeedScale { get; set; } = 1.0;
+
+    public double AltOffsetX { get; set; }
+    public double AltOffsetY { get; set; }
+    public double AltScale { get; set; } = 1.0;
+
+    public double HeadingOffsetY { get; set; }
+    public double HeadingScale { get; set; } = 1.0;
+
+    public double DataBlockOffsetY { get; set; }
+    public double DataBlockScale { get; set; } = 1.0;
+
+    public double NavOffsetY { get; set; }
+    public double NavScale { get; set; } = 1.0;
+
+    public double TransitOffsetY { get; set; }
+    public double TransitScale { get; set; } = 1.0;
+
+    public double FormationOffsetY { get; set; }
+    public double FormationScale { get; set; } = 1.0;
+
+    /// <summary>字段都是 double（值类型），MemberwiseClone 即深拷贝。</summary>
+    public LayoutConfig Clone() => (LayoutConfig)MemberwiseClone();
 }

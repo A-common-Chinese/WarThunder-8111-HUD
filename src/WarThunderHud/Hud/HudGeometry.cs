@@ -89,6 +89,44 @@ public static class FormationBarScale
         => Math.Clamp(deltaKmh / AccelHalfKmh, -1.0, 1.0);
 }
 
+/// <summary>
+/// 仪表块的布局微调。所有值以「度」为单位（字号缩放是无量纲倍数），只在绘制时应用，
+/// 不参与任何判定/阈值。几何绑定的元素（俯仰梯、地平线、FPM、坡度尺、转向带）不在这里 ——
+/// 它们要和真地平线对齐，给了缩放入口就会被调坏。
+/// </summary>
+public sealed class LayoutOptions
+{
+    // 速度带（读数框 / 目标三角 / 差值 / 加速度条一起走）
+    public double SpeedOffsetX { get; set; }      // 水平（度），默认用 TapeOffsetDeg 再叠加
+    public double SpeedOffsetY { get; set; }      // 上下（度）
+    public double SpeedScale { get; set; } = 1.0; // 字号倍数 0.8–1.3
+
+    // 高度带（含 V/S）
+    public double AltOffsetX { get; set; }
+    public double AltOffsetY { get; set; }
+    public double AltScale { get; set; } = 1.0;
+
+    // 航向带
+    public double HeadingOffsetY { get; set; }
+    public double HeadingScale { get; set; } = 1.0;
+
+    // 数据块（G/AOA/FUEL/ALT）
+    public double DataBlockOffsetY { get; set; }
+    public double DataBlockScale { get; set; } = 1.0;
+
+    // 导航行
+    public double NavOffsetY { get; set; }
+    public double NavScale { get; set; } = 1.0;
+
+    // 构型提示（GEAR/FLAPS/BINGO）
+    public double TransitOffsetY { get; set; }
+    public double TransitScale { get; set; } = 1.0;
+
+    // 编队块
+    public double FormationOffsetY { get; set; }
+    public double FormationScale { get; set; } = 1.0;
+}
+
 public sealed class HudOptions
 {
     public HudColor Color { get; set; } = new(60, 255, 110);
@@ -100,6 +138,18 @@ public sealed class HudOptions
     public bool ShowSpeedTape { get; set; } = true;
     public bool ShowAltTape { get; set; } = true;
     public bool ShowHeadingTape { get; set; } = true;
+
+    /// <summary>
+    /// 俯仰梯 + 地平线 + 机头基准线的**用户上下偏移**（度，向上为正）。
+    /// <para>与瞄准布局的自动下压（<see cref="ZoomLadderDropDeg"/> × blend）叠加 ——
+    /// 用户调到哪，瞄准布局也跟着偏同样的量，手感一致。</para>
+    /// <para>只平移、不缩放：整块一起搬，机头基准线对准的刻度仍是当前俯仰，读数不错。
+    /// 代价是平飞时 0° 线与真实地平线错开这个量（产品里瞄准布局压 5° 已经接受过）。</para>
+    /// </summary>
+    public double LadderOffsetYDeg { get; set; }
+
+    /// <summary>仪表块的布局微调（度 / 字号倍数）。默认全零/1.0 = 和以前完全一致。</summary>
+    public LayoutOptions Layout { get; } = new();
 
     /// <summary>
     /// 速度/长度的显示单位。**默认公制**，与改造前完全一致。
@@ -435,7 +485,8 @@ public sealed class HudGeometry
         _blend = blend;
         _tapeOffsetDeg = TapeOffsetDeg + (ZoomTapeOffsetDeg - TapeOffsetDeg) * blend;
         _headingOffsetDeg = HeadingOffsetDeg + (ZoomHeadingOffsetDeg - HeadingOffsetDeg) * blend;
-        _ladderCenterOffsetPx = ZoomLadderDropDeg * pxDeg * blend;
+        _ladderCenterOffsetPx = ZoomLadderDropDeg * pxDeg * blend
+                                + _opt.LadderOffsetYDeg * pxDeg;
         _bankRadiusDeg = BankRadiusDeg + (ZoomBankRadiusDeg - BankRadiusDeg) * blend;
         _bankCenterUpPx = ZoomBankUpDeg * pxDeg * blend;
         double cyLadder = cy + _ladderCenterOffsetPx;
@@ -464,11 +515,16 @@ public sealed class HudGeometry
             // 编队模式：视野中心完全留给外部视觉，只保留编队信息 + 三个最小读数。
             // 航向带保留 —— 友机标记的方位是相对航向的，没有带就没有参照。
             // FPM 必须保留：引导圈的用法就是「把 FPM 横移进圈里」，藏了 FPM 这个动作无从谈起。
+            // 布局微调：编队块整体上下偏移 + 字号缩放（航向带/FPM 不跟，它们有自己的布局项）。
+            var lay = _opt.Layout;
+            double fcy = cy + lay.FormationOffsetY * pxDeg;
+            double ffont = font * lay.FormationScale;
+            double ffontSmall = fontSmall * lay.FormationScale;
             if (_opt.ShowHeadingTape) AddHeadingTape(prims, s, cx, cy, pxDeg, line, font, fontSmall);
             if (_opt.ShowFpm) AddFpm(prims, s, cx, cy, pxDeg, line);
-            AddFormationAssist(prims, s, cx, cy, pxDeg, line, fontSmall);
-            AddFormationGuidance(prims, s, cx, cy, pxDeg, font, fontSmall);
-            AddFormationReadout(prims, s, cx, cy, pxDeg, line, font, fontSmall);
+            AddFormationAssist(prims, s, cx, fcy, pxDeg, line, ffontSmall);
+            AddFormationGuidance(prims, s, cx, fcy, pxDeg, ffont, ffontSmall);
+            AddFormationReadout(prims, s, cx, fcy, pxDeg, line, ffont, ffontSmall);
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
             AddStallAlert(prims, cx, cy, pxDeg, font);
@@ -1337,7 +1393,12 @@ public sealed class HudGeometry
         double line, double font, double fontSmall, double accelScale = 1.0,
         double? targetKmh = null, bool useTas = false, bool amberAccelZero = false)
     {
-        double x = cx - _tapeOffsetDeg * pxDeg;
+        // 布局微调：整体水平/垂直偏移 + 字号缩放（只作用本带，不碰判定）。
+        var lay = _opt.Layout;
+        cy += lay.SpeedOffsetY * pxDeg;
+        font *= lay.SpeedScale;
+        fontSmall *= lay.SpeedScale;
+        double x = cx - (_tapeOffsetDeg + lay.SpeedOffsetX) * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
         double pxPerKmh = 1.5 * pxDeg / 50.0;   // 50 km/h per 1.5 deg
         var col = _opt.Color;
@@ -1476,7 +1537,12 @@ public sealed class HudGeometry
     private void AddAltTape(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg,
         double line, double font, double fontSmall)
     {
-        double x = cx + _tapeOffsetDeg * pxDeg;
+        // 布局微调：与速度带同一套做法。
+        var lay = _opt.Layout;
+        cy += lay.AltOffsetY * pxDeg;
+        font *= lay.AltScale;
+        fontSmall *= lay.AltScale;
+        double x = cx + (_tapeOffsetDeg + lay.AltOffsetX) * pxDeg;
         double span = TapeHalfSpanDeg * pxDeg;
         double pxPerM = 1.5 * pxDeg / 100.0;    // 100 m per 1.5 deg
         double tapeAlt = _opt.AltTapeM;
@@ -1573,7 +1639,11 @@ public sealed class HudGeometry
     private void AddHeadingTape(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy, double pxDeg,
         double line, double font, double fontSmall)
     {
-        double y = cy - _headingOffsetDeg * pxDeg;
+        // 布局微调：航向带上下偏移 + 字号缩放。
+        var lay = _opt.Layout;
+        font *= lay.HeadingScale;
+        fontSmall *= lay.HeadingScale;
+        double y = cy - (_headingOffsetDeg + lay.HeadingOffsetY) * pxDeg;
         double span = HeadingHalfSpanDeg * pxDeg;
         double pxPer10Deg = 2.4 * pxDeg;
         var col = _opt.Color;
@@ -1669,17 +1739,20 @@ public sealed class HudGeometry
         // Fixed position even in the aiming layout: only the tapes move outwards, the numeric
         // block (G / AOA / FUEL / ALT) must not jump around.
         double x = cx - TapeOffsetDeg * pxDeg;
-        // In the aiming layout the numeric block sinks slightly (the ladder already moved
-        // down); animated with the same blend so it glides instead of jumping.
-        double y = cy + (TapeHalfSpanDeg + 1.6 + 2.0 * _blend) * pxDeg;
-        double rowH = font * 1.45;
+        // 数值块挂在带子下沿（TapeHalfSpanDeg + 1.6）。布局微调给一个**独立**的上下偏移，
+        // 不再跟着带子走 —— 用户下移速度带时，数值块留原地，两者真正分开。
+        // 字号缩放只作用这一块的字体，行距（font*1.45）跟着一起变。
+        var lay = _opt.Layout;
+        double y = cy + (TapeHalfSpanDeg + 1.6 + 2.0 * _blend) * pxDeg + lay.DataBlockOffsetY * pxDeg;
+        double blockFont = font * lay.DataBlockScale;
+        double rowH = blockFont * 1.45;
         double valueX = x + 4.2 * pxDeg;
         var col = _opt.Color;
 
         void Row(string label, string value, HudColor c)
         {
-            prims.Add(new HudPrim { Kind = HudPrimKind.Text, Text = label, Align = HudAlign.Left, FontSize = font, Color = Fade(c, 0.6), Points = { (x - 1.2 * pxDeg, y) } });
-            prims.Add(new HudPrim { Kind = HudPrimKind.Text, Text = value, Align = HudAlign.Right, FontSize = font, Color = c, Points = { (valueX, y) } });
+            prims.Add(new HudPrim { Kind = HudPrimKind.Text, Text = label, Align = HudAlign.Left, FontSize = blockFont, Color = Fade(c, 0.6), Points = { (x - 1.2 * pxDeg, y) } });
+            prims.Add(new HudPrim { Kind = HudPrimKind.Text, Text = value, Align = HudAlign.Right, FontSize = blockFont, Color = c, Points = { (valueX, y) } });
             y += rowH;
         }
 
@@ -1746,7 +1819,10 @@ public sealed class HudGeometry
         double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
         double leftX = cx - 7.2 * pxDeg;
         double rightX = cx - 1.8 * pxDeg;
-        double baseY = cy + 8.3 * pxDeg + 2.0 * _blend * pxDeg;
+        // 布局微调：构型提示上下偏移 + 字号缩放。
+        var lay = _opt.Layout;
+        font *= lay.TransitScale;
+        double baseY = cy + 8.3 * pxDeg + 2.0 * _blend * pxDeg + lay.TransitOffsetY * pxDeg;
 
         double gearY = baseY;
         double flapsY = baseY + rowStepDeg * pxDeg;
@@ -1861,10 +1937,13 @@ public sealed class HudGeometry
     private void AddNavigation(List<HudPrim> prims, double cx, double cy, double pxDeg, double font, double fontSmall)
     {
         double sink = 2.0 * _blend * pxDeg;
-
+        // 布局微调：导航行上下偏移 + 字号缩放。
+        var lay = _opt.Layout;
+        font *= lay.NavScale;
+        fontSmall *= lay.NavScale;
 
         double navX = cx + 7.8 * pxDeg;      // clear of the extended horizon line
-        double navY = cy + 10.4 * pxDeg + sink;
+        double navY = cy + 10.4 * pxDeg + sink + lay.NavOffsetY * pxDeg;
         if (!string.IsNullOrEmpty(_opt.NavFriendly))
         {
             prims.Add(new HudPrim

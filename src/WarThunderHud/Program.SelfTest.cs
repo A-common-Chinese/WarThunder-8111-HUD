@@ -1500,6 +1500,78 @@ public static partial class Program
             && Math.Abs(WtHud.UI.Mfd.MfdFrameForm.MaxFitFor(2660) - 2.0) < 1e-9
             && Math.Abs(WtHud.UI.Mfd.MfdFrameForm.MaxFitFor(665) - 1.0) < 1e-9);
 
+        // ---- 俯仰梯偏移：整块平移，机头基准线（固定水平短线）跟着走 ----
+        // 平飞（pitch=0, bank=0）时机头基准线是两条水平线，y = cyLadder。偏移 +2° 应使它下移 2*pxDeg。
+        var ladderAtt = new AttitudeSolution { PitchDeg = 0.0, BankDeg = 0.0, Source = AttitudeSource.Game, Confidence = 1 };
+        double PxDeg(int h) => h / 45.0;   // EffectivePxPerDeg: height / max(5, VerticalFovDeg=45)
+
+        double NoseRefY(List<HudPrim> prims, double cx)
+        {
+            // 机头基准线：w≈2.0（line*1.7）的两条水平短线，y 相同，分居中心两侧。
+            // 地平线 w≈2.4（line*2.0），用宽度区分开，只取机头基准线。
+            foreach (var p in prims)
+            {
+                if (p.Kind != HudPrimKind.Line || p.Points.Count != 2) continue;
+                if (Math.Abs(p.Width - 2.0) > 0.3) continue;       // 只认机头基准线的宽度
+                var (x1, y1) = p.Points[0];
+                var (x2, y2) = p.Points[1];
+                if (Math.Abs(y1 - y2) > 0.01) continue;             // 必须水平
+                if (x1 < cx && x2 < cx) return y1;                  // 左半边那条
+            }
+            return double.NaN;
+        }
+
+        var lad0 = new HudGeometry(new HudOptions { LadderOffsetYDeg = 0 },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true }, ladderAtt, 1920, 1080);
+        var lad2 = new HudGeometry(new HudOptions { LadderOffsetYDeg = 2 },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true }, ladderAtt, 1920, 1080);
+        double y0 = NoseRefY(lad0, 960), y2 = NoseRefY(lad2, 960);
+        Check("ladder offset shifts the nose reference by 2 deg",
+            !double.IsNaN(y0) && !double.IsNaN(y2) && Math.Abs((y2 - y0) - 2 * PxDeg(1080)) < 0.5);
+        // 默认偏移是 0（配置缺键时行为不变）
+        Check("ladder offset defaults to zero", new HudConfig().LadderOffsetYDeg == 0);
+
+        // ---- 仪表块布局微调：默认全 0 / 1.0，clone 不共享 Layout 引用 ----
+        Check("layout config defaults to no-op",
+            new LayoutConfig().SpeedOffsetX == 0 && new LayoutConfig().SpeedScale == 1.0
+            && new LayoutConfig().DataBlockOffsetY == 0 && new LayoutConfig().FormationScale == 1.0);
+        var layoutCloneSrc = new HudConfig();
+        layoutCloneSrc.Layout.SpeedOffsetX = 3.5;
+        var layoutCloneCopy = layoutCloneSrc.Clone();
+        layoutCloneCopy.Layout.SpeedOffsetX = -1;
+        Check("layout clone is independent",
+            layoutCloneSrc.Layout.SpeedOffsetX == 3.5 && layoutCloneCopy.Layout.SpeedOffsetX == -1);
+
+        // 速度带水平偏移：偏移 +2° 时，速度带主轴线 x 应右移 2*pxDeg（在中心左侧，向右 = 靠近中心）
+        // 高度带字号缩放：字号 1.3 时，读数框字号应放大（用 Text prim 的 FontSize 判断）。
+        var spdAtt = new AttitudeSolution { PitchDeg = 5.0, BankDeg = 0.0, Source = AttitudeSource.Game, Confidence = 1 };
+        var spdSnap = new TelemetrySnapshot { Valid = true, InFlight = true, IasKmh = 400, TasKmh = 400, VyMs = 5 };
+        var spdBase = new HudGeometry(new HudOptions(), new HudCalibration { VerticalFovDeg = 45 })
+            .Build(spdSnap, spdAtt, 1920, 1080);
+        var spdOffX = new HudGeometry(new HudOptions { Layout = { SpeedOffsetX = 2 } },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(spdSnap, spdAtt, 1920, 1080);
+        // 速度带主轴线：一条竖直长线，x 固定、y 跨度大（在屏幕左半）。取最长的竖直线。
+        double SpeedTapeX(List<HudPrim> prims)
+        {
+            foreach (var p in prims)
+            {
+                if (p.Kind != HudPrimKind.Line || p.Points.Count != 2) continue;
+                var (x1, y1) = p.Points[0];
+                var (x2, y2) = p.Points[1];
+                if (Math.Abs(x1 - x2) > 0.01) continue;          // 竖直线
+                if (x1 > 900) continue;                           // 高度带在 1248，速度带在 672 附近
+                if (Math.Abs(y1 - y2) > 250) return x1;           // 够长（带子跨 6.2°×2×24 ≈ 298px）
+            }
+            return double.NaN;
+        }
+        double sx0 = SpeedTapeX(spdBase), sx2 = SpeedTapeX(spdOffX);
+        // 速度带在中心左侧，SpeedOffsetX 为正 = 往外（左）推，x 变小 2*pxDeg。
+        Check("speed tape X offset moves the tape by 2 deg",
+            !double.IsNaN(sx0) && !double.IsNaN(sx2) && Math.Abs((sx0 - sx2) - 2 * PxDeg(1080)) < 0.5);
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }
