@@ -1426,9 +1426,12 @@ public sealed class HudGeometry
 
         // Longitudinal acceleration (dTAS/dt) takes the slot the Mach readout used to occupy;
         // Mach moves one row down. Both sit INSIDE the speed tape.
+        // 引导模式（编队）只留少数读数，单位必须跟数字写在一起；普通模式不加，保持画面干净。
+        string accText = "ACC " + _opt.AccelMs2.ToString("+0.0;-0.0");
+        if (_opt.FormationOnly) accText += " " + Units.AccelUnitLabel;
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text, Text = "ACC " + _opt.AccelMs2.ToString("+0.0;-0.0"),
+            Kind = HudPrimKind.Text, Text = accText,
             Align = HudAlign.Left, FontSize = fontSmall,
             Color = Math.Abs(_opt.AccelMs2) > 5 ? _opt.WarnColor : Fade(col, 0.9),
             Points = { (x + 1.7 * pxDeg, cy + 2.6 * pxDeg) },
@@ -1549,11 +1552,13 @@ public sealed class HudGeometry
             });
         }
         // Vertical speed sits INSIDE the altitude tape (towards the screen centre).
-        // 不标单位：单位制是玩家自己在面板里选的，数字本身就是他要的口径（公制也一样没标）。
+        // 普通模式不标单位（单位制是玩家自己选的）；引导模式下必须标 —— 那边只剩几个读数，
+        // 屏幕上没有带子位置的上下文可以帮忙判断口径。
+        string vsText = "V/S " + (s.VyMs >= 0 ? "+" : "") + Units.VerticalSpeedNumber(s.VyMs, lengthUnit);
+        if (_opt.FormationOnly) vsText += " " + Units.VerticalSpeedUnitLabel(lengthUnit);
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text,
-            Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + Units.VerticalSpeedNumber(s.VyMs, lengthUnit),
+            Kind = HudPrimKind.Text, Text = vsText,
             Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.9),
             Points = { (x - 1.5 * pxDeg, cy + 2.6 * pxDeg) },
         });

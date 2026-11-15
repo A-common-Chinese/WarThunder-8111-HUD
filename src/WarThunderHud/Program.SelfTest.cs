@@ -1347,7 +1347,9 @@ public static partial class Program
         Check("imperial short range uses feet", Units.DistanceShort(304.8, LengthUnit.Imperial) == "1000ft");
         Check("imperial long range switches to NM", Units.DistanceLong(3704, LengthUnit.Imperial) == "2.0NM");
         Check("imperial under 1NM stays bare feet", Units.DistanceLong(304.8, LengthUnit.Imperial) == "1000");
-        Check("imperial vertical speed is bare fpm", Units.VerticalSpeedText(5.1, LengthUnit.Imperial) == "1004");
+        // 引导行（句子）两个单位制都带单位：公制原来就有 m/s，英制补 ft/min
+        Check("imperial guidance rate carries ft/min",
+            Units.VerticalSpeedText(5.1, LengthUnit.Imperial) == "1004 ft/min");
         Check("imperial nav distance uses NM", Units.NavDistance(3704, LengthUnit.Imperial) == "2.0NM");
         Check("imperial plain distance", Units.DistancePlain(400, LengthUnit.Imperial) == "1312ft");
         // 步长对齐：1 km→0.54 NM 要变成 0.5，10 m→32.8 ft 要变成 20，1 m/s→197 fpm 要变成 200
@@ -1452,6 +1454,26 @@ public static partial class Program
         Check("imperial HUD tape labels snap to knots",
             impUnitPrims.Any(p => p.Text == "100") && impUnitPrims.Any(p => p.Text == "300")
             && !impUnitPrims.Any(p => p.Text == "500"));
+
+        // ---- 引导模式（编队）要把单位写在读数旁边：那边屏幕上只剩几个数字，没上下文可猜 ----
+        var guideOpt = new HudOptions { FormationOnly = true, AccelMs2 = 2.4, AltTapeM = 3048 };
+        var guidePrims = new HudGeometry(guideOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(unitSnap, default, 1920, 1080);
+        Check("guidance mode labels ACC", guidePrims.Any(p => p.Text == "ACC +2.4 m/s\u00B2"));
+        Check("guidance mode labels V/S in metric", guidePrims.Any(p => p.Text == "V/S +5.1 m/s"));
+
+        var guideImpOpt = new HudOptions
+        {
+            FormationOnly = true, AccelMs2 = 2.4, AltTapeM = 3048,
+            SpeedUnit = SpeedUnit.Knots, LengthUnit = LengthUnit.Imperial,
+        };
+        var guideImpPrims = new HudGeometry(guideImpOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(unitSnap, default, 1920, 1080);
+        // ACC 不换算，英制下仍是 m/s²；V/S 换 ft/min 并且标出来
+        Check("guidance mode ACC stays m/s2 in imperial",
+            guideImpPrims.Any(p => p.Text == "ACC +2.4 m/s\u00B2"));
+        Check("guidance mode labels V/S in ft/min",
+            guideImpPrims.Any(p => p.Text == "V/S +1004 ft/min"));
 
         Console.WriteLine("selftest done");
         return Environment.ExitCode;

@@ -68,7 +68,10 @@ no packet interception, no automation.
 
 - **只改显示和输入**：内部状态、判定阈值、数据链包、`hud-config.json` 永远是公制（km/h、米）。
   切回公制不会有任何数值漂移，也不会影响和数据链对端的一致性。
-- 距离超过 1 NM 用海里、以内用英尺；`V/S` 与编队爬升率换 ft/min，但**不标单位**——单位制是玩家自己设的，数字本身就是他要的口径。
+- 距离超过 1 NM 用海里、以内用英尺；`V/S` 与编队爬升率换 ft/min。
+- 单位后缀分两种场景：**普通模式不标**（单位制是玩家自己设的，数字本身就是他要的口径）；
+  **引导模式（编队）标**——那边屏幕上只剩几个读数，没有带子位置可以帮忙判断口径：
+  `V/S +2441 ft/min`、`ACC +2.4 m/s²`，爬升引导行同理（`↑ 390 ft   886 ft/min`）。
 - 面板里带物理单位的 13 个数值行（编队间距、告警半径、速度阈值等）跟着换算，**手输按当前显示单位解释**：
   英制下输入 `500` 表示 500 ft，写入后存成 152.4 m。上下限仍按公制夹取。
 - 不换算的：马赫、G、`°`、`%`、`px`、`ms`、以及 `ACC`（m/s²，工程读数，两种单位制都不用它）。
@@ -425,7 +428,8 @@ Two independent switches at the top of the DISPLAY page, matching how the game s
 Display and input only. Internal state, thresholds, data-link packets and `hud-config.json` stay
 metric (km/h, metres), so switching back never drifts a value and never desynchronises a wingman.
 Tape ticks are 50 km/h / 100 m in metric and 25 kt / 250 ft in imperial; distances above 1 NM use
-NM, below it feet. The 13 settings with a physical unit follow the switch, and typed values are
+NM, below it feet. In guidance (formation) mode `V/S` and `ACC` carry their unit next to the number
+(`V/S +2441 ft/min`, `ACC +2.4 m/s²`); in the normal HUD they stay bare. The 13 settings with a physical unit follow the switch, and typed values are
 read in the displayed unit (typing `500` while in feet stores 152.4 m; clamping stays metric).
 
 ### Data block

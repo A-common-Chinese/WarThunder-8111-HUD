@@ -178,14 +178,18 @@ public static class Units
             : Math.Round(ms * FpmPerMps).ToString("0", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// 垂直速度整句，用于引导提示。
-    /// <para>★ 英制**不标单位**：单位是玩家自己在面板里设的，数字本身就是他要的口径。
-    /// 公制保留原来的「m/s」后缀（那是改造前就有的，不动）。</para>
+    /// 垂直速度整句，用于**引导行**（「↑ 689 ft   1614 ft/min」）。
+    /// <para>★ 这里有单位、带子上的 V/S 在普通模式下没有：引导行是句子，公制那边改造前就带 m/s；
+    /// 英制不带会和公制不对称，读的人要自己猜 1614 是 ft/min 还是 m/s。</para>
     /// </summary>
     public static string VerticalSpeedText(double ms, LengthUnit u) =>
-        u == LengthUnit.Metric
-            ? ms.ToString("0.0", CultureInfo.InvariantCulture) + " m/s"
-            : Math.Round(ms * FpmPerMps).ToString("0", CultureInfo.InvariantCulture);
+        VerticalSpeedNumber(ms, u) + " " + VerticalSpeedUnitLabel(u);
+
+    /// <summary>垂直速度的单位名。只在引导模式下拼到读数后面（普通模式不加，保持画面干净）。</summary>
+    public static string VerticalSpeedUnitLabel(LengthUnit u) => u == LengthUnit.Metric ? "m/s" : "ft/min";
+
+    /// <summary>纵向加速度的单位名。ACC 不参与换算，两种单位制都是 m/s²。</summary>
+    public const string AccelUnitLabel = "m/s\u00B2";
 
     /// <summary>
     /// 高度差读数（「↑ 40 m」这类）。公制取整到 5 m，英制取整到 10 ft —— 和原来一样是
