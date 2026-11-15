@@ -1572,6 +1572,33 @@ public static partial class Program
         Check("speed tape X offset moves the tape by 2 deg",
             !double.IsNaN(sx0) && !double.IsNaN(sx2) && Math.Abs((sx0 - sx2) - 2 * PxDeg(1080)) < 0.5);
 
+        // ★ 位置偏移只在普通模式生效：瞄准模式（ZoomBlend=1）下归零，块回到瞄准布局默认位置。
+        var spdZoomOff = new HudGeometry(new HudOptions { ZoomBlend = 1.0, Layout = { SpeedOffsetX = 2 } },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(spdSnap, spdAtt, 1920, 1080);
+        var spdZoomBase = new HudGeometry(new HudOptions { ZoomBlend = 1.0 },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(spdSnap, spdAtt, 1920, 1080);
+        double szOff = SpeedTapeX(spdZoomOff), szBase = SpeedTapeX(spdZoomBase);
+        Check("aiming layout drops the position offset",
+            !double.IsNaN(szOff) && !double.IsNaN(szBase) && Math.Abs(szOff - szBase) < 0.5);
+
+        // ★ 字号缩放两种模式都生效：瞄准模式下字号 1.3× 仍然放大。
+        // 速度带读数框是 Text prim，字号 = font（0.72*pxDeg）× scale。取带内字号最大的 Text。
+        double SpeedFont(List<HudPrim> prims)
+        {
+            double m = 0;
+            foreach (var p in prims)
+                if (p.Kind == HudPrimKind.Text && p.FontSize > m) m = p.FontSize;
+            return m;
+        }
+        var spdZoomScale = new HudGeometry(new HudOptions { ZoomBlend = 1.0, Layout = { SpeedScale = 1.3 } },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(spdSnap, spdAtt, 1920, 1080);
+        double fBase = SpeedFont(spdZoomBase), fScale = SpeedFont(spdZoomScale);
+        Check("aiming layout keeps the font scaling",
+            fBase > 0 && Math.Abs(fScale / fBase - 1.3) < 0.05);
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }

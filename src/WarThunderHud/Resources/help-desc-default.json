@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 58,
+  "_version": 59,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -101,8 +101,8 @@
     "en": "Radar altitude tape: prefer radar altitude on aircraft that provide it."
   },
   "row.layoutTune": {
-    "zh": "布局微调：单独调每个仪表块（速度带/高度带/航向带/数据块/导航/构型提示/编队块）的上下偏移、水平偏移和字号。偏移单位是度（向上为正），字号是无量纲倍数，默认全 0 / 1.0 = 和以前一样。俯仰梯、地平线、速度矢量、坡度尺不在这里 —— 它们要和真地平线对齐，给了缩放入口就会被调坏。",
-    "en": "Layout tuning: move and scale each instrument block independently (speed/altitude/heading tapes, data block, nav line, transit hints, formation block). Offsets are in degrees (positive = up), font is a dimensionless multiple; defaults 0 / 1.0 leave everything as before. The pitch ladder, horizon, flight marker and bank scale are NOT here - they must align with the real horizon, so scaling them would break the reading."
+    "zh": "布局微调：单独调每个仪表块（速度带/高度带/航向带/数据块/导航/构型提示/编队块）的上下偏移、水平偏移和字号。偏移单位是度（向上为正），字号是无量纲倍数，默认全 0 / 1.0 = 和以前一样。俯仰梯、地平线、速度矢量、坡度尺不在这里 —— 它们要和真地平线对齐，给了缩放入口就会被调坏。★ 位置偏移只在普通模式生效：按 Z 进瞄准布局时平滑归零，块回到瞄准布局默认位置（避免和瞄准外推叠加飘出屏幕）；字号缩放两种模式都生效。",
+    "en": "Layout tuning: move and scale each instrument block independently (speed/altitude/heading tapes, data block, nav line, transit hints, formation block). Offsets are in degrees (positive = up), font is a dimensionless multiple; defaults 0 / 1.0 leave everything as before. The pitch ladder, horizon, flight marker and bank scale are NOT here - they must align with the real horizon, so scaling them would break the reading. Position offsets apply only in the normal view: entering the aiming layout (Z) fades them to zero so the blocks return to the aiming layout's default position. Font scaling applies in both views."
   },
   "page.layout": {
     "zh": "布局微调：各仪表块的偏移与字号。",
