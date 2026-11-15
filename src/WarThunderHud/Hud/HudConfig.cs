@@ -819,6 +819,15 @@ public sealed class MfdSettings
     /// <summary>Realistic mode: screen rows can only be driven by the physical keys.</summary>
     public bool RealisticKeys { get; set; }
 
-    /// <summary>字段全是 string / bool，MemberwiseClone 即深拷贝。加集合时要一起改。</summary>
+    /// <summary>
+    /// 面板缩放：相对「自动适配尺寸」的倍数，**只缩小**（0.60–1.00）。
+    /// <para>自动那部分已经按屏幕工作区铺满 92%，再往上乘会顶出屏幕（实测 1.2 倍在 1080p
+    /// 上渲出 1920×1536），所以上限就是 1.0。「想要更大」由**底图分辨率**解决：1x 底图在
+    /// 高分屏上最多铺到 1.0，2x（4K）底图能铺到 2.0 —— 换图即变大，而且清晰。</para>
+    /// </summary>
+    // 字段名跟同类的 InkColor / AccentColor 一致（PascalCase），不另加 JsonPropertyName
+    public double Scale { get; set; } = 1.0;
+
+    /// <summary>字段都是 string / bool / double（值类型或不可变引用），MemberwiseClone 即深拷贝。</summary>
     public MfdSettings Clone() => (MfdSettings)MemberwiseClone();
 }

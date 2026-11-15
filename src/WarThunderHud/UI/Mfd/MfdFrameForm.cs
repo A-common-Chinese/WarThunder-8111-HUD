@@ -77,6 +77,31 @@ public sealed class MfdFrameForm : Form
 
     public bool Saved { get; private set; }
 
+    /// <summary>底图的设计尺寸（1x）。所有布局、命中、字号都按「宽度 / 1330」的比例铺开。</summary>
+    internal const int DesignWidth = 1330;
+    internal const int DesignHeight = 1064;
+
+    /// <summary>
+    /// 底图最多能放大到多少倍：分辨率 / 设计宽度。1x 底图（1330）= 1.0，再放大就是糊；
+    /// 2x 底图（2660）= 2.0。**换图即解锁，不用改代码**。
+    /// </summary>
+    internal static double MaxFitFor(int bezelWidth) =>
+        Math.Clamp(bezelWidth / (double)DesignWidth, 1.0, 2.0);
+
+    /// <summary>
+    /// 面板最终缩放：自动适配（铺满工作区 92%）× 用户档位，夹在 [0.55, 底图上限]。
+    /// <para>抽成纯函数是为了能自检：1080p / 4K、1x / 2x 底图各算一遍，不用真开窗口。</para>
+    /// </summary>
+    internal static double ComputeFit(double workW, double workH, int bezelWidth, double userScale)
+    {
+        // 只缩小：自动值已经铺满 92%，再乘大于 1 的数会顶出屏幕（实测 1.2 倍 → 1920×1536）。
+        // 夹到 [0.3, 1.0] 也是防手改 json 写成 3.0 —— 那会直接开到屏幕外面去。
+        if (!(userScale > 0) || double.IsInfinity(userScale) || double.IsNaN(userScale)) userScale = 1.0;
+        userScale = Math.Clamp(userScale, 0.3, 1.0);
+        double auto = Math.Min(workW * 0.92 / DesignWidth, workH * 0.92 / DesignHeight);
+        return Math.Clamp(auto * userScale, 0.55, MaxFitFor(bezelWidth));
+    }
+
     private readonly string? _savePath;
 
     /// <param name="savePath">When set, SAVE writes here instead of hud-config.json (scratch mode).</param>
@@ -102,14 +127,17 @@ public sealed class MfdFrameForm : Form
             var screen = Screen.FromRectangle(new Rectangle(gx, gy, gw, gh));
             if (screen != null) work = screen.WorkingArea;
         }
-        var fit = Math.Min(1.0f, Math.Min(work.Width * 0.92f / _bezel.Width, work.Height * 0.92f / _bezel.Height));
+        // 缩放 = 自动适配（铺满工作区 92%）× 用户档位（面板设置里的「面板缩放」）。
+        // 上限由底图分辨率决定：1x 图最多 1.0（不糊），2x 图最多 2.0 —— 换 4K 底图即解锁。
+        var fit = ComputeFit(work.Width, work.Height, _bezel.Width, cfg.Mfd.Scale);
         var envFit = Environment.GetEnvironmentVariable("WT_MFD_FIT");
         if (float.TryParse(envFit, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out var forced) && forced > 0.1f)
-            fit = forced;
-        fit = Math.Clamp(fit, 0.55f, 1.0f);
-        var panelW = (int)(_bezel.Width * fit);
-        var panelH = (int)(_bezel.Height * fit);
+            fit = Math.Clamp(forced, 0.2, MaxFitFor(_bezel.Width));
+        var panelW = (int)(DesignWidth * fit);
+        var panelH = (int)(DesignHeight * fit);
+        Console.WriteLine($"panel: {panelW}x{panelH} fit={fit:F3} (bezel {_bezel.Width}px, "
+                          + $"scale {cfg.Mfd.Scale:F2}, max {MaxFitFor(_bezel.Width):F1})");
 
         ClientSize = new Size(panelW, panelH);
         FormBorderStyle = FormBorderStyle.None;

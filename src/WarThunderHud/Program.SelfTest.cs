@@ -1475,6 +1475,31 @@ public static partial class Program
         Check("guidance mode labels V/S in ft/min",
             guideImpPrims.Any(p => p.Text == "V/S +1004 ft/min"));
 
+        // ---- 面板缩放：自动适配 × 用户档位，上限由底图分辨率决定 ----
+        // 1080p 自动 = 0.92*1040/1064 ≈ 0.899；4K 自动 = 0.92*2080/1064 ≈ 1.798，但 1x 底图只能到 1.0
+        Check("panel fit on 1080p is ~0.90",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 1.0) - 0.899) < 0.002);
+        Check("1x bezel caps a 4K screen at 1.0",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(3840, 2080, 1330, 1.0) - 1.0) < 1e-9);
+        Check("2x bezel unlocks the 4K screen",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(3840, 2080, 2660, 1.0) - 1.798) < 0.002);
+        // ★ 缩放只往下：自动值已经铺满 92%，×1.2 会顶出屏幕（实测渲出 1920×1536），所以 >1 一律夹回 1
+        Check("a smaller step shrinks the panel",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 0.9) - 0.809) < 0.002);
+        Check("a hand-edited scale above 1 is clamped",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 3.0)
+                     - WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 1.0)) < 1e-12);
+        Check("a tiny screen keeps the 0.55 floor",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1024, 600, 1330, 1.0) - 0.55) < 1e-9);
+        Check("a broken scale value falls back to auto",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 0)
+                     - WtHud.UI.Mfd.MfdFrameForm.ComputeFit(1920, 1040, 1330, 1.0)) < 1e-12);
+        // 底图倍率就是「分辨率 / 设计宽度」，夹在 1..2：换 4K 图即解锁，不用改代码
+        Check("bezel resolution drives the ceiling",
+            Math.Abs(WtHud.UI.Mfd.MfdFrameForm.MaxFitFor(1330) - 1.0) < 1e-9
+            && Math.Abs(WtHud.UI.Mfd.MfdFrameForm.MaxFitFor(2660) - 2.0) < 1e-9
+            && Math.Abs(WtHud.UI.Mfd.MfdFrameForm.MaxFitFor(665) - 1.0) < 1e-9);
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }

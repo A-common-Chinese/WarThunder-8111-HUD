@@ -5082,6 +5082,7 @@ public static partial class Program
             else if (view == "edit") { form.PreviewEdit(0, 7); }   // FOV 行（数值行）
             else if (view == "alerts") { form.PreviewOpen(2, 0); }
             else if (view == "display") { form.PreviewOpen(0, 0); }
+            else if (view == "panelset") { form.PreviewOpen(6, 0); }   // 面板设置页（含缩放档位）
             else if (view == "display2") { form.PreviewOpen(0, 0); form.PreviewItemPage(1); }
             else if (view == "menu2") { form.PreviewMenuPage(1); }
             else if (view == "menunext") { form.PreviewBottomKey(2); }            // 按「下页」

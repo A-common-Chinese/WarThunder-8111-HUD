@@ -538,6 +538,10 @@ internal static class MfdPages
             Preset("row.inkColor", c => c.Mfd.InkColor, (c, v) => c.Mfd.InkColor = v),
             Preset("row.accentColor", c => c.Mfd.AccentColor, (c, v) => c.Mfd.AccentColor = v),
             Toggle("row.realisticKeys", c => c.Mfd.RealisticKeys, (c, v) => c.Mfd.RealisticKeys = v),
+            // 面板缩放：只能调小（100% = 自动，铺满工作区 92%）。放大不放这里 ——
+            // 自动值已经贴边，再乘会顶出屏幕；高分屏上的「更大」由 4K 底图自动达成。
+            Enum("row.mfdScale", MfdScaleLabels,
+                 c => MfdScaleIndex(c.Mfd.Scale), (c, i) => c.Mfd.Scale = MfdScaleValue(i)),
             // ---- 语言：原先独立一个模块；3 + 5 项合并后一屏装得下 ----
             Enum("lang.panel", new[] { "opt.en", "opt.zh" },
                 _ => L10n.Panel == Lang.Zh ? 1 : 0, (_, i) => L10n.Panel = i == 1 ? Lang.Zh : Lang.En),
@@ -556,9 +560,32 @@ internal static class MfdPages
         },
     };
 
-    /// <summary>入口行摘要：预设名 + 编号（自定义也带编号，编号永远是编号）。</summary>
-    private static string FormationShapeSummary(HudConfig cfg)
+    // ---- 面板缩放档位 ----
+
+    private static readonly string[] MfdScaleLabels =
+        { "opt.scale100", "opt.scale90", "opt.scale80", "opt.scale70", "opt.scale60" };
+
+    /// <summary>只给缩小档：100% 就是自动尺寸（铺满工作区 92%），再大只能靠更高分辨率的底图。</summary>
+    private static readonly double[] MfdScaleSteps = { 1.00, 0.90, 0.80, 0.70, 0.60 };
+
+    /// <summary>配置里的倍数 → 最近的档位（手改 json 写成 1.05 也落回 100% 而不是整行空白）。</summary>
+    private static int MfdScaleIndex(double value)
     {
+        int best = 0;                       // 100%（自动）是默认档
+        double bestDiff = double.MaxValue;
+        for (int i = 0; i < MfdScaleSteps.Length; i++)
+        {
+            double diff = Math.Abs(MfdScaleSteps[i] - value);
+            if (diff < bestDiff) { bestDiff = diff; best = i; }
+        }
+        return best;
+    }
+
+    private static double MfdScaleValue(int index) =>
+        MfdScaleSteps[Math.Clamp(index, 0, MfdScaleSteps.Length - 1)];
+
+    /// <summary>入口行摘要：预设名 + 编号（自定义也带编号，编号永远是编号）。</summary>
+    private static string FormationShapeSummary(HudConfig cfg)    {
         var shape = WtHud.Hud.FormationGeometry.IsKnownShape(cfg.FormationShape)
             ? cfg.FormationShape : WtHud.Hud.FormationGeometry.ShapeCustom;
         var name = L10n.Get(LangScope.Screen, "opt.shape" + char.ToUpperInvariant(shape[0]) + shape[1..]);

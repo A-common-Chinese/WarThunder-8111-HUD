@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 54,
+  "_version": 56,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -59,6 +59,10 @@
   "row.accentColor": {
     "zh": "高亮颜色：选中行、数值、发光条与按键描边使用的颜色。",
     "en": "Accent colour: selected rows, values, glow strips and button outlines."
+  },
+  "row.mfdScale": {
+    "zh": "面板缩放：相对自动尺寸的档位，只能调小（100% 就是自动 = 铺满工作区 92%，再大会顶出屏幕）。100/90/80/70/60 五档，换屏或换分辨率后自动值会重算、档位跟着走。想要「更大」不靠这个：把 4K 底图换进去，高分辨率屏上会自动从 1.0 倍铺到 1.8 倍，而且清晰。改完关闭面板重开生效。",
+    "en": "Panel scale: a step relative to the automatic size, shrink only (100% is auto = 92% of the work area; anything larger runs off screen). Steps 100/90/80/70/60. The automatic size is recomputed per screen, and this step follows it. To get bigger, use the 4K bezel instead: on a high-DPI screen it fills 1.8x the design width and stays sharp. Takes effect the next time the panel is opened."
   },
   "row.inkColor": {
     "zh": "文本颜色：屏幕正文（行名、提示、普通数值）使用的颜色。",
