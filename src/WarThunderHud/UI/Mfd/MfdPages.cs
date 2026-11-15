@@ -586,6 +586,8 @@ internal static class MfdPages
             // 自动值已经贴边，再乘会顶出屏幕；高分屏上的「更大」由 4K 底图自动达成。
             Enum("row.mfdScale", MfdScaleLabels,
                  c => MfdScaleIndex(c.Mfd.Scale), (c, i) => c.Mfd.Scale = MfdScaleValue(i)),
+            // 紧凑面板：约 0.62 倍 + 默认右下角；重新打开面板生效。机框可直接拖动，位置会自动记住。
+            Toggle("row.mfdCompact", c => c.Mfd.Compact, (c, v) => c.Mfd.Compact = v),
             // ---- 语言：原先独立一个模块；3 + 5 项合并后一屏装得下 ----
             Enum("lang.panel", new[] { "opt.en", "opt.zh" },
                 _ => L10n.Panel == Lang.Zh ? 1 : 0, (_, i) => L10n.Panel = i == 1 ? Lang.Zh : Lang.En),

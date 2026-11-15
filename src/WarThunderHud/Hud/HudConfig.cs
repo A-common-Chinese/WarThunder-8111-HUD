@@ -851,6 +851,13 @@ public sealed class MfdSettings
     // 字段名跟同类的 InkColor / AccentColor 一致（PascalCase），不另加 JsonPropertyName
     public double Scale { get; set; } = 1.0;
 
+    /// <summary>紧凑模式：面板缩到约 0.6 倍并默认贴屏幕右下角（重新打开面板生效）。</summary>
+    public bool Compact { get; set; }
+
+    /// <summary>面板左上角位置；int.MinValue = 没记录过（用居中/紧凑默认位置）。</summary>
+    public int PanelX { get; set; } = int.MinValue;
+    public int PanelY { get; set; } = int.MinValue;
+
     /// <summary>字段都是 string / bool / double（值类型或不可变引用），MemberwiseClone 即深拷贝。</summary>
     public MfdSettings Clone() => (MfdSettings)MemberwiseClone();
 }

@@ -417,6 +417,8 @@ public static class L10n
         ["row.inkColor"] = ("文本颜色", "TEXT COLOR"),
         ["row.accentColor"] = ("高亮颜色", "ACCENT COLOR"),
         ["row.mfdScale"] = ("面板缩放", "PANEL SCALE"),
+        ["row.mfdCompact"] = ("紧凑面板", "COMPACT PANEL"),
+        ["toast.panelMoved"] = ("面板位置已记录（SAVE 保存）", "PANEL MOVED · SAVE TO KEEP"),
         ["opt.scale100"] = ("100% · 自动", "100% · AUTO"),
         ["opt.scale90"] = ("90%", "90%"),
         ["opt.scale80"] = ("80%", "80%"),

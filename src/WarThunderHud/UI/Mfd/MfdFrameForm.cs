@@ -139,14 +139,35 @@ public sealed class MfdFrameForm : Form
             double room = Math.Min(work.Width * 0.98 / DesignWidth, work.Height * 0.98 / DesignHeight);
             fit = Math.Clamp(forced, 0.2, Math.Min(MaxFitFor(_bezel.Width), room));
         }
+        // 紧凑模式：缩到 0.62 倍，配合右下角默认位置（编队时别挡视线）
+        if (cfg.Mfd.Compact) fit = Math.Min(fit, 0.62);
         var panelW = (int)(DesignWidth * fit);
         var panelH = (int)(DesignHeight * fit);
         Console.WriteLine($"panel: {panelW}x{panelH} fit={fit:F3} (bezel {_bezel.Width}px, "
                           + $"scale {cfg.Mfd.Scale:F2}, max {MaxFitFor(_bezel.Width):F1})");
 
+        // 紧凑模式：缩到 0.62 倍，配合右下角默认位置（编队时别挡视线）
+        // （fit 已在上方算好，这里不再重复）
         ClientSize = new Size(panelW, panelH);
         FormBorderStyle = FormBorderStyle.None;
-        StartPosition = FormStartPosition.CenterScreen;
+        StartPosition = FormStartPosition.Manual;
+        // 位置记忆：拖过就回到原位；没拖过时紧凑模式贴右下角，普通模式居中
+        int px = cfg.Mfd.PanelX, py = cfg.Mfd.PanelY;
+        if (px != int.MinValue && py != int.MinValue)
+        {
+            Location = new Point(
+                Math.Clamp(px, work.Left, Math.Max(work.Left, work.Right - panelW)),
+                Math.Clamp(py, work.Top, Math.Max(work.Top, work.Bottom - panelH)));
+        }
+        else if (cfg.Mfd.Compact)
+        {
+            Location = new Point(work.Right - panelW - 24, work.Bottom - panelH - 24);
+        }
+        else
+        {
+            Location = new Point(work.Left + (work.Width - panelW) / 2,
+                                 work.Top + (work.Height - panelH) / 2);
+        }
         BackColor = Color.Black;
         KeyPreview = true;
         DoubleBuffered = true;
@@ -552,9 +573,33 @@ public sealed class MfdFrameForm : Form
         return ButtonKind.None;
     }
 
+    private bool _draggingPanel;
+    private Point _dragStartScreen;
+    private Point _dragStartLocation;
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_draggingPanel) return;
+        var p = Cursor.Position;
+        Location = new Point(_dragStartLocation.X + p.X - _dragStartScreen.X,
+                             _dragStartLocation.Y + p.Y - _dragStartScreen.Y);
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+
+        // 拖机框移动面板：右键/中键按在屏幕玻璃之外（机框区域）时拖动。
+        // 左键留给机框上的实体按键，屏幕内也仍走原来的行/按键逻辑。
+        if ((e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle)
+            && !_layout.Glass.Contains(new PointF(e.X, e.Y)))
+        {
+            _draggingPanel = true;
+            _dragStartScreen = Cursor.Position;
+            _dragStartLocation = Location;
+            return;
+        }
 
         // 编辑页：命中由页面给出（三个选项行的矩形与它自己的绘制同源）
         if (!_work.Mfd.RealisticKeys && _mode == Mode.EditNumber
@@ -730,6 +775,16 @@ public sealed class MfdFrameForm : Form
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        if (_draggingPanel)
+        {
+            _draggingPanel = false;
+            _work.Mfd.PanelX = Location.X;
+            _work.Mfd.PanelY = Location.Y;
+            _dirty = true;
+            _toast = L10n.Get(LangScope.Screen, "toast.panelMoved");
+            Invalidate();
+            return;
+        }
         if (_menuRouter != null) _menuRouter.MouseUp();
         _pressed = (ButtonKind.None, -1);
         Invalidate();
