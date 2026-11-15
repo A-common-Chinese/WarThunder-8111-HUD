@@ -232,7 +232,7 @@ public static partial class Program
         };
         oldCfg.MigrateFormation();
         Check("legacy trail range becomes the back distance",
-            Math.Abs(oldCfg.FormationStationBackM - 620) < 0.01 && oldCfg.FormationModel == 3
+            Math.Abs(oldCfg.FormationStationBackM - 620) < 0.01 && oldCfg.FormationModel == 4
             && oldCfg.LegacyFormationRangeM is null);
         // 爬升阶段的远距提示：没动过的 2000 收到 0（严格两阶段），自己调过的不碰
         Check("untouched far range folds to zero",
@@ -240,7 +240,7 @@ public static partial class Program
         var tunedFar = new HudConfig { FormationModel = 2, FormationFarRangeM = 2600 };
         tunedFar.MigrateFormation();
         Check("a hand-tuned far range survives the migration",
-            Math.Abs(tunedFar.FormationFarRangeM - 2600) < 0.01 && tunedFar.FormationModel == 3);
+            Math.Abs(tunedFar.FormationFarRangeM - 2600) < 0.01 && tunedFar.FormationModel == 4);
         var oldNamed = new HudConfig { FormationModel = 0, FormationShape = "diamond", FormationSlot = 2 };
         oldNamed.MigrateFormation();
         Check("legacy named shape is rewritten from the preset",
@@ -691,7 +691,7 @@ public static partial class Program
             roleCfg.FormationAssist && roleCfg.DataLinkEnabled);
         Check("role applies the echelon preset for that number",
             roleCfg.FormationShape == WtHud.Hud.FormationGeometry.ShapeEchelon
-            && Math.Abs(roleCfg.FormationWingOffsetM - 500) < 0.1
+            && Math.Abs(roleCfg.FormationWingOffsetM + 500) < 0.1
             && Math.Abs(roleCfg.FormationStationBackM - 900) < 0.1
             && Math.Abs(roleCfg.FormationUpM - 50) < 0.1);
 
@@ -754,7 +754,7 @@ public static partial class Program
         };
         parsed.Profile.ApplyTo(applyTo);
         Check("config apply writes the numbers",
-            Math.Abs(applyTo.FormationWingOffsetM - 500) < 0.001
+            Math.Abs(applyTo.FormationWingOffsetM + 500) < 0.001
             && Math.Abs(applyTo.FormationStationBackM - 900) < 0.001
             && applyTo.FormationShape == WtHud.Hud.FormationGeometry.ShapeEchelon
             && applyTo.FormationSlot == 1);

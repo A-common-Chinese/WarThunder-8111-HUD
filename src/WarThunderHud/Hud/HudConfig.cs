@@ -645,6 +645,16 @@ public sealed class HudConfig
             if (Math.Abs(FormationFarRangeM - 2000.0) < 1e-9) FormationFarRangeM = 0;
             FormationModel = 3;
         }
+
+        // 4：侧距带符号（正 = 右、负 = 左、0 = 尾随），侧位由符号推导、不再手选。
+        if (FormationModel < 4)
+        {
+            FormationWingOffsetM = FormationWingSide * Math.Abs(FormationWingOffsetM);
+            FormationWingSide = Math.Sign(FormationWingOffsetM);
+            FormationCustomWingOffsetM = FormationCustomWingSide * Math.Abs(FormationCustomWingOffsetM);
+            FormationCustomWingSide = Math.Sign(FormationCustomWingOffsetM);
+            FormationModel = 4;
+        }
     }
 
     /// <summary>把当前四个值存成「自定义快照」。</summary>

@@ -699,6 +699,14 @@ internal static class MfdPages
         if (index > 0) ApplyShapePreset(c, WtHud.Hud.FormationGeometry.ShapeEchelon);
     }
 
+    /// <summary>侧位（只读）：由带符号的侧距自动判定左右/尾随。</summary>
+    internal static string SideText(HudConfig c)
+    {
+        double lat = WtHud.Hud.FormationGeometry.LateralM(c);
+        string key = lat < -1 ? "opt.wingLeft" : lat > 1 ? "opt.wingRight" : "opt.wingTrail";
+        return L10n.Get(LangScope.Screen, key);
+    }
+
     /// <summary>
     /// 判定余量（只读）：完成门槛 vs 链路一拍能飞多远。
     /// <para>这一行存在的唯一目的，是让人在做不到的距离上当场看出「做不到」，
@@ -757,12 +765,15 @@ internal static class MfdPages
             // 判定余量：完成门槛（斜距 × 完成%）对链路一拍的位移（TAS × 0.25 s）。
             // ★ 原来这里是「纵向」只读行，它和后距输入行是同一个数，占着一格没有新信息。
             Info("row.fMargin", c => MarginText(c, WtHud.Program.FormationLatencyM)),
-            // 四个真正的输入：改哪个都立刻落回自定义
-            Enum("row.wingSide", new[] { "opt.wingLeft", "opt.wingTrail", "opt.wingRight" },
-                 c => c.FormationWingSide + 1,
-                 (c, i) => { c.FormationWingSide = i - 1; ValuesEdited(c); }),
-            Number("row.fWingOffset", c => c.FormationWingOffsetM,
-                   (c, v) => { c.FormationWingOffsetM = v; ValuesEdited(c); }, 10, 0, 600, "m",
+            // 三个真正的输入：侧向/纵向/高度都带正负号；侧位由侧向符号自动判定（只读）
+            Info("row.wingSide", c => SideText(c)),
+            Number("row.fWingOffset", c => WtHud.Hud.FormationGeometry.LateralM(c),
+                   (c, v) =>
+                   {
+                       c.FormationWingOffsetM = v;
+                       c.FormationWingSide = Math.Sign(v);   // 兼容旧字段/报文
+                       ValuesEdited(c);
+                   }, 10, -600, 600, "m",
                    quantity: MfdQuantity.LengthM),
             // 下限 200 m：再近的话 4 Hz 链路的滞后就超过完成门槛（见上面那行判定余量），
             // 那个距离上本来也是目视编队更稳。
@@ -1113,7 +1124,10 @@ internal static class MfdPages
         if (!p.SenderLead && Math.Clamp(p.Slot, 0, 2) != Math.Clamp(c.FormationSlot, 0, 2))
             keys.Add("row.fSlot");
         if (shape != c.FormationShape) keys.Add("row.fShape");
-        if (Math.Abs(p.LateralM - c.FormationWingOffsetM) > 0.5) keys.Add("row.fWingOffset");
+        double latCfg = WtHud.Hud.FormationGeometry.LateralM(c);
+        if (Math.Clamp(p.Side, -1, 1) != Math.Sign(latCfg)
+            || Math.Abs(Math.Abs(p.LateralM) - Math.Abs(latCfg)) > 0.5)
+            keys.Add("row.fWingOffset");
         if (Math.Abs(p.BackM - c.FormationStationBackM) > 0.5) keys.Add("row.fStationBack");
         if (Math.Abs(p.UpM - c.FormationUpM) > 0.5) keys.Add("row.fUpM");
         // 间距按「对方那个预设下会用到的值」比：自定义没有间距，不参与

@@ -26,7 +26,7 @@ public readonly record struct FormationProfile(
             Math.Clamp(c.FormationSlot, 0, FormationGeometry.MaxSlots - 1),
             shape,
             Math.Clamp(c.FormationWingSide, -1, 1),
-            c.FormationWingOffsetM, c.FormationStationBackM, c.FormationUpM,
+            Math.Abs(FormationGeometry.LateralM(c)), c.FormationStationBackM, c.FormationUpM,
             FormationGeometry.Spacing(c, shape),
             c.FormationDonePct, c.FormationDoneHoldS, c.FormationDropPct,
             c.FormationMapOnly, c.FormationAssist, c.LeadIcon ?? "");
@@ -44,7 +44,7 @@ public readonly record struct FormationProfile(
         // 长机的编号没有几何含义：把它套到僚机头上会跟 1 号僚机撞位
         if (!SenderLead) c.FormationSlot = Math.Clamp(Slot, 0, FormationGeometry.MaxSlots - 1);
         c.FormationWingSide = Math.Clamp(Side, -1, 1);
-        c.FormationWingOffsetM = Math.Max(0, LateralM);
+        c.FormationWingOffsetM = Math.Clamp(Side, -1, 1) * Math.Abs(LateralM);   // 带符号：负 = 左
         c.FormationStationBackM = Math.Max(10, BackM);
         c.FormationUpM = UpM;
         if (c.FormationShape != FormationGeometry.ShapeCustom)

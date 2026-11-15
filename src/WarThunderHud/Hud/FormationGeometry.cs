@@ -48,8 +48,18 @@ public static class FormationGeometry
     /// 当前配置对应的站位。**这是唯一的几何入口。**
     /// <para>侧位为正后（0）时横偏乘 0，横偏那一项自然不起作用 —— 不需要额外的分支。</para>
     /// </summary>
+    /// <summary>
+    /// 侧向站位（米，正 = 长机右侧、负 = 左侧、0 = 正后方）。
+    /// <para>0.4.39 起带符号存进 <c>FormationWingOffsetM</c>；旧配置（model &lt; 4）仍按
+    /// 侧位 × 绝对值折算，老配置/老测试直接可用。</para>
+    /// </summary>
+    public static double LateralM(HudConfig cfg) =>
+        cfg.FormationModel >= 4
+            ? cfg.FormationWingOffsetM
+            : cfg.FormationWingSide * Math.Abs(cfg.FormationWingOffsetM);
+
     public static FormationSlotSpec Station(HudConfig cfg) =>
-        new(cfg.FormationWingSide * cfg.FormationWingOffsetM,
+        new(LateralM(cfg),
             -Math.Max(1.0, cfg.FormationStationBackM),
             cfg.FormationUpM);
 
@@ -111,7 +121,7 @@ public static class FormationGeometry
     {
         var (side, offset, back, up) = Preset(shape, index, Spacing(cfg, shape));
         cfg.FormationWingSide = side;
-        cfg.FormationWingOffsetM = offset;
+        cfg.FormationWingOffsetM = side * offset;   // 带符号：负 = 左
         cfg.FormationStationBackM = back;
         cfg.FormationUpM = up;
     }
@@ -124,7 +134,7 @@ public static class FormationGeometry
     {
         var back = -Math.Max(1.0, cfg.FormationStationBackM);
         var up = cfg.FormationUpM;
-        var off = Math.Max(0.0, cfg.FormationWingOffsetM);
+        var off = Math.Abs(LateralM(cfg));
         return new List<(FormationSlotSpec, int, string)>
         {
             (new FormationSlotSpec(0, back, up), 0, "0"),
