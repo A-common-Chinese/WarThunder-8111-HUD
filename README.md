@@ -55,7 +55,23 @@ no packet interception, no automation.
 | 顶部 | 航向带，读数随航向滚动 |
 
 - 两条趋势条**零点对齐屏幕中心线**，起点各有一段短横线基线，量程：爬升率 0–100 m/s → 5°，加速度 0–10 m/s² → 5°
-- 走带刻度每 50 km/h / 100 m 一格，主刻度标数值
+- 走带刻度：公制每 50 km/h / 100 m 一格（主刻度 100 / 200）；英制每 25 kt / 250 ft 一格（主刻度 50 / 500）
+
+### 单位制（英制显示）
+
+面板「显示」页顶部有两个**独立**开关，和游戏里一样分开设置：
+
+| 开关 | 选项 | 影响 |
+|---|---|---|
+| 速度单位 | `km/h` / `节 (kt)` | 速度带读数与刻度、目标速度、加减速量、接近率 |
+| 高度/距离单位 | `米 / 公里` / `英尺 / 海里` | 高度带读数与刻度、`V/S`、编队距离、导航行、雷达高度 |
+
+- **只改显示和输入**：内部状态、判定阈值、数据链包、`hud-config.json` 永远是公制（km/h、米）。
+  切回公制不会有任何数值漂移，也不会影响和数据链对端的一致性。
+- 距离超过 1 NM 用海里、以内用英尺；`V/S` 用 ft/min 并标出单位（数值从 8 变成 1600，不标会误读）。
+- 面板里带物理单位的 13 个数值行（编队间距、告警半径、速度阈值等）跟着换算，**手输按当前显示单位解释**：
+  英制下输入 `500` 表示 500 ft，写入后存成 152.4 m。上下限仍按公制夹取。
+- 不换算的：马赫、G、`°`、`%`、`px`、`ms`、以及 `ACC`（m/s²，工程读数，两种单位制都不用它）。
 
 ### 左下数值区
 
@@ -221,6 +237,8 @@ no packet interception, no automation.
 
 | 字段 | 含义 | 默认 |
 |---|---|---|
+| `speedUnit` | 速度单位：0 = km/h，1 = 节（**只影响显示与输入**） | 0 |
+| `lengthUnit` | 高度/距离单位：0 = 米/公里，1 = 英尺/海里（只影响显示与输入） | 0 |
 | `verticalFovDeg` | 垂直视场角（角度→像素换算） | 43 |
 | `layoutOffsetYDeg` | HUD 整体垂直偏移（度） | 1.8 |
 | `pitchZeroDeg` | 俯仰零位 | 0 |
@@ -394,6 +412,21 @@ Current version **v0.4.35** (pre-release) · [Version history](CHANGELOG.md) · 
 | Left (speed) | IAS readout, Mach `M`, longitudinal `ACC` + trend bar |
 | Right (altitude) | Barometric altitude `H`, `V/S` + trend bar |
 | Top | Heading tape scrolling with the heading |
+
+### Units (imperial display)
+
+Two independent switches at the top of the DISPLAY page, matching how the game splits them:
+
+| Switch | Options | Affects |
+|---|---|---|
+| Speed unit | `km/h` / `knots` | Speed tape and its ticks, target speed, accel/decel amount, closure rate |
+| Altitude/distance unit | `m / km` / `ft / NM` | Altitude tape and ticks, `V/S`, formation ranges, nav line, radar altitude |
+
+Display and input only. Internal state, thresholds, data-link packets and `hud-config.json` stay
+metric (km/h, metres), so switching back never drifts a value and never desynchronises a wingman.
+Tape ticks are 50 km/h / 100 m in metric and 25 kt / 250 ft in imperial; distances above 1 NM use
+NM, below it feet. The 13 settings with a physical unit follow the switch, and typed values are
+read in the displayed unit (typing `500` while in feet stores 152.4 m; clamping stays metric).
 
 ### Data block
 

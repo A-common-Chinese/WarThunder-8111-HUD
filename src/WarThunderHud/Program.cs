@@ -1963,6 +1963,9 @@ public static partial class Program
             opt.SinkRateAlert = !pullUpNow && sinkNow;
             opt.ShowPitchLadder = cfg.ShowPitchLadder;
             opt.ShowFpm = cfg.ShowFpm;
+            // 单位制：每帧同步，面板里一改立刻生效（不需要重启，和显示开关同一处理方式）。
+            opt.SpeedUnit = cfg.SpeedUnits;
+            opt.LengthUnit = cfg.LengthUnits;
 
             // Full roll angle for the upright / inverted indicator. The bank estimate used by
             // the ladder is clamped to +/-80 deg, so it can never detect an inverted attitude;
@@ -3017,8 +3020,8 @@ public static partial class Program
         var afEnemyLabel = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts, "afenemy");
         if (bestFriendly < double.MaxValue)
             opt.NavFriendly = hasHeading
-                ? $"{afLabel} {Arrow(relFriendly)} {bestFriendly / 1000.0:F1}km"
-                : $"{afLabel} {bestFriendly / 1000.0:F1}km";
+                ? $"{afLabel} {Arrow(relFriendly)} {Units.NavDistance(bestFriendly, cfg.LengthUnits)}"
+                : $"{afLabel} {Units.NavDistance(bestFriendly, cfg.LengthUnits)}";
         // 友方地面单位：取 30 km 内最近的 2 个，显示类型（防空优先）与相对方位
         opt.NavUnit1 = "";
         opt.NavUnit2 = "";
@@ -3049,16 +3052,16 @@ public static partial class Program
 
             string Fmt((double Dist, double Brg, string Icon) u)
             {
-                var km = u.Dist / 1000.0;
+                var distText = Units.NavDistance(u.Dist, cfg.LengthUnits);
                 var label = IcoShort(u.Icon);
                 if (hasHeading)
                 {
                     double relU = u.Brg - navHeading;
                     while (relU < 0) relU += 360;
                     while (relU >= 360) relU -= 360;
-                    return $"{label} {Arrow(relU)} {relU:F0}° {km:F1}km";
+                    return $"{label} {Arrow(relU)} {relU:F0}° {distText}";
                 }
-                return $"{label} {km:F1}km";
+                return $"{label} {distText}";
             }
 
             if (near.Count > 0) opt.NavUnit1 = Fmt(near[0]);   // 只显示最近的友军防空
@@ -3069,8 +3072,8 @@ public static partial class Program
         if (bestEnemy < double.MaxValue)
         {
             opt.NavEnemy = hasHeading
-                ? $"{afEnemyLabel} {Arrow(relEnemy)} {bestEnemy / 1000.0:F1}km"
-                : $"{afEnemyLabel} {bestEnemy / 1000.0:F1}km";
+                ? $"{afEnemyLabel} {Arrow(relEnemy)} {Units.NavDistance(bestEnemy, cfg.LengthUnits)}"
+                : $"{afEnemyLabel} {Units.NavDistance(bestEnemy, cfg.LengthUnits)}";
             double alertKm = cfg.EnemyAirfieldAlertKm;
             opt.EnemyAirfieldAlert = alertKm > 0 && bestEnemy / 1000.0 < alertKm;
         }
@@ -4780,6 +4783,15 @@ public static partial class Program
         var opt = new HudOptions();
         if (variant == "zoom") { opt.ZoomLayout = true; opt.ZoomBlend = 1.0; }
 
+        // 单位样张：WT_PREVIEW_UNITS="kt,ft"。★ 必须在所有样张文本之前生效 ——
+        // 导航行那句距离就是按 opt.LengthUnit 生成的，晚了会出现「带子是英尺、导航还是公里」。
+        if (Environment.GetEnvironmentVariable("WT_PREVIEW_UNITS") is { Length: > 0 } unitsSpec)
+        {
+            var up = unitsSpec.Split(',');
+            if (up[0].Trim() is "kt" or "knots") opt.SpeedUnit = SpeedUnit.Knots;
+            if (up.Length > 1 && up[1].Trim() is "ft" or "imperial") opt.LengthUnit = LengthUnit.Imperial;
+        }
+
         // 预览用的假友机：WT_PREVIEW_FRIENDS="30,1200;160,3400"（方位°,距离m）
         if (Environment.GetEnvironmentVariable("WT_PREVIEW_FRIENDS") is { Length: > 0 } friendSpec)
         {
@@ -4939,8 +4951,8 @@ public static partial class Program
         if (variant == "flaps") { opt.FlapsDeployed = true; opt.FlapsSteadyText = "50"; }
         opt.AltTapeM = snap.AltM;   // previews default to barometric altitude on the tape
         opt.GridText = "F6";
-        opt.NavFriendly = "AF  " + (char)0x2193 + " 4.2km";
-        opt.NavEnemy = "AF! " + (char)0x2197 + " 9.8km";
+        opt.NavFriendly = "AF  " + (char)0x2193 + " " + Units.NavDistance(4200, opt.LengthUnit);
+        opt.NavEnemy = "AF! " + (char)0x2197 + " " + Units.NavDistance(9800, opt.LengthUnit);
         if (variant == "edge") { opt.EdgeWarning = true; opt.EdgeArrow = "↑"; opt.ForceTransitVisible = true; }
         if (variant == "pullup") { opt.PullUpAlert = true; opt.ForceTransitVisible = true; }
         if (variant == "pullupall") { opt.PullUpAlert = true; opt.SinkRateAlert = true; opt.OnlyAlerts = true; opt.ForceTransitVisible = true; }
@@ -4962,8 +4974,8 @@ public static partial class Program
             // Everything at once, for the README screenshot.
             opt.ForceTransitVisible = true;
             opt.GridText = "F6";
-            opt.NavFriendly = "AF " + (char)0x2196 + " 4.2km";
-            opt.NavEnemy = "AF! " + (char)0x2197 + " 9.8km";
+            opt.NavFriendly = "AF " + (char)0x2196 + " " + Units.NavDistance(4200, opt.LengthUnit);
+            opt.NavEnemy = "AF! " + (char)0x2197 + " " + Units.NavDistance(9800, opt.LengthUnit);
             opt.EdgeWarning = true;
             opt.EdgeArrow = (char)0x2190 + "";
             opt.PullUpAlert = true;
@@ -5000,6 +5012,7 @@ public static partial class Program
         if (variant == "mg") snap = WithNy(snap, 9.5);
         if (variant == "nw") snap = WithNy(snap, -2.5);
         if (variant == "nd") snap = WithNy(snap, -4.5);
+
         var geo = new HudGeometry(opt, new HudCalibration { VerticalFovDeg = 45 });
         var prims = geo.Build(snap, att, w, h);
 

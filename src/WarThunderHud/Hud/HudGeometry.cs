@@ -101,6 +101,15 @@ public sealed class HudOptions
     public bool ShowAltTape { get; set; } = true;
     public bool ShowHeadingTape { get; set; } = true;
 
+    /// <summary>
+    /// 速度/长度的显示单位。**默认公制**，与改造前完全一致。
+    /// <para>只被格式化函数读取；本类里所有判定、阈值、几何仍按 km/h 和米算。</para>
+    /// </summary>
+    public SpeedUnit SpeedUnit { get; set; } = SpeedUnit.Kmh;
+
+    /// <summary>长度/距离的显示单位。同样只影响排版，不影响任何判定。</summary>
+    public LengthUnit LengthUnit { get; set; } = LengthUnit.Metric;
+
     /// <summary>编队辅助：在航向带上标出友机方位与距离（只画友军，敌人永远不进这个列表）。</summary>
     public bool FormationAssist { get; set; }
 
@@ -769,14 +778,10 @@ public sealed class HudGeometry
     }
 
     /// <summary>编队看的是百米级间距，所以 1 km 以内直接显示米（取整到 10 m）。</summary>
-    private static string FormatRange(double metres)
-        => metres < 1000 ? ((int)(Math.Round(metres / 10.0) * 10)).ToString()
-                         : (metres / 1000.0).ToString("F1") + "km";
+    private string FormatRange(double metres) => Units.DistanceLong(metres, _opt.LengthUnit);
 
     /// <summary>同上，但带单位。距离行和「远距例外」行共用，避免两处取整规则漂移。</summary>
-    private static string FormatRangeShort(double metres)
-        => metres < 1000 ? ((int)(Math.Round(metres / 10.0) * 10)).ToString() + "m"
-                         : (metres / 1000.0).ToString("F1") + "km";
+    private string FormatRangeShort(double metres) => Units.DistanceShort(metres, _opt.LengthUnit);
 
     /// <summary>
     /// 编队模式的三个最小读数：速度 / 高度 / 航向，放在画面下方，避开视野中心。
@@ -881,7 +886,7 @@ public sealed class HudGeometry
             if (v.Priority)
             {
                 text = (v.ErrorM > 0 ? "\u2191 " : "\u2193 ")
-                       + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
+                       + Units.VerticalSpeedText(Math.Abs(v.RateMs), _opt.LengthUnit);
             }
             else if (v.AtTarget)
             {
@@ -889,9 +894,9 @@ public sealed class HudGeometry
             }
             else
             {
-                int altAbs = (int)Math.Round(Math.Abs(v.ErrorM) / 5.0) * 5;
-                text = (v.ErrorM > 0 ? "\u2191 " : "\u2193 ") + altAbs.ToString() + " m   "
-                       + Math.Abs(v.RateMs).ToString("0.0") + " m/s";
+                text = (v.ErrorM > 0 ? "\u2191 " : "\u2193 ")
+                       + Units.AltitudeGapText(Math.Abs(v.ErrorM), _opt.LengthUnit) + "   "
+                       + Units.VerticalSpeedText(Math.Abs(v.RateMs), _opt.LengthUnit);
             }
             if (v.Stale) text += "   " + L10n.Get(LangScope.Alerts, "guide.vertStale");
 
@@ -924,7 +929,7 @@ public sealed class HudGeometry
                 prims.Add(new HudPrim
                 {
                     Kind = HudPrimKind.Text,
-                    Text = "\u2192 " + ((int)Math.Round(v.FarTargetM ?? far)).ToString() + "m",
+                    Text = "\u2192 " + Units.DistancePlain(v.FarTargetM ?? far, _opt.LengthUnit),
                     Align = HudAlign.Left, FontSize = fontSmall * 1.15,
                     Color = Fade(_opt.WarnColor, 0.6),
                     Points = { (cx + farGapPx, cy + 11.5 * pxDeg) },
@@ -1050,7 +1055,7 @@ public sealed class HudGeometry
         // 两块分开定位而不是拼一个字符串：连续空格在渲染里会被压缩，拼起来会糊成一坨。
         // 目标距离也画出来：只说"820m"飞行员不知道要追到多少，"820m → 400m"一眼就明白。
         string range = FormatRangeShort(g.RangeM);
-        string target = ((int)Math.Round(g.TargetRangeM)).ToString() + "m";
+        string target = Units.DistancePlain(g.TargetRangeM, _opt.LengthUnit);
 
         double gapPx = 0.55 * pxDeg;
         prims.Add(new HudPrim
@@ -1238,14 +1243,14 @@ public sealed class HudGeometry
             double gapV = 0.55 * pxDeg;
             prims.Add(new HudPrim
             {
-                Kind = HudPrimKind.Text, Text = ((int)Math.Round(currentKmh)).ToString(),
+                Kind = HudPrimKind.Text, Text = Units.SpeedText(currentKmh, _opt.SpeedUnit),
                 Align = HudAlign.Right, FontSize = fontSmall * 1.25,
                 Color = Fade(col, 0.90), Points = { (cx - gapV, by + 0.9 * pxDeg) },
             });
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text,
-                Text = "\u2192 " + ((int)Math.Round(targetKmh)).ToString() + " km/h",
+                Text = "\u2192 " + Units.SpeedText(targetKmh, _opt.SpeedUnit) + " " + Units.SpeedLabel(_opt.SpeedUnit),
                 Align = HudAlign.Left, FontSize = fontSmall * 1.25,
                 Color = Fade(col, 0.60), Points = { (cx + gapV, by + 0.9 * pxDeg) },
             });
@@ -1338,15 +1343,25 @@ public sealed class HudGeometry
         var col = _opt.Color;
         double shownKmh = useTas ? s.TasKmh : s.IasKmh;
 
+        // 刻度按**显示单位**生成，位置换算回 km/h 再落点：这样英制下刻度落在整数节上，
+        // 而不是把「每 50 km/h」的刻度改写成 27、54、81 这种读不顺的数字。
+        // 公制分支（Kmh）下 kmhPer=1、step=50/100，与原实现完全等价。
+        var speedUnit = _opt.SpeedUnit;
+        double kmhPerUnit = Units.KmhPerSpeedUnit(speedUnit);
+        double tickStep = Units.SpeedTickStep(speedUnit);
+        double majorStep = Units.SpeedMajorStep(speedUnit);
+        double shownDisp = shownKmh / kmhPerUnit;
+        double rangeDisp = span / pxPerKmh / kmhPerUnit;
+
         prims.Add(new HudPrim { Kind = HudPrimKind.Line, Width = line, Color = col, Points = { (x, cy - span), (x, cy + span) } });
 
-        double startV = Math.Floor((shownKmh - span / pxPerKmh) / 50) * 50;
-        for (double v = startV; v <= shownKmh + span / pxPerKmh; v += 50)
+        double startV = Math.Floor((shownDisp - rangeDisp) / tickStep) * tickStep;
+        for (double v = startV; v <= shownDisp + rangeDisp; v += tickStep)
         {
             if (v < 0) continue;
-            double y = cy + (shownKmh - v) * pxPerKmh;
+            double y = cy + (shownDisp - v) * (pxPerKmh * kmhPerUnit);
             if (Math.Abs(y - cy) > span) continue;
-            bool major = Math.Abs(v % 100) < 0.01;
+            bool major = Math.Abs(v % majorStep) < 0.01;
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.8),
@@ -1356,7 +1371,7 @@ public sealed class HudGeometry
             {
                 prims.Add(new HudPrim
                 {
-                    Kind = HudPrimKind.Text, Text = ((int)v).ToString("0"),
+                    Kind = HudPrimKind.Text, Text = ((int)Math.Round(v)).ToString("0"),
                     Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.7),
                     Points = { (x - 2.6 * pxDeg, y) },
                 });
@@ -1364,19 +1379,19 @@ public sealed class HudGeometry
         }
 
         bool overspeed = _opt.OverspeedAlert;
-        AddBoxedText(prims, x - 0.6 * pxDeg, cy, shownKmh.ToString("0"), font, HudAlign.Right,
+        AddBoxedText(prims, x - 0.6 * pxDeg, cy, Units.SpeedText(shownKmh, speedUnit), font, HudAlign.Right,
             overspeed ? _opt.DangerColor : col, line, pxDeg);
 
         // 差值贴在**本机速度框**正下方，按框的**左边缘**左对齐。
         // ★ 原来右对齐到框的右边缘，数字紧贴速度带，会和刻度短横线挤在一起，
         //   负号那一位也容易被带子压掉；左对齐后整行落在框下、远离带子。
-        // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。
+        // 按 10 km/h 取整 —— 编队时「加 80」够用，没人照着个位数修油门。英制取整到 5 kt。
         if (targetKmh is double tgt2 && tgt2 > 1)
         {
-            int dvShow = (int)(Math.Round((tgt2 - shownKmh) / 10.0) * 10);
+            int dvShow = Units.SpeedDelta(tgt2 - shownKmh, speedUnit);
             if (dvShow != 0)
             {
-                string curText = shownKmh.ToString("0");
+                string curText = Units.SpeedText(shownKmh, speedUnit);
                 double boxLeft = (x - 0.6 * pxDeg) - BoxWidthDeg(curText, font);
                 prims.Add(new HudPrim
                 {
@@ -1449,7 +1464,7 @@ public sealed class HudGeometry
         }
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text, Text = "KM/H",
+            Kind = HudPrimKind.Text, Text = Units.SpeedCapsLabel(_opt.SpeedUnit),
             Align = HudAlign.Right, FontSize = fontSmall * 0.85, Color = Fade(col, 0.5),
             Points = { (x - 4.6 * pxDeg, cy - 3.4 * pxDeg) },
         });
@@ -1464,15 +1479,24 @@ public sealed class HudGeometry
         double tapeAlt = _opt.AltTapeM;
         var col = _opt.Color;
 
+        // 和速度带同一套做法：刻度按显示单位生成（m 100/200、ft 250/500），位置换算回米。
+        // 公制下 metresPerUnit=1、step=100/200，与原实现逐字节等价。
+        var lengthUnit = _opt.LengthUnit;
+        double metresPerUnit = Units.MetresPerLengthUnit(lengthUnit);
+        double tickStep = Units.AltTickStep(lengthUnit);
+        double majorStep = Units.AltMajorStep(lengthUnit);
+        double altDisp = tapeAlt / metresPerUnit;
+        double rangeDisp = span / pxPerM / metresPerUnit;
+
         prims.Add(new HudPrim { Kind = HudPrimKind.Line, Width = line, Color = col, Points = { (x, cy - span), (x, cy + span) } });
 
-        double startV = Math.Floor((tapeAlt - span / pxPerM) / 100) * 100;
-        for (double v = startV; v <= tapeAlt + span / pxPerM; v += 100)
+        double startV = Math.Floor((altDisp - rangeDisp) / tickStep) * tickStep;
+        for (double v = startV; v <= altDisp + rangeDisp; v += tickStep)
         {
             if (v < 0) continue;
-            double y = cy + (tapeAlt - v) * pxPerM;
+            double y = cy + (altDisp - v) * (pxPerM * metresPerUnit);
             if (Math.Abs(y - cy) > span) continue;
-            bool major = Math.Abs(v % 200) < 0.01;
+            bool major = Math.Abs(v % majorStep) < 0.01;
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Line, Width = line, Color = Fade(col, 0.8),
@@ -1482,7 +1506,7 @@ public sealed class HudGeometry
             {
                 prims.Add(new HudPrim
                 {
-                    Kind = HudPrimKind.Text, Text = ((int)v).ToString("0"),
+                    Kind = HudPrimKind.Text, Text = ((int)Math.Round(v)).ToString("0"),
                     Align = HudAlign.Left, FontSize = fontSmall, Color = Fade(col, 0.7),
                     Points = { (x + 2.6 * pxDeg, y) },
                 });
@@ -1496,7 +1520,7 @@ public sealed class HudGeometry
             if (tapeAlt < 10) tapeColor = _opt.DangerColor;
             else if (tapeAlt < 50) tapeColor = _opt.WarnColor;
         }
-        AddBoxedText(prims, x + 0.6 * pxDeg, cy, tapeAlt.ToString("0"), font, HudAlign.Left, tapeColor, line, pxDeg);
+        AddBoxedText(prims, x + 0.6 * pxDeg, cy, Units.LengthText(tapeAlt, lengthUnit), font, HudAlign.Left, tapeColor, line, pxDeg);
         if (_opt.AltTapeIsRadar)
         {
             prims.Add(new HudPrim
@@ -1525,15 +1549,19 @@ public sealed class HudGeometry
             });
         }
         // Vertical speed sits INSIDE the altitude tape (towards the screen centre).
+        // 公制保持原来的「V/S +8.2」；英制换成 ft/min 并补单位 —— 数值从 8 变成 1600，
+        // 不标单位的话读的人会以为是 m/s。
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text, Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + s.VyMs.ToString("0.0"),
+            Kind = HudPrimKind.Text,
+            Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + Units.VerticalSpeedNumber(s.VyMs, lengthUnit)
+                   + Units.VerticalSpeedSuffix(lengthUnit),
             Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.9),
             Points = { (x - 1.5 * pxDeg, cy + 2.6 * pxDeg) },
         });
         prims.Add(new HudPrim
         {
-            Kind = HudPrimKind.Text, Text = "M",
+            Kind = HudPrimKind.Text, Text = Units.LengthCapsLabel(lengthUnit),
             Align = HudAlign.Left, FontSize = fontSmall * 0.85, Color = Fade(col, 0.5),
             Points = { (x + 4.6 * pxDeg, cy - 3.4 * pxDeg) },
         });
@@ -1676,7 +1704,7 @@ public sealed class HudGeometry
         {
             Row(L10n.Get(LangScope.Alerts, "label.fuel"), "--:--", col);
         }
-        Row(L10n.Get(LangScope.Alerts, "label.alt"), s.AltM.ToString("0"), col);
+        Row(L10n.Get(LangScope.Alerts, "label.alt"), Units.LengthText(s.AltM, _opt.LengthUnit), col);
         if (!string.IsNullOrEmpty(_opt.GridText)) Row(L10n.Get(LangScope.Alerts, "label.grid"), _opt.GridText, col);
     }
 

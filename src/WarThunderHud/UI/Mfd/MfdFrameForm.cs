@@ -954,16 +954,20 @@ public sealed class MfdFrameForm : Form
         }
 
         var text = (buffer ?? "").Replace(",", ".").Trim();
-        if (double.TryParse(text, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var v))
+        if (item.TryParseNumber(_work, text, out var v))
         {
-            v = Math.Clamp(v, item.Min, item.Max);
             item.SetNumber?.Invoke(_work, v);
             _dirty = true;
             WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+            _toast = null;
+        }
+        else
+        {
+            // ★ 解析失败必须给反馈。改造前面板只是清掉 _toast 就回列表，
+            //   用户以为写进去了 —— G / % 那 6 行一直是这样静默丢的。
+            _toast = L10n.Get(LangScope.Screen, "edit.badNumber");
         }
         _mode = Mode.Items;
-        _toast = null;
     }
 
     /// <summary>Applies the captured key combination to the selected binding row.</summary>
@@ -1071,10 +1075,12 @@ public sealed class MfdFrameForm : Form
     /// <summary>数值行 → 手输编辑页。</summary>
     private void EnterEditNumber(MfdItem target)
     {
-        var initial = target.ValueText(_work)
-            .TrimEnd('X', 'x', 'M', 's', 'k', 'm', 'h', '/', 'p', '°', ' ');
+        // ★ 初值直接取「数字部分」，不再从显示串上 TrimEnd 剥单位。
+        //   旧做法用的是硬编码字符白名单，`G`（4 行）和 `%`（2 行）不在里面，
+        //   于是缓冲变成 "3.0G" / "10%"、解析必然失败、界面却毫无提示。
+        var initial = target.NumberText(_work);
         _editPage = new Pages.NumberEditPage(
-            texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.Unit),
+            texts: () => (L10n.Get(LangScope.Screen, target.LabelKey), target.DisplayUnit(_work)),
             settingKey: target.LabelKey,
             initial: initial,
             onCommit: CommitNumber,

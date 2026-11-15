@@ -1,5 +1,5 @@
 ﻿{
-  "_version": 53,
+  "_version": 54,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -131,6 +131,14 @@
   "row.pitchSign": {
     "zh": "俯仰符号：原生俯仰数据正负方向，可手动强制。",
     "en": "Pitch sign: force the sign of the native pitch data when auto-detection fails."
+  },
+  "row.speedUnit": {
+    "zh": "速度单位：km/h 或节。只影响显示与输入（速度带、目标速度、加减速量、面板数值行），内部的判定、阈值和数据链永远用 km/h。",
+    "en": "Speed unit: km/h or knots. Display and input only - every threshold, filter and data-link packet stays in km/h internally."
+  },
+  "row.lengthUnit": {
+    "zh": "高度与距离单位：米/公里 或 英尺/海里。只影响显示与输入（高度带、距离、垂直速度、面板数值行）。1 海里以内用英尺，以上用海里 —— 和真实座舱的习惯一致。",
+    "en": "Altitude and distance unit: metres/km or feet/NM. Display and input only. Below 1 NM it shows feet, above it NM - same convention as a real cockpit."
   },
   "row.hideCockpit": {
     "zh": "座舱隐藏：进入座舱视角时自动隐藏 HUD。",

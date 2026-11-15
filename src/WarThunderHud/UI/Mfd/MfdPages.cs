@@ -23,6 +23,30 @@ internal enum ItemKind
     Submenu,
 }
 
+/// <summary>
+/// 数值行的物理量。**存储永远公制**（<see cref="MfdItem.Step"/> / Min / Max 也是公制），
+/// 这个标注只决定「显示和输入按哪套单位换算」。
+/// <para>之所以分 LengthM / LengthKm 两种：配置里写 km 的行（告警半径）在英制下该给 NM，
+/// 写 m 的行（编队间距）该给英尺。混成一种会让 12 km 变成 39370ft。</para>
+/// </summary>
+internal enum MfdQuantity
+{
+    /// <summary>无量纲（°、%、G、px、ms、秒、倍数…）。不做任何换算。</summary>
+    None,
+
+    /// <summary>米 ↔ 英尺。</summary>
+    LengthM,
+
+    /// <summary>公里 ↔ 海里。</summary>
+    LengthKm,
+
+    /// <summary>km/h ↔ 节。</summary>
+    SpeedKmh,
+
+    /// <summary>m/s ↔ ft/min（垂直速度，跟随长度单位）。</summary>
+    SpeedMs,
+}
+
 /// <summary>One cell of a page (two columns x five rows, filled row-major).</summary>
 internal sealed class MfdItem
 {
@@ -42,6 +66,12 @@ internal sealed class MfdItem
     public double Min { get; init; } = double.MinValue;
     public double Max { get; init; } = double.MaxValue;
     public string Unit { get; init; } = "";
+
+    /// <summary>
+    /// 物理量（决定换不换算、按哪套单位显示）。<see cref="MfdQuantity.None"/> 时 <see cref="Unit"/>
+    /// 就是字面后缀，行为和改造前完全一致。
+    /// </summary>
+    public MfdQuantity Quantity { get; init; } = MfdQuantity.None;
     public Func<HudConfig, bool>? GetBool { get; init; }
     public Action<HudConfig, bool>? SetBool { get; init; }
     public Func<HudConfig, double>? GetNumber { get; init; }
@@ -87,6 +117,78 @@ internal sealed class MfdItem
     /// <summary>当前是否可用。绘制与命令分派都从这里取，避免两处判断不一致。</summary>
     public bool IsEnabled(HudConfig cfg) => EnabledWhen?.Invoke(cfg) ?? true;
 
+    // ------------------------------------------------------------ 单位换算（显示 ↔ 公制）
+
+    /// <summary>公制值 → 显示值。无量纲行原样返回，公制下不做任何乘除。</summary>
+    public double DisplayValue(HudConfig cfg, double metric) => Quantity switch
+    {
+        MfdQuantity.LengthM => cfg.LengthUnits == LengthUnit.Imperial ? metric / Units.MetresPerFoot : metric,
+        MfdQuantity.LengthKm => cfg.LengthUnits == LengthUnit.Imperial ? metric / Units.MetresPerNm : metric,
+        MfdQuantity.SpeedKmh => cfg.SpeedUnits == SpeedUnit.Knots ? metric / Units.KmhPerKnot : metric,
+        MfdQuantity.SpeedMs => cfg.LengthUnits == LengthUnit.Imperial ? metric * Units.FpmPerMps : metric,
+        _ => metric,
+    };
+
+    /// <summary>显示值 → 公制值（<see cref="DisplayValue"/> 的逆）。</summary>
+    public double MetricValue(HudConfig cfg, double display) => Quantity switch
+    {
+        MfdQuantity.LengthM => cfg.LengthUnits == LengthUnit.Imperial ? display * Units.MetresPerFoot : display,
+        MfdQuantity.LengthKm => cfg.LengthUnits == LengthUnit.Imperial ? display * Units.MetresPerNm : display,
+        MfdQuantity.SpeedKmh => cfg.SpeedUnits == SpeedUnit.Knots ? display * Units.KmhPerKnot : display,
+        MfdQuantity.SpeedMs => cfg.LengthUnits == LengthUnit.Imperial ? display / Units.FpmPerMps : display,
+        _ => display,
+    };
+
+    /// <summary>
+    /// 显示步长。换算后对齐到 1/2/5×10ⁿ，否则面板会出现「+2.7」这种点不圆的步进。
+    /// <para>公制分支直接返回 <see cref="Step"/>，与改造前一致。</para>
+    /// </summary>
+    public double DisplayStep(HudConfig cfg) => Quantity switch
+    {
+        MfdQuantity.LengthM => cfg.LengthUnits == LengthUnit.Imperial ? Units.NiceStep(Step / Units.MetresPerFoot) : Step,
+        MfdQuantity.LengthKm => cfg.LengthUnits == LengthUnit.Imperial ? Units.NiceStep(Step / Units.MetresPerNm) : Step,
+        MfdQuantity.SpeedKmh => cfg.SpeedUnits == SpeedUnit.Knots ? Units.NiceStep(Step / Units.KmhPerKnot) : Step,
+        MfdQuantity.SpeedMs => cfg.LengthUnits == LengthUnit.Imperial ? Units.NiceStep(Step * Units.FpmPerMps) : Step,
+        _ => Step,
+    };
+
+    /// <summary>显示单位后缀。无量纲行原样返回 <see cref="Unit"/>（可能带前导空格，保持旧画面）。</summary>
+    public string DisplayUnit(HudConfig cfg) => Quantity switch
+    {
+        MfdQuantity.LengthM => cfg.LengthUnits == LengthUnit.Imperial ? "ft" : "m",
+        MfdQuantity.LengthKm => cfg.LengthUnits == LengthUnit.Imperial ? "NM" : "km",
+        MfdQuantity.SpeedKmh => cfg.SpeedUnits == SpeedUnit.Knots ? "kt" : "km/h",
+        MfdQuantity.SpeedMs => cfg.LengthUnits == LengthUnit.Imperial ? "ft/min" : "m/s",
+        _ => Unit,
+    };
+
+    /// <summary>
+    /// 值列/手输页的数字部分（不含单位）。★ 手输初值必须走这里 —— 以前是从显示串上
+    /// <c>TrimEnd(白名单)</c> 剥单位，白名单里没有 `G` 和 `%`，那 6 行手输一直是坏的。
+    /// </summary>
+    public string NumberText(HudConfig cfg)
+    {
+        double display = DisplayValue(cfg, GetNumber?.Invoke(cfg) ?? 0);
+        double step = DisplayStep(cfg);
+        int decimals = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+        return display.ToString("F" + decimals, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// 手输文本按**当前显示单位**解释，换算回公制后夹到 Min/Max（公制）。
+    /// <para>★ 返回 false 表示不是数字。调用方必须提示 —— 静默吞掉正是 0.4.36 修过的毛病。</para>
+    /// </summary>
+    public bool TryParseNumber(HudConfig cfg, string text, out double metric)
+    {
+        metric = 0;
+        var clean = (text ?? "").Replace(",", ".").Trim();
+        if (!double.TryParse(clean, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var display))
+            return false;
+        metric = Math.Clamp(Math.Round(MetricValue(cfg, display), 4), Min, Max);
+        return true;
+    }
+
     public string ValueText(HudConfig cfg)
     {
         if (ValueOverride is not null) return ValueOverride(cfg);
@@ -95,11 +197,7 @@ internal sealed class MfdItem
             case ItemKind.Toggle:
                 return L10n.Get(LangScope.Screen, GetBool?.Invoke(cfg) == true ? "on" : "off");
             case ItemKind.Number:
-            {
-                var v = GetNumber?.Invoke(cfg) ?? 0;
-                var decimals = Step >= 1 ? 0 : Step >= 0.1 ? 1 : 2;
-                return v.ToString("F" + decimals, System.Globalization.CultureInfo.InvariantCulture) + Unit;
-            }
+                return NumberText(cfg) + DisplayUnit(cfg);
             case ItemKind.Enum:
             {
                 var idx = GetChoice?.Invoke(cfg) ?? 0;
@@ -136,9 +234,11 @@ internal sealed class MfdItem
                 break;
             case ItemKind.Number:
             {
-                var v = (GetNumber?.Invoke(cfg) ?? 0) + Step * direction;
-                v = Math.Clamp(Math.Round(v, 4), Min, Max);
-                SetNumber?.Invoke(cfg, v);
+                // 步进也走显示单位：英制下点一下是「+20 ft」，不是「+10 m」再显示成 33。
+                double stepDisplay = DisplayStep(cfg);
+                double display = DisplayValue(cfg, GetNumber?.Invoke(cfg) ?? 0) + stepDisplay * direction;
+                double metric = Math.Clamp(Math.Round(MetricValue(cfg, display), 4), Min, Max);
+                SetNumber?.Invoke(cfg, metric);
                 break;
             }
             case ItemKind.Enum:
@@ -206,11 +306,11 @@ internal static class MfdPages
 
     private static MfdItem Number(string label, Func<HudConfig, double> get, Action<HudConfig, double> set,
         double step, double min, double max, string unit = "", Func<HudConfig, bool>? enabledWhen = null,
-        string? disabledKey = null) =>
+        string? disabledKey = null, MfdQuantity quantity = MfdQuantity.None) =>
         new()
         {
             LabelKey = label, Kind = ItemKind.Number, GetNumber = get, SetNumber = set,
-            Step = step, Min = min, Max = max, Unit = unit, EnabledWhen = enabledWhen,
+            Step = step, Min = min, Max = max, Unit = unit, EnabledWhen = enabledWhen, Quantity = quantity,
             // 与 Enum 一致：不可用时值列直接说原因，比只变灰好懂
             DisabledText = disabledKey is null ? null : _ => L10n.Get(LangScope.Screen, disabledKey),
         };
@@ -283,11 +383,17 @@ internal static class MfdPages
         MenuHintKey = "menu.hint.display",
         Items =
         {
+            // 单位制：两处独立开关（游戏里也是分开的）。只影响显示与输入，配置文件永远公制。
+            Enum("row.speedUnit", new[] { "unit.kmh", "unit.kt" },
+                 c => c.SpeedUnit, (c, i) => c.SpeedUnit = i),
+            Enum("row.lengthUnit", new[] { "unit.metric", "unit.imperial" },
+                 c => c.LengthUnit, (c, i) => c.LengthUnit = i),
             Toggle("row.hideCockpit", c => c.HideInCockpit, (c, v) => c.HideInCockpit = v),
             Toggle("row.hideNose", c => c.HideInNose, (c, v) => c.HideInNose = v),
             Toggle("row.extrapolate", c => c.Extrapolate, (c, v) => c.Extrapolate = v),
             Toggle("row.hideGround", c => c.HideOnGround, (c, v) => c.HideOnGround = v),
-            Number("row.groundSpeed", c => c.GroundHideSpeedKmh, (c, v) => c.GroundHideSpeedKmh = v, 5, 0, 100, "km/h"),
+            Number("row.groundSpeed", c => c.GroundHideSpeedKmh, (c, v) => c.GroundHideSpeedKmh = v, 5, 0, 100, "km/h",
+                   quantity: MfdQuantity.SpeedKmh),
             Number("row.groundDelay", c => c.GroundHideDelayMs, (c, v) => c.GroundHideDelayMs = v, 100, 0, 3000, "ms"),
             Toggle("row.showHud", c => c.HudVisible, (c, v) => c.HudVisible = v),
             Number("row.fov", c => c.VerticalFovDeg, (c, v) => c.VerticalFovDeg = v, 1, 15, 120, "°"),
@@ -361,7 +467,8 @@ internal static class MfdPages
                 c => WtHud.Hud.Scoped.Get(c, "row.stallAoa", c.StallAoaDeg),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.stallAoa", v, () => c.StallAoaDeg = v),
                 1, 5, 40, "°"),
-            Number("row.spaaRange", c => c.FriendlySpaaKm, (c, v) => c.FriendlySpaaKm = v, 5, 0, 200, "km"),
+            Number("row.spaaRange", c => c.FriendlySpaaKm, (c, v) => c.FriendlySpaaKm = v, 5, 0, 200, "km",
+                   quantity: MfdQuantity.LengthKm),
             Number("row.aoaWarn",
                 c => WtHud.Hud.Scoped.Get(c, "row.aoaWarn", c.AoaWarnDeg),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.aoaWarn", v, () => c.AoaWarnDeg = v),
@@ -373,7 +480,7 @@ internal static class MfdPages
             Number("row.overspeedIas",
                 c => WtHud.Hud.Scoped.Get(c, "row.overspeedIas", c.OverspeedKmh),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.overspeedIas", v, () => c.OverspeedKmh = v),
-                50, 200, 3000, "km/h"),
+                50, 200, 3000, "km/h", quantity: MfdQuantity.SpeedKmh),
             Number("row.pullUp",
                 c => WtHud.Hud.Scoped.Get(c, "row.pullUp", c.PullUpTtiS),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.pullUp", v, () => c.PullUpTtiS = v),
@@ -381,9 +488,10 @@ internal static class MfdPages
             Number("row.sinkRate",
                 c => WtHud.Hud.Scoped.Get(c, "row.sinkRate", c.SinkRateMs),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.sinkRate", v, () => c.SinkRateMs = v),
-                1, 5, 200, " m/s"),
+                1, 5, 200, " m/s", quantity: MfdQuantity.SpeedMs),
             Number("row.bingo", c => c.BingoFuelSeconds, (c, v) => c.BingoFuelSeconds = v, 15, 0, 3600, "s"),
-            Number("row.afAlert", c => c.EnemyAirfieldAlertKm, (c, v) => c.EnemyAirfieldAlertKm = v, 1, 0, 100, "km"),
+            Number("row.afAlert", c => c.EnemyAirfieldAlertKm, (c, v) => c.EnemyAirfieldAlertKm = v, 1, 0, 100, "km",
+                   quantity: MfdQuantity.LengthKm),
             Number("row.edgeMargin", c => c.EdgeMarginFraction, (c, v) => c.EdgeMarginFraction = v, 0.01, 0.01, 0.4),
         },
     };
@@ -529,8 +637,9 @@ internal static class MfdPages
     {
         double band = WtHud.Hud.FormationGeometry.Station(c).RangeM
                       * Math.Max(1.0, c.FormationDonePct) / 100.0;
-        if (latencyM <= 0.5) return $"门槛 {band:0} m / 延迟 —";
-        return $"门槛 {band:0} m / 延迟 {latencyM:0} m" + (latencyM > band ? " ✗" : "");
+        if (latencyM <= 0.5) return $"门槛 {Units.DistancePlainSpaced(band, c.LengthUnits)} / 延迟 —";
+        return $"门槛 {Units.DistancePlainSpaced(band, c.LengthUnits)} / 延迟 {Units.DistancePlainSpaced(latencyM, c.LengthUnits)}"
+               + (latencyM > band ? " ✗" : "");
     }
 
     /// <summary>
@@ -570,10 +679,10 @@ internal static class MfdPages
                    },
                    10, 100, 1500, "m",
                    c => c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom,
-                   "hint.presetOnly"),
+                   "hint.presetOnly", MfdQuantity.LengthM),
             // 派生几何：只读，改下面任何一项立刻跟着变
-            Info("row.fSlant", c => $"{WtHud.Hud.FormationGeometry.Station(c).RangeM:0} m"),
-            Info("row.fSideM", c => $"{WtHud.Hud.FormationGeometry.Station(c).SideM:0} m"),
+            Info("row.fSlant", c => Units.DistancePlainSpaced(WtHud.Hud.FormationGeometry.Station(c).RangeM, c.LengthUnits)),
+            Info("row.fSideM", c => Units.DistancePlainSpaced(WtHud.Hud.FormationGeometry.Station(c).SideM, c.LengthUnits)),
             // 判定余量：完成门槛（斜距 × 完成%）对链路一拍的位移（TAS × 0.25 s）。
             // ★ 原来这里是「纵向」只读行，它和后距输入行是同一个数，占着一格没有新信息。
             Info("row.fMargin", c => MarginText(c, WtHud.Program.FormationLatencyM)),
@@ -582,13 +691,16 @@ internal static class MfdPages
                  c => c.FormationWingSide + 1,
                  (c, i) => { c.FormationWingSide = i - 1; ValuesEdited(c); }),
             Number("row.fWingOffset", c => c.FormationWingOffsetM,
-                   (c, v) => { c.FormationWingOffsetM = v; ValuesEdited(c); }, 10, 0, 600, "m"),
+                   (c, v) => { c.FormationWingOffsetM = v; ValuesEdited(c); }, 10, 0, 600, "m",
+                   quantity: MfdQuantity.LengthM),
             // 下限 200 m：再近的话 4 Hz 链路的滞后就超过完成门槛（见上面那行判定余量），
             // 那个距离上本来也是目视编队更稳。
             Number("row.fStationBack", c => c.FormationStationBackM,
-                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 200, 1500, "m"),
+                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 200, 1500, "m",
+                   quantity: MfdQuantity.LengthM),
             Number("row.fUpM", c => c.FormationUpM,
-                   (c, v) => { c.FormationUpM = v; ValuesEdited(c); }, 5, -200, 200, "m"),
+                   (c, v) => { c.FormationUpM = v; ValuesEdited(c); }, 5, -200, 200, "m",
+                   quantity: MfdQuantity.LengthM),
         },
     };
 
@@ -699,18 +811,21 @@ internal static class MfdPages
             // ---- 站位判定：到位/保持/脱离三条线 ----
             Number("row.fAlignDeg", c => c.FormationAlignDeg, (c, v) => c.FormationAlignDeg = v, 1, 0, 45, "°"),
             Number("row.fSteadyDeg", c => c.FormationSteadyDeg, (c, v) => c.FormationSteadyDeg = v, 0.5, 0, 20, "°"),
-            Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h"),
+            Number("row.fSteadyKmh", c => c.FormationSteadyKmh, (c, v) => c.FormationSteadyKmh = v, 5, 0, 80, "km/h",
+                   quantity: MfdQuantity.SpeedKmh),
 
             // ---- 垂直引导：门槛决定「多近算到位」，限幅决定「最多让你爬多快」----
             // 引导模式：一段式 = 全套一起显示（默认）；两段式 = 高度没到位只给爬升率
             Enum("row.fVertFirst", new[] { "opt.oneStage", "opt.twoStage" },
                  c => c.FormationVerticalFirst ? 1 : 0,
                  (c, i) => c.FormationVerticalFirst = i == 1),
-            Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m"),
-            Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s"),
+            Number("row.fVertGate", c => c.FormationVertGateM, (c, v) => c.FormationVertGateM = v, 5, 5, 200, "m",
+                   quantity: MfdQuantity.LengthM),
+            Number("row.fVertMax", c => c.FormationVertMaxMs, (c, v) => c.FormationVertMaxMs = v, 1, 2, 30, "m/s",
+                   quantity: MfdQuantity.SpeedMs),
             // 爬升显示距离：只在「只显示爬升率」模式下有意义，-1 = 不显示
             Number("row.fFarRange", c => c.FormationFarRangeM, (c, v) => c.FormationFarRangeM = v, 100, -1, 20000, "m",
-                   c => c.FormationVerticalFirst, "hint.vertFirstOnly"),
+                   c => c.FormationVerticalFirst, "hint.vertFirstOnly", MfdQuantity.LengthM),
 
             // ---- 跟随增益（级联 PID）----
             // 外环比例：距离误差 → 期望接近率。调大追得急，容易冲过头

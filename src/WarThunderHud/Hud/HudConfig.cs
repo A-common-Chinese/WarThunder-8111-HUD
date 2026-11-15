@@ -17,6 +17,24 @@ public sealed class HudConfig
     [JsonPropertyName("verticalFovDeg")] public double VerticalFovDeg { get; set; } = 45.0;
     [JsonPropertyName("layoutOffsetYDeg")] public double LayoutOffsetYDeg { get; set; } = 1.8;
 
+    /// <summary>
+    /// 速度单位：0 = km/h，1 = 节。**只影响显示与输入**，内部（快照/判定/数据链）永远 km/h。
+    /// <para>默认 0，旧配置文件缺这两个键时行为和改造前完全一致，不需要迁移。</para>
+    /// </summary>
+    [JsonPropertyName("speedUnit")] public int SpeedUnit { get; set; }
+
+    /// <summary>
+    /// 长度单位：0 = 米（距离 km），1 = 英尺（距离 NM）。同样只影响显示与输入，内部永远米。
+    /// <para>和速度分开是因为游戏里本来就是两处设置，飞英尺的老玩家也不一定用节。</para>
+    /// </summary>
+    [JsonPropertyName("lengthUnit")] public int LengthUnit { get; set; }
+
+    /// <summary>当前速度单位（枚举形式，越界回公制）。</summary>
+    [JsonIgnore] public SpeedUnit SpeedUnits => Units.Speed(SpeedUnit);
+
+    /// <summary>当前长度单位（枚举形式，越界回公制）。</summary>
+    [JsonIgnore] public LengthUnit LengthUnits => Units.Length(LengthUnit);
+
     /// <summary>Added to the displayed pitch; F7 sets it so the ladder reads 0 while level.</summary>
     [JsonPropertyName("pitchZeroDeg")] public double PitchZeroDeg { get; set; }
 

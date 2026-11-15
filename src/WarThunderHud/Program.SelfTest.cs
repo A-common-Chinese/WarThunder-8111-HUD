@@ -830,6 +830,19 @@ public static partial class Program
         Check("a failed save reports instead of throwing",
             !badSave.Ok && badSave.Error != HudConfig.SaveError.None);
 
+        // 单位开关：能存能读；老配置没有这两个键时必须还是公制
+        saveCfg.SpeedUnit = 1;
+        saveCfg.LengthUnit = 1;
+        var unitSave = saveCfg.SaveTo(savePath);
+        var reloadedCfg = System.Text.Json.JsonSerializer.Deserialize<HudConfig>(File.ReadAllText(savePath));
+        Check("unit switches survive a save/load round trip",
+            unitSave.Ok && reloadedCfg is { SpeedUnit: 1, LengthUnit: 1 }
+            && reloadedCfg.SpeedUnits == SpeedUnit.Knots && reloadedCfg.LengthUnits == LengthUnit.Imperial);
+        var legacyCfg = System.Text.Json.JsonSerializer.Deserialize<HudConfig>("{\"formationKp\":0.05}");
+        Check("a legacy config without unit keys stays metric",
+            legacyCfg is { SpeedUnit: 0, LengthUnit: 0 }
+            && legacyCfg.SpeedUnits == SpeedUnit.Kmh && legacyCfg.LengthUnits == LengthUnit.Metric);
+
         // ---- 数据链开关：运行中改不了，值列必须说出来 ----
         Check("a matching link switch reads plain",
             WtHud.Program.DataLinkStateText(new HudConfig { DataLinkEnabled = false })
@@ -1304,6 +1317,139 @@ public static partial class Program
             }) == 0);
         Check("no friendly means no lead",
             NearestFriendlyIndex(new System.Collections.Generic.List<FriendlyContact>()) == -1);
+
+        // ================= 单位制（0.4.37）：内部永远公制，只有显示/输入换算 =================
+        // 老配置缺这两个键时必须还是公制 —— 默认值就是兼容性本身
+        Check("units default to metric",
+            new HudConfig().SpeedUnits == SpeedUnit.Kmh && new HudConfig().LengthUnits == LengthUnit.Metric);
+
+        // 换算常数
+        Check("kt->kmh", Math.Abs(Units.SpeedToKmh(100, SpeedUnit.Knots) - 185.2) < 1e-9);
+        Check("kmh->kt round trip", Math.Abs(Units.SpeedToKmh(Units.SpeedValue(930, SpeedUnit.Knots), SpeedUnit.Knots) - 930) < 1e-9);
+        Check("ft->m", Math.Abs(Units.LengthToMetres(1000, LengthUnit.Imperial) - 304.8) < 1e-9);
+        Check("NM is 1852 m", Math.Abs(Units.MetresPerNm - 1852.0) < 1e-12);
+
+        // 公制路径必须逐字符沿用改造前的输出，否则「没开单位」的用户会看到画面变了
+        Check("metric speed text", Units.SpeedText(1049.6, SpeedUnit.Kmh) == "1050");
+        Check("metric range under 1km stays bare", Units.DistanceLong(830, LengthUnit.Metric) == "830");
+        Check("metric range over 1km", Units.DistanceLong(1234, LengthUnit.Metric) == "1.2km");
+        Check("metric short range", Units.DistanceShort(830, LengthUnit.Metric) == "830m");
+        Check("metric alt text", Units.LengthText(3048, LengthUnit.Metric) == "3048");
+        Check("metric vertical speed", Units.VerticalSpeedText(8.2, LengthUnit.Metric) == "8.2 m/s");
+        Check("metric vertical speed has no suffix", Units.VerticalSpeedSuffix(LengthUnit.Metric) == "");
+        Check("metric nav distance keeps F1 km", Units.NavDistance(3100, LengthUnit.Metric) == "3.1km");
+        Check("metric plain distance", Units.DistancePlain(400, LengthUnit.Metric) == "400m");
+
+        // 英制
+        Check("imperial speed text", Units.SpeedText(185.2, SpeedUnit.Knots) == "100");
+        Check("imperial alt text", Units.LengthText(3048, LengthUnit.Imperial) == "10000");
+        Check("imperial short range uses feet", Units.DistanceShort(304.8, LengthUnit.Imperial) == "1000ft");
+        Check("imperial long range switches to NM", Units.DistanceLong(3704, LengthUnit.Imperial) == "2.0NM");
+        Check("imperial under 1NM stays bare feet", Units.DistanceLong(304.8, LengthUnit.Imperial) == "1000");
+        Check("imperial vertical speed is fpm", Units.VerticalSpeedText(5.1, LengthUnit.Imperial) == "1004 fpm");
+        Check("imperial nav distance uses NM", Units.NavDistance(3704, LengthUnit.Imperial) == "2.0NM");
+        Check("imperial plain distance", Units.DistancePlain(400, LengthUnit.Imperial) == "1312ft");
+        // 步长对齐：1 km→0.54 NM 要变成 0.5，10 m→32.8 ft 要变成 20，1 m/s→197 fpm 要变成 200
+        Check("nice step 0.54 -> 0.5", Math.Abs(Units.NiceStep(0.54) - 0.5) < 1e-9);
+        Check("nice step 32.8 -> 20", Math.Abs(Units.NiceStep(32.8) - 20) < 1e-9);
+        Check("nice step 196.85 -> 200", Math.Abs(Units.NiceStep(196.85) - 200) < 1e-9);
+
+        // ---- 面板数值行：值列、步进、手输三条路都要跟着单位走 ----
+        var ucfg = new HudConfig();
+        var wingRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "row.fWingOffset", Kind = WtHud.UI.Mfd.ItemKind.Number,
+            Step = 10, Min = 0, Max = 600, Unit = "m", Quantity = WtHud.UI.Mfd.MfdQuantity.LengthM,
+            GetNumber = c => c.FormationWingOffsetM,
+            SetNumber = (c, v) => c.FormationWingOffsetM = v,
+        };
+        Check("panel metric row is unchanged",
+            wingRow.NumberText(ucfg) == "150" && wingRow.DisplayUnit(ucfg) == "m" && wingRow.DisplayStep(ucfg) == 10);
+        ucfg.LengthUnit = 1;
+        Check("panel imperial shows feet",
+            wingRow.NumberText(ucfg) == "492" && wingRow.DisplayUnit(ucfg) == "ft");
+        Check("panel imperial step is snapped to 20 ft", Math.Abs(wingRow.DisplayStep(ucfg) - 20) < 1e-9);
+        wingRow.Activate(ucfg, +1);
+        Check("panel stepping moves 20 ft, not 10 m",
+            Math.Abs(Units.LengthValue(ucfg.FormationWingOffsetM, LengthUnit.Imperial) - 512.13) < 0.02);
+        wingRow.Activate(ucfg, -1);
+        Check("panel stepping returns to the original value",
+            Math.Abs(ucfg.FormationWingOffsetM - 150) < 0.001);
+        Check("panel typed feet convert to metres",
+            wingRow.TryParseNumber(ucfg, "500", out var typedM) && Math.Abs(typedM - 152.4) < 0.001);
+        Check("panel typed value still clamps in metric",
+            wingRow.TryParseNumber(ucfg, "99999", out var clampM) && Math.Abs(clampM - 600) < 1e-9);
+        Check("panel rejects non-numeric text", !wingRow.TryParseNumber(ucfg, "", out _));
+
+        // 速度行：km/h ↔ kt，步长 5 km/h → 5 kt（对齐后不是 2.7）
+        var speedRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "row.fSteadyKmh", Kind = WtHud.UI.Mfd.ItemKind.Number,
+            Step = 5, Min = 0, Max = 80, Unit = "km/h", Quantity = WtHud.UI.Mfd.MfdQuantity.SpeedKmh,
+            GetNumber = c => c.FormationSteadyKmh,
+            SetNumber = (c, v) => c.FormationSteadyKmh = v,
+        };
+        ucfg.SpeedUnit = 1;
+        Check("panel speed row converts to knots",
+            speedRow.NumberText(ucfg) == "11" && speedRow.DisplayUnit(ucfg) == "kt");
+        // 5 km/h = 2.7 kt，对齐到 1/2/5 里最近的 2（宁可更细，不要更粗：粗步进在上下限附近够不着）
+        Check("panel speed step in knots", Math.Abs(speedRow.DisplayStep(ucfg) - 2) < 1e-9);
+
+        // ★ 回归：`G` 与 `%` 不在旧的 TrimEnd 白名单里，这两族行的手输一直是静默失败。
+        //   现在初值直接取数字部分，不再从显示串上剥单位。
+        var gRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "row.turnG", Kind = WtHud.UI.Mfd.ItemKind.Number,
+            Step = 0.1, Min = 1.2, Max = 9.0, Unit = "G",
+            GetNumber = c => c.FormationTurnTargetG,
+            SetNumber = (c, v) => c.FormationTurnTargetG = v,
+        };
+        Check("G row edit buffer has no unit letter", gRow.NumberText(ucfg) == "3.0");
+        Check("G row accepts a typed value",
+            gRow.TryParseNumber(ucfg, "3.0", out var gVal) && Math.Abs(gVal - 3.0) < 1e-9);
+        var pctRow = new WtHud.UI.Mfd.MfdItem
+        {
+            LabelKey = "row.fDonePct", Kind = WtHud.UI.Mfd.ItemKind.Number,
+            Step = 1, Min = 1, Max = 50, Unit = "%",
+            GetNumber = c => c.FormationDonePct,
+            SetNumber = (c, v) => c.FormationDonePct = v,
+        };
+        Check("percent row edit buffer has no sign", pctRow.NumberText(ucfg) == "10");
+        Check("percent row accepts a typed value",
+            pctRow.TryParseNumber(ucfg, "25", out var pctVal) && Math.Abs(pctVal - 25) < 1e-9);
+
+        // ---- HUD：真的画一次，看画出来的文本 ----
+        var unitSnap = new TelemetrySnapshot
+        {
+            Valid = true, InFlight = true, IasKmh = 370.4, TasKmh = 370.4, VyMs = 5.1,
+        };
+        var metricUnitPrims = new HudGeometry(new HudOptions { AltTapeM = 3048 },
+                new HudCalibration { VerticalFovDeg = 45 })
+            .Build(unitSnap, default, 1920, 1080);
+        Check("metric HUD keeps the KM/H caption", metricUnitPrims.Any(p => p.Text == "KM/H"));
+        Check("metric HUD keeps the M caption", metricUnitPrims.Any(p => p.Text == "M"));
+        Check("metric HUD speed box", metricUnitPrims.Any(p => p.Text == "370"));
+        Check("metric HUD altitude box", metricUnitPrims.Any(p => p.Text == "3048"));
+        Check("metric HUD vertical speed", metricUnitPrims.Any(p => p.Text == "V/S +5.1"));
+        // 公制刻度：50/100 km/h —— 370 km/h 上下的带标是 200 与 500
+        Check("metric HUD tape labels are km/h", metricUnitPrims.Any(p => p.Text == "200")
+                                                && metricUnitPrims.Any(p => p.Text == "500"));
+
+        var impUnitOpt = new HudOptions
+        {
+            AltTapeM = 3048, SpeedUnit = SpeedUnit.Knots, LengthUnit = LengthUnit.Imperial,
+        };
+        var impUnitPrims = new HudGeometry(impUnitOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(unitSnap, default, 1920, 1080);
+        Check("imperial HUD swaps the speed caption", impUnitPrims.Any(p => p.Text == "KT"));
+        Check("imperial HUD swaps the altitude caption", impUnitPrims.Any(p => p.Text == "FT"));
+        Check("imperial HUD speed box is knots", impUnitPrims.Any(p => p.Text == "200"));
+        Check("imperial HUD altitude box is feet", impUnitPrims.Any(p => p.Text == "10000"));
+        Check("imperial HUD vertical speed is fpm", impUnitPrims.Any(p => p.Text == "V/S +1004fpm"));
+        // 英制刻度：25/50 kt —— 200 kt 上下的带标是 100 与 300（不是 200/500）
+        Check("imperial HUD tape labels snap to knots",
+            impUnitPrims.Any(p => p.Text == "100") && impUnitPrims.Any(p => p.Text == "300")
+            && !impUnitPrims.Any(p => p.Text == "500"));
 
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
