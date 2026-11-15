@@ -1336,7 +1336,8 @@ public static partial class Program
         Check("metric short range", Units.DistanceShort(830, LengthUnit.Metric) == "830m");
         Check("metric alt text", Units.LengthText(3048, LengthUnit.Metric) == "3048");
         Check("metric vertical speed", Units.VerticalSpeedText(8.2, LengthUnit.Metric) == "8.2 m/s");
-        Check("metric vertical speed has no suffix", Units.VerticalSpeedSuffix(LengthUnit.Metric) == "");
+        // ★ 两种单位制都不标单位后缀：单位制是玩家自己设的，数字本身就是他的口径
+        Check("metric vertical speed keeps its suffix", Units.VerticalSpeedText(8.2, LengthUnit.Metric).EndsWith(" m/s"));
         Check("metric nav distance keeps F1 km", Units.NavDistance(3100, LengthUnit.Metric) == "3.1km");
         Check("metric plain distance", Units.DistancePlain(400, LengthUnit.Metric) == "400m");
 
@@ -1346,7 +1347,7 @@ public static partial class Program
         Check("imperial short range uses feet", Units.DistanceShort(304.8, LengthUnit.Imperial) == "1000ft");
         Check("imperial long range switches to NM", Units.DistanceLong(3704, LengthUnit.Imperial) == "2.0NM");
         Check("imperial under 1NM stays bare feet", Units.DistanceLong(304.8, LengthUnit.Imperial) == "1000");
-        Check("imperial vertical speed is fpm", Units.VerticalSpeedText(5.1, LengthUnit.Imperial) == "1004 fpm");
+        Check("imperial vertical speed is bare fpm", Units.VerticalSpeedText(5.1, LengthUnit.Imperial) == "1004");
         Check("imperial nav distance uses NM", Units.NavDistance(3704, LengthUnit.Imperial) == "2.0NM");
         Check("imperial plain distance", Units.DistancePlain(400, LengthUnit.Imperial) == "1312ft");
         // 步长对齐：1 km→0.54 NM 要变成 0.5，10 m→32.8 ft 要变成 20，1 m/s→197 fpm 要变成 200
@@ -1445,7 +1446,8 @@ public static partial class Program
         Check("imperial HUD swaps the altitude caption", impUnitPrims.Any(p => p.Text == "FT"));
         Check("imperial HUD speed box is knots", impUnitPrims.Any(p => p.Text == "200"));
         Check("imperial HUD altitude box is feet", impUnitPrims.Any(p => p.Text == "10000"));
-        Check("imperial HUD vertical speed is fpm", impUnitPrims.Any(p => p.Text == "V/S +1004fpm"));
+        Check("imperial HUD vertical speed has no unit label", impUnitPrims.Any(p => p.Text == "V/S +1004")
+                                                    && !impUnitPrims.Any(p => p.Text.Contains("fpm")));
         // 英制刻度：25/50 kt —— 200 kt 上下的带标是 100 与 300（不是 200/500）
         Check("imperial HUD tape labels snap to knots",
             impUnitPrims.Any(p => p.Text == "100") && impUnitPrims.Any(p => p.Text == "300")

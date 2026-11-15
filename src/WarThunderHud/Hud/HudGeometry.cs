@@ -1549,13 +1549,11 @@ public sealed class HudGeometry
             });
         }
         // Vertical speed sits INSIDE the altitude tape (towards the screen centre).
-        // 公制保持原来的「V/S +8.2」；英制换成 ft/min 并补单位 —— 数值从 8 变成 1600，
-        // 不标单位的话读的人会以为是 m/s。
+        // 不标单位：单位制是玩家自己在面板里选的，数字本身就是他要的口径（公制也一样没标）。
         prims.Add(new HudPrim
         {
             Kind = HudPrimKind.Text,
-            Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + Units.VerticalSpeedNumber(s.VyMs, lengthUnit)
-                   + Units.VerticalSpeedSuffix(lengthUnit),
+            Text = "V/S " + (s.VyMs >= 0 ? "+" : "") + Units.VerticalSpeedNumber(s.VyMs, lengthUnit),
             Align = HudAlign.Right, FontSize = fontSmall, Color = Fade(col, 0.9),
             Points = { (x - 1.5 * pxDeg, cy + 2.6 * pxDeg) },
         });
