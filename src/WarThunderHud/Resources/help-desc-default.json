@@ -1,5 +1,5 @@
-﻿{
-  "_version": 59,
+{
+  "_version": 60,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -333,8 +333,8 @@
     "en": "The full link-status page: API health, own role, link state, online nodes, wing positions, port, notes. Same content as the LINK STATUS row on the connection page, and reachable from DIAG as well - useful when chasing a half-started 8111 without jumping back to the data-link module. Read-only throughout."
   },
   "row.wingSide": {
-    "zh": "侧位：你在长机的哪一侧。左 / 尾随 / 右，**永远生效**，也是内外圈的判据（右转时右侧是内圈）。选「尾随」时横向偏移乘 0，等于正后方。多架僚机同一局要各飞不同侧位，否则会抢同一个点。",
-    "en": "Side: which side of the lead you fly. Left / trail / right - always active, and it decides inner vs outer turn (the right side is inner in a right turn). TRAIL multiplies the lateral offset by zero, putting you straight astern. In a multi-ship sortie each wing should take a different side."
+    "zh": "侧位（只读）：由侧距正负号自动判定 —— 负 = 左僚机，0 = 尾随，正 = 右僚机。",
+    "en": "Side (read-only): derived from the signed lateral offset - negative = left, 0 = trail, positive = right."
   },
   "row.formationWarnG": {
     "zh": "转弯告警阈值：长机转弯的横向过载超过这个 G 值，僚机的引导上方就显示「转弯过急」，表示队形跟不住了。默认 1.5 G（600 km/h 下约 5.1°/s）。实测：1.0 G 内外圈偏差 5–15 m（几乎完美），1.5 G 偏差 21–50 m（刚开始偏），2.0 G 内圈偏差 144 m（断崖）。调小 = 更早提醒，调大 = 更晚。",
@@ -739,5 +739,21 @@
   "row.formationOnly": {
     "zh": "只显示编队：隐去其余 HUD 元素，只留航向带、编队引导和三个读数，把视野让给长机。和「编队辅助」是两件事：不开辅助也能只留精简界面（那时没有友机方位，只有你自己的读数）。飞密集编队时满屏俯仰梯反而挡视线。",
     "en": "Minimal HUD: hides everything except the heading tape, the formation guidance and three readouts, so the lead stays in sight. Separate from FORMATION ASSIST - you can keep the minimal layout without guidance (no friend bearing then, just your own readouts). A full pitch ladder only gets in the way in close formation."
+  },
+  "row.fCallsign": {
+    "zh": "僚机呼号：显示在长机的僚机表里，替代 W1/W2/W3。最长 12 字符，可 Ctrl+V 粘贴。",
+    "en": "Wing callsign: shown in the lead wing table instead of W1/W2/W3. Up to 12 chars."
+  },
+  "row.fDoneBand": {
+    "zh": "到位门槛（固定值，不可调）：水平 ≤15 m 且高度 ≤10 m，并保持 2 秒。",
+    "en": "On-station band (fixed): horizontal <=15 m and vertical <=10 m, held for 2 s."
+  },
+  "row.fDropBand": {
+    "zh": "掉出门槛（固定值，不可调）：水平 >30 m 或高度 >20 m 即判定掉出。",
+    "en": "Drop band (fixed): horizontal >30 m or vertical >20 m leaves the station."
+  },
+  "row.mfdCompact": {
+    "zh": "紧凑面板：约 0.62 倍、默认贴屏幕右下角；重新打开面板生效。机框可用右键/中键拖动。",
+    "en": "Compact panel: ~0.62x, defaults to the bottom-right corner; applies on reopen."
   }
 }

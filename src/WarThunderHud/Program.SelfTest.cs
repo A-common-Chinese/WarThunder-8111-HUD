@@ -718,9 +718,8 @@ public static partial class Program
             FormationStationBackM = 400,
         };
         string marginOk = WtHud.UI.Mfd.MfdPages.MarginText(marginCfg, 35);
-        Check("margin shows the fixed band and the latency",
-            marginOk.Contains("15") && marginOk.Contains("10") && marginOk.Contains("35")
-            && !marginOk.Contains("✗"));
+        Check("margin shows only the link latency",
+            marginOk.Contains("35") && !marginOk.Contains("✗"));
 
         // ---- 配置包：往返、清洗、应用范围 ----
         var profCfg = new HudConfig

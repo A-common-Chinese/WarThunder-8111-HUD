@@ -716,11 +716,8 @@ internal static class MfdPages
     /// </summary>
     internal static string MarginText(HudConfig c, double latencyM)
     {
-        // 固定门槛改由开发者定（飞行员反馈 2026-11-15）：显示门槛与链路一拍，供参考。
-        string band = string.Format(L10n.Get(LangScope.Screen, "guide.doneBand"),
-            WtHud.Program.FormationDoneHorizM, WtHud.Program.FormationDoneVertM);
-        string lat = latencyM <= 0.5 ? "—" : Units.DistancePlainSpaced(latencyM, c.LengthUnits);
-        return string.Format(L10n.Get(LangScope.Screen, "val.margin"), band, lat);
+        // 门槛已是固定值（编队页另两行只读显示），这里只报链路一拍延迟，别让长文本压到左列。
+        return latencyM <= 0.5 ? "—" : Units.DistancePlainSpaced(latencyM, c.LengthUnits);
     }
 
     /// <summary>

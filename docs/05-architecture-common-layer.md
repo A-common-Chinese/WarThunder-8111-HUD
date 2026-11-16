@@ -49,7 +49,7 @@
 
 **职责边界（本项目最重要的结构性约定）**：排版层只产出 `HudPrim` 纯数据，不调用任何图形 API；
 绘制层只消费图元，不计算任何坐标。由此带来两个能力：同一套排版代码同时服务实时叠加与离屏出图；
-自检可以在无窗口、无游戏的前提下断言坐标与文本，这是全部 426 条断言能够成立的前提。
+自检可以在无窗口、无游戏的前提下断言坐标与文本，这是全部 425 条断言能够成立的前提。
 
 ---
 
@@ -354,7 +354,7 @@ double blend = SmoothStep(Math.Clamp(_opt.ZoomBlend, 0, 1));   // 瞄准布局�
 
 | 命令 | 用途 |
 |---|---|
-| `WtHud.exe selftest` | 426 条断言；失败置 `Environment.ExitCode = 1` |
+| `WtHud.exe selftest` | 425 条断言；失败置 `Environment.ExitCode = 1` |
 | `WtHud.exe preview <png> <w> <h> [variant]` | HUD 出图，`variant`：`level`/`est`/`zoom`/`dive` 等 |
 | `WtHud.exe dumpgeo <w> <h> <pitch> <bank>` | 打印每个图元的坐标、字号与文本，用于核对排版 |
 | `WtHud.exe mfdpreview <png> [view]` | 面板出图，`view`：`menu`/`display`/`panelset`/`shape`/`turn`/`diag` 等 |

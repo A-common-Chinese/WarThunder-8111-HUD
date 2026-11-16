@@ -209,7 +209,7 @@ public static class L10n
         ["opt.roleWing2"] = ("僚机#2", "WING #2"),
         ["opt.roleWing3"] = ("僚机#3", "WING #3"),
         ["opt.roleWingN"] = ("僚机#{0}", "WING #{0}"),
-        ["row.fMargin"] = ("判定余量", "MARGIN"),
+        ["row.fMargin"] = ("链路延迟", "LINK LAG"),
         // 填了 ID 之后紧跟着的一行只读状态：填错了/对方没开，当场能看出来
         ["row.dataLinkLeadState"] = ("当前长机", "LEAD"),
         ["val.leadAuto"] = ("未指定（自动）", "AUTO"),
@@ -366,7 +366,7 @@ public static class L10n
         ["menu.hint.formationLead"] = ("航向 / 马赫 / 转向辅助", "HDG · MACH · TURN ASSIST"),
         ["page.dataLinkStatus"] = ("链路状态", "LINK STATUS"),
         ["menu.hint.dataLinkStatus"] = ("节点 / 角色 / 接口", "NODES · ROLE · API"),
-        ["row.fWingOffset"] = ("侧位横偏", "WING OFFSET"),
+        ["row.fWingOffset"] = ("横向站位", "LATERAL"),
         ["row.fStationBack"] = ("后距", "STATION BACK"),
         ["row.fDonePct"] = ("完成误差 %", "DONE BAND %"),
         ["row.fDoneBand"] = ("到位门槛", "DONE BAND"),

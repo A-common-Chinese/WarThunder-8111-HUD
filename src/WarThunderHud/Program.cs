@@ -5086,10 +5086,10 @@ public static partial class Program
                 if (item >= 0) form.PreviewOpen(pageIdx, Math.Max(0, item));
             }
             else if (view == "help") { form.PreviewHelp(0); }
-            else if (view == "shape") { form.PreviewOpen(1, 2); form.PreviewSub(2); }   // 编队 → 队形（三级页）
+            else if (view == "shape") { form.PreviewOpen(1, 3); form.PreviewSub(3); }   // 编队 → 队形（三级页）
             else if (view == "turn") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 长机 → 转向辅助
-            else if (view == "wing") { form.PreviewOpen(1, 6); form.PreviewSub(6); }    // 编队 → 僚机参数
-            else if (view == "lead") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 长机参数
+            else if (view == "wing") { form.PreviewOpen(1, 7); form.PreviewSub(7); }    // 编队 → 僚机参数
+            else if (view == "lead") { form.PreviewOpen(1, 8); form.PreviewSub(8); }    // 编队 → 长机参数
             else if (view == "dl") { form.PreviewOpen(2, 0); }                          // 数据链模块
             // 数据链页从 0.4.29 起第 1 行插了「地图判定」，链路状态顺延到 5；配置传递在 6
             else if (view == "dlstatus") { form.PreviewOpen(2, 5); form.PreviewSub(5); } // 数据链 → 链路状态
