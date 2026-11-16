@@ -119,6 +119,9 @@ internal sealed class DataLink : IDisposable
         /// <summary>对方自报「我跟的长机」节点 ID（第 12 段）。0 = 没指定/老版本。</summary>
         public int LeadId;
 
+        /// <summary>对方自报的呼号（第 14 段），空 = 老版本/没填。</summary>
+        public string Callsign = "";
+
         /// <summary>
         /// 这一包是从哪个地址来的。<see cref="Send"/> 用它回包 —— 长机不必把每个僚机的
         /// IP 都手填一遍，谁发过来就回给谁。
@@ -216,7 +219,11 @@ internal sealed class DataLink : IDisposable
                                            // 对方自报「我跟的长机」节点 ID（第 12 段）。0 = 没指定。
                                            int LeadId = 0,
                                            // 位置差分估出的速度（归一化单位/秒）。0 = 还不够两包。
-                                           double VelXn = 0, double VelYn = 0);
+                                           double VelXn = 0, double VelYn = 0)
+    {
+        /// <summary>对方自报呼号（第 14 段）；空 = 老版本/没填。</summary>
+        public string Callsign { get; init; } = "";
+    }
 
     /// <summary>
     /// 取所有在线节点（3 秒内收过包）的快照。上层用它自己的位置和 <c>map_obj</c> 的友机配对，
@@ -242,7 +249,8 @@ internal sealed class DataLink : IDisposable
                 var n = kv.Value;
                 list.Add(new LinkNode(kv.Key, n.AltM, n.VyMs, n.HeadingDeg, n.TurnRateDeg,
                                       n.Xn, n.Yn, age, n.TargetBankDeg,
-                                      n.Role, n.Packets, n.Wing, n.Slot, n.ErrM, n.LeadId));
+                                      n.Role, n.Packets, n.Wing, n.Slot, n.ErrM, n.LeadId)
+                { Callsign = n.Callsign });
             }
             return list.ToArray();
         }
@@ -589,7 +597,7 @@ internal sealed class DataLink : IDisposable
                                         int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
                                         int leadId = 0,
                                         double? anchorXn = null, double? anchorYn = null,
-                                        bool? anchorFriendly = null)
+                                        bool? anchorFriendly = null, string? callsign = null)
     {
         string head = BuildPayload(selfId, altM, vyMs, headingDeg, turnRateDeg);
         bool hasPos = xn is double && yn is double;
@@ -645,7 +653,36 @@ internal sealed class DataLink : IDisposable
             while (tail.AsSpan().Count('|') < 11) tail += "|";
             tail += $"|{ToScale(axn)},{ToScale(ayn)},{(afr ? 1 : 0)}";
         }
+
+        // 第 14 段：呼号（老读端只看前 13 段，多一段照收）。
+        string cs = CleanCallsign(callsign);
+        if (cs.Length > 0)
+        {
+            while (tail.AsSpan().Count('|') < 13) tail += "|";
+            tail += "|" + cs;
+        }
         return tail;
+    }
+
+    /// <summary>清洗呼号：去分隔符/控制字符，压到 12 字符；空则返回空串。</summary>
+    public static string CleanCallsign(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var sb = new System.Text.StringBuilder(12);
+        foreach (char ch in raw.Trim())
+        {
+            if (sb.Length >= 12) break;
+            if (ch == '|' || ch == ',' || char.IsControl(ch)) continue;
+            sb.Append(ch);
+        }
+        return sb.ToString().Trim();
+    }
+
+    /// <summary>从原始报文里取第 14 段呼号（缺失/脏 → 空串，不影响其它段）。</summary>
+    internal static string ParseCallsign(string text)
+    {
+        var parts = text.Trim().Trim('\uFEFF').Split('|');
+        return parts.Length >= 14 ? CleanCallsign(parts[13]) : "";
     }
 
     /// <summary>归一化坐标转整数段。</summary>
@@ -835,7 +872,8 @@ internal sealed class DataLink : IDisposable
                      LinkRole role = LinkRole.Unknown,
                      int slot = -1, WingState wing = WingState.Unknown, int errM = 0,
                      int leadId = 0,
-                     double? anchorXn = null, double? anchorYn = null, bool? anchorFriendly = null)
+                     double? anchorXn = null, double? anchorYn = null, bool? anchorFriendly = null,
+                     string? callsign = null)
     {
         if (!_running || _socket == null) return;
         if (_lastSendS >= 0 && nowS - _lastSendS < SendIntervalS) return;
@@ -857,7 +895,7 @@ internal sealed class DataLink : IDisposable
         {
             var payload = BuildPayload(_selfId, altM, vyMs, headingDeg, turnRateDeg, xn, yn, targetBankDeg,
                                        role, slot, wing, errM, leadId,
-                                       anchorXn, anchorYn, anchorFriendly);
+                                       anchorXn, anchorYn, anchorFriendly, callsign);
             var bytes = Encoding.ASCII.GetBytes(payload);
             foreach (var ep in targets)
             {
@@ -1010,6 +1048,7 @@ internal sealed class DataLink : IDisposable
             node.Slot = slot;
             node.ErrM = errM;
             node.LeadId = leadId;
+            node.Callsign = ParseCallsign(text);
             // 记住来源，回包时能直接发回去（长机靠这个自动覆盖所有僚机）
             node.LastFrom = from;
             node.TickAt = Environment.TickCount64;

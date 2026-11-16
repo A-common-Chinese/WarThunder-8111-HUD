@@ -885,6 +885,9 @@ internal static class MfdPages
             // ---- 认长机 ----
             // 长机机型只在数据链失效时参与：收到节点后靠位置配对，更准
             Text("row.leadIcon", c => c.LeadIcon, (c, v) => c.LeadIcon = v),
+            // 自己的呼号：长机表里显示，替掉 W1/W2/W3；空则退回编号
+            Text("row.fCallsign", c => c.FormationCallsign,
+                 (c, v) => c.FormationCallsign = WtHud.Telemetry.DataLink.CleanCallsign(v)),
             // 长机节点 ID：0 = 自动。长机模式下强制 0（自己就是长机，这一项没意义）
             Number("row.dataLinkLeadId", c => c.LeadMode ? 0 : c.DataLinkLeadId,
                    (c, v) => { c.DataLinkLeadId = (int)v; WtHud.Program.ApplyDataLinkPeers(c); },

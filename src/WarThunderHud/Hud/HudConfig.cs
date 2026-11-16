@@ -259,6 +259,9 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationSlot")] public int FormationSlot { get; set; } = 0;
 
+    /// <summary>僚机呼号（长机表显示，替代 W1/W2/W3；最长 12 字符，会清洗分隔符）。</summary>
+    [JsonPropertyName("formationCallsign")] public string FormationCallsign { get; set; } = "";
+
     /// <summary>梯队基准间距（米）。默认 450：每架再后 450、再左 250、再高 25，按比例整体缩放。</summary>
     [JsonPropertyName("formationEchelonSpacingM")] public double FormationEchelonSpacingM { get; set; } = 450;
 

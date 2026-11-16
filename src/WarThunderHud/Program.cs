@@ -1909,7 +1909,7 @@ public static partial class Program
                            dlXn, dlYn, TurnAssistBroadcastBank(cfg), SelfLinkRole(cfg),
                            selfWingSlot, selfWingState, selfWingErrM,
                            EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId),
-                           anchorXn, anchorYn, anchorFriendly);
+                           anchorXn, anchorYn, anchorFriendly, cfg.FormationCallsign);
             UpdateNavigation(opt, mapData, snap, cfg);
 
             // ---- SPLASH 击落播报：只认「自己击落了别人」，被打下/击毁 AI 都不播 ----
@@ -3789,7 +3789,8 @@ public static partial class Program
 
     /// <summary>僚机的显示名：有编号就叫 W1/W2，没有就用节点号。</summary>
     internal static string WingLabel(WtHud.Telemetry.DataLink.LinkNode n)
-        => n.Slot >= 0 ? "W" + (n.Slot + 1).ToString() : "#" + n.Id.ToString();
+        => !string.IsNullOrWhiteSpace(n.Callsign) ? n.Callsign.Trim()
+           : n.Slot >= 0 ? "W" + (n.Slot + 1).ToString() : "#" + n.Id.ToString();
 
     /// <summary>垂直环增益（1/s）。0.15 对应约 6.7 s 时间常数：120 m 用 18 s 左右收掉。</summary>
     internal const double VerticalGain = 0.15;

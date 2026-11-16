@@ -334,6 +334,7 @@ public static class L10n
         ["menu.hint.formationShape"] = ("预设 / 编号 / 站位数值", "PRESET · NUMBER · STATION"),
         ["row.fShape"] = ("预设队形", "PRESET"),
         ["row.fSlot"] = ("编号", "NUMBER"),
+        ["row.fCallsign"] = ("呼号", "CALLSIGN"),
         ["row.fSpacing"] = ("间距", "SPACING"),
         ["row.fSlant"] = ("斜距", "SLANT"),
         ["row.fSideM"] = ("横向", "LATERAL"),
