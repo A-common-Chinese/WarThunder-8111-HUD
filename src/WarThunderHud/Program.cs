@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+﻿// SPDX-License-Identifier: AGPL-3.0-or-later
 
 
 
@@ -1453,6 +1453,9 @@ public static partial class Program
             bool wasForeground = false;
             bool panelBelowHud = false;
             bool steamOverlayPrev = false;
+            bool cursorOverlayPrev2 = false;
+            long cursorVisibleSince = 0;
+            bool cursorOverlayMode = false;
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
             {
@@ -1474,10 +1477,43 @@ public static partial class Program
                 // Steam 游戏内覆盖层（浏览器/好友列表）打开时：它的鼠标要正常工作，
                 // HUD 必须让路（隐藏覆盖层 + 不再抢光标）。
                 bool steamOverlay = SteamOverlayActive(gamePid);
+                // 没有可枚举窗口的覆盖层（Steam 新版注入游戏进程）：飞行中系统光标
+                // 持续可见 >900ms 仍收不回去 → 认定有外部 UI 要鼠标，放开光标并隐藏 HUD。
+                if (latest?.InFlight == true && show && !settingsOpen && !steamOverlay)
+                {
+                    bool showing = NativeMethods.DescribeCursor().Contains("showing=True");
+                    long tick = Environment.TickCount64;
+                    if (showing)
+                    {
+                        if (cursorVisibleSince == 0) cursorVisibleSince = tick;
+                        else if (tick - cursorVisibleSince > 900) cursorOverlayMode = true;
+                    }
+                    else
+                    {
+                        cursorVisibleSince = 0;
+                        cursorOverlayMode = false;
+                    }
+                }
+                else if (!show || !foreground)
+                {
+                    cursorVisibleSince = 0;
+                    cursorOverlayMode = false;
+                }
+                bool cursorOverlay = steamOverlay || cursorOverlayMode;
                 if (steamOverlay != steamOverlayPrev)
                 {
                     steamOverlayPrev = steamOverlay;
                     Console.WriteLine($"steam overlay -> {(steamOverlay ? "open (HUD hidden, cursor released)" : "closed")}");
+                }
+                if (cursorOverlayMode && !cursorOverlayPrev2)
+                {
+                    cursorOverlayPrev2 = true;
+                    Console.WriteLine("cursor overlay mode -> on (HUD hidden, cursor released)");
+                }
+                else if (!cursorOverlayMode && cursorOverlayPrev2)
+                {
+                    cursorOverlayPrev2 = false;
+                    Console.WriteLine("cursor overlay mode -> off");
                 }
 
                 // While another application owns the foreground, the overlay window is hidden
@@ -1490,7 +1526,7 @@ public static partial class Program
                 // HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏之后，
                 // 游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。现在隐藏是无条件的，
                 // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
-                bool wantVisible = (foreground || settingsOpen) && !steamOverlay;
+                bool wantVisible = (foreground || settingsOpen) && !cursorOverlay;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 // 面板打开时把覆盖层压到面板下面：HUD 仍可见（预览设置效果），
@@ -1521,14 +1557,14 @@ public static partial class Program
 
                 // Keep the drawn cursor null while the game is in front. ShowCursor must NOT be
                 // used here: its counter balancing is what made the pointer reappear.
-                if (foreground && !settingsOpen && !steamOverlay && show) NativeMethods.SetCursor(IntPtr.Zero);
+                if (foreground && !settingsOpen && !cursorOverlay && show) NativeMethods.SetCursor(IntPtr.Zero);
 
                 long now = Environment.TickCount64;
 
                 // Watchdog: the game pins the pointer and only re-hides the cursor inside its
                 // WM_SETCURSOR handler. If the OS still reports a visible cursor while the game
                 // owns the foreground, keep poking it until it hides.
-                if (foreground && !settingsOpen && !steamOverlay && show && now - lastCursorNudge > 150)
+                if (foreground && !settingsOpen && !cursorOverlay && show && now - lastCursorNudge > 150)
                 {
                     lastCursorNudge = now;
                     string curState = NativeMethods.DescribeCursor();
@@ -1545,7 +1581,7 @@ public static partial class Program
                         cursorNudges = 0;
                     }
                 }
-                bool armed = foreground && !settingsOpen && !steamOverlay && show;
+                bool armed = foreground && !settingsOpen && !cursorOverlay && show;
 
                 // Aiming layout: Z/key toggles it, holding the right mouse button forces it on
                 // for as long as it is held (momentary), which matches how most players look
@@ -3125,37 +3161,37 @@ public static partial class Program
         steamCheckTicks = now;
         bool active = false;
         string found = "";
-        try
+        void Visit(IntPtr h, bool childOfGame)
         {
-            NativeMethods.EnumWindows((h, _) =>
+            if (!NativeMethods.IsWindowVisible(h) || NativeMethods.IsIconic(h)) return;
+            NativeMethods.GetWindowThreadProcessId(h, out int pid);
+            var sb = new System.Text.StringBuilder(256);
+            NativeMethods.GetClassName(h, sb, sb.Capacity);
+            string cls = sb.ToString();
+            bool browserish = cls.Contains("Cef", StringComparison.OrdinalIgnoreCase)
+                           || cls.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)
+                           || cls.Contains("SDL_app", StringComparison.OrdinalIgnoreCase)
+                           || cls.Contains("WebView", StringComparison.OrdinalIgnoreCase)
+                           || cls.Contains("Overlay", StringComparison.OrdinalIgnoreCase);
+            if (!browserish) return;
+            string name = "";
+            try { name = System.Diagnostics.Process.GetProcessById(pid).ProcessName; } catch { }
+            string key = pid + "|" + cls + "|" + (childOfGame ? "c" : "t");
+            if (steamWindowsSeen.Add(key))
+                Console.WriteLine($"window candidate: pid={pid} name={name} class={cls} child={childOfGame}");
+            bool steamProc = name.Contains("steam", StringComparison.OrdinalIgnoreCase)
+                          || name.Contains("overlay", StringComparison.OrdinalIgnoreCase)
+                          || name.Contains("webhelper", StringComparison.OrdinalIgnoreCase);
+            if (steamProc || childOfGame)
             {
-                if (!NativeMethods.IsWindowVisible(h) || NativeMethods.IsIconic(h)) return true;
-                NativeMethods.GetWindowThreadProcessId(h, out int pid);
-                if (pid == 0 || pid == gamePid) return true;   // 游戏自己的窗口不算
-                var sb = new System.Text.StringBuilder(256);
-                NativeMethods.GetClassName(h, sb, sb.Capacity);
-                string cls = sb.ToString();
-                bool browserish = cls.Contains("Cef", StringComparison.OrdinalIgnoreCase)
-                               || cls.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)
-                               || cls.Contains("SDL_app", StringComparison.OrdinalIgnoreCase);
-                if (!browserish) return true;
-                string name = "";
-                try { name = System.Diagnostics.Process.GetProcessById(pid).ProcessName; } catch { }
-                string key = pid + "|" + cls;
-                if (steamWindowsSeen.Add(key))
-                    Console.WriteLine($"window candidate: pid={pid} name={name} class={cls}");
-                if (name.Contains("steam", StringComparison.OrdinalIgnoreCase)
-                    || name.Contains("overlay", StringComparison.OrdinalIgnoreCase)
-                    || name.Contains("webhelper", StringComparison.OrdinalIgnoreCase))
-                {
-                    active = true;
-                    found = name + ":" + cls;
-                    return false;
-                }
-                return true;
-            }, IntPtr.Zero);
+                active = true;
+                found = name + ":" + cls + (childOfGame ? " (child)" : "");
+            }
         }
-        catch { }
+        NativeMethods.EnumWindows((h, _) => { Visit(h, false); return !active; }, IntPtr.Zero);
+        var gh = WtHud.Overlay.GameWindowTracker.GameHwnd;
+        if (!active && gh != IntPtr.Zero)
+            NativeMethods.EnumChildWindows(gh, (h, _) => { Visit(h, true); return !active; }, IntPtr.Zero);
         if (active && steamOverlayCached == false) Console.WriteLine($"steam overlay window: {found}");
         steamOverlayCached = active;
         return active;
