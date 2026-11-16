@@ -7,8 +7,9 @@ using WtHud.UI.Mfd.Controls;
 namespace WtHud.UI.Mfd.Pages;
 
 /// <summary>
-/// 文本输入页（玩家昵称等）：ASCII 直接输入，中文/特殊符号用 Ctrl+V 粘贴。
-/// 面板是自绘窗体，没有 IME 输入框；粘贴已覆盖绝大多数中文昵称需求。
+/// 文本输入页（玩家昵称 / 呼号等）：ASCII 直接输入，中文/特殊符号用 Ctrl+V 粘贴。
+/// 交互与数值编辑页保持一致：确认/取消是**选项**（侧键/上下选择、CONFIRM 执行、双击鼠标执行），
+/// 不是按下即执行的按钮。
 /// </summary>
 internal sealed class TextEditPage : MfdPageBase
 {
@@ -31,6 +32,9 @@ internal sealed class TextEditPage : MfdPageBase
     public override string HintKey => "tedit.hint";
 
     public string Buffer { get; private set; }
+
+    /// <summary>0 = 确认, 1 = 取消（与数值编辑页同一套选择语义）。</summary>
+    public int Choice { get; private set; }
 
     public void Append(char ch)
     {
@@ -58,13 +62,11 @@ internal sealed class TextEditPage : MfdPageBase
     public override void Build()
     {
         Buttons.Clear();
-        // 这两行是动作而不是选项（按下即提交/取消），所以 Target 直接是执行命令，
-        // 与原来的侧键行为一致。
-        AddAction("tedit.commit", sideKey: 2, "confirm.ok", () => Buffer);
-        AddAction("tedit.cancel", sideKey: 3, "confirm.cancel", () => "");
+        AddChoice("tedit.commit", sideKey: 2, choice: 0, "confirm.ok", () => Buffer);
+        AddChoice("tedit.cancel", sideKey: 3, choice: 1, "confirm.cancel", () => "");
     }
 
-    private void AddAction(string id, int sideKey, string labelKey, Func<string> value)
+    private void AddChoice(string id, int sideKey, int choice, string labelKey, Func<string> value)
     {
         Buttons.Add(new VirtualButton(id, VirtualButtonKind.Action)
         {
@@ -72,15 +74,34 @@ internal sealed class TextEditPage : MfdPageBase
             Column = sideKey / 5,
             Text = () => L10n.Get(LangScope.Screen, labelKey),
             Value = value,
-            Target = MfdCommand.Of(id),
+            Target = MfdCommand.Of("tedit.select", choice.ToString()),
             ActivateBy = new[] { "SIDE" + MfdPageLayout.CellFromSideKey(sideKey) },
         });
     }
+
+    public int HitOption(PointF p)
+    {
+        var s = _layout.Scale;
+        foreach (var (sideKey, choice) in OptionRows)
+        {
+            var row = _layout.ListRowRect(sideKey < 5 ? 0 : 1, sideKey % 5);
+            row.Inflate(6 * s, 0);
+            if (row.Contains(p)) return choice;
+        }
+        return -1;
+    }
+
+    private static readonly (int SideKey, int Choice)[] OptionRows = { (2, 0), (3, 1) };
+
+    public void Select(int index) => Choice = index < 0 ? Choice : Math.Clamp(index, 0, 1);
 
     public override bool Handle(MfdCommand cmd)
     {
         switch (cmd.Id)
         {
+            case "tedit.select":
+                if (int.TryParse(cmd.Arg, out var i)) Select(i);
+                return true;
             case "tedit.commit":
                 _onCommit(Buffer.Trim());
                 return true;
@@ -108,8 +129,7 @@ internal sealed class TextEditPage : MfdPageBase
         g.DrawString(_label(), title, muted, cx - g.MeasureString(_label(), title).Width / 2,
                      glass.Top + 60 * s, StringFormat.GenericTypographic);
 
-        // 框宽固定，不再随文本长度增长：40 字符的长昵称曾把框撑到玻璃外面（压住侧键和边框）。
-        // 超宽时只保留尾部（光标所在端），前面补省略号 —— 正在输入的那一段永远看得见。
+        // 框宽固定，超宽只保留尾部（光标所在端），正在输入的那一段永远看得见。
         var boxW = Math.Min(760 * s, glass.Width - pad * 2 - 40 * s);
         var boxH = 84 * s;
         var bx = cx - boxW / 2;
@@ -131,19 +151,21 @@ internal sealed class TextEditPage : MfdPageBase
         g.DrawString(shown, mono, green, cx - g.MeasureString(shown, mono).Width / 2, by + 10 * s,
                      StringFormat.GenericTypographic);
 
-        // 这里不再自绘提示行：页脚已经按 HintKey 统一画了一遍（同一句 tedit.hint），
-        // 页面自己再画一次会正好落在「确认」行上，把那一行的左半截盖掉。
-        DrawChoice(g, s, pad, 2, L10n.Get(LangScope.Screen, "confirm.ok"));
-        DrawChoice(g, s, pad, 3, L10n.Get(LangScope.Screen, "confirm.cancel"));
+        DrawChoiceRow(g, s, 2, 0, L10n.Get(LangScope.Screen, "confirm.ok"));
+        DrawChoiceRow(g, s, 3, 1, L10n.Get(LangScope.Screen, "confirm.cancel"));
     }
 
-    private void DrawChoice(System.Drawing.Graphics g, float s, float pad, int sideKey, string label)
+    private void DrawChoiceRow(System.Drawing.Graphics g, float s, int sideKey, int choice, string label)
     {
         var row = _layout.ListRowRect(sideKey < 5 ? 0 : 1, sideKey % 5);
+        var selected = choice == Choice;
+        if (selected)
+        {
+            using var hi = new SolidBrush(choice == 0 ? MfdTheme.Green : MfdTheme.GreenDim);
+            g.FillRectangle(hi, row.X, row.Y, row.Width, row.Height);
+        }
         using var font = MfdTheme.CjkAt(20f * s);
-        using var bg = new SolidBrush(MfdTheme.GreenDim);
-        using var fg = new SolidBrush(MfdTheme.Text);
-        g.FillRectangle(bg, row);
+        using var fg = new SolidBrush(selected ? MfdTheme.Dark : MfdTheme.Text);
         g.DrawString(label, font, fg, row.X + 14 * s, row.Y + 6 * s, StringFormat.GenericTypographic);
     }
 }

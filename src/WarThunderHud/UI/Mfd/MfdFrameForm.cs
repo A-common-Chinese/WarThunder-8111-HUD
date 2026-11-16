@@ -601,6 +601,18 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        // 文本编辑页：确认/取消同样是选项行，鼠标行为与数值页一致（选择 / 双击执行）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.TextEdit
+            && _textPage is { } textPage
+            && textPage.HitOption(new PointF(e.X, e.Y)) is int textChoice && textChoice >= 0)
+        {
+            var againT = IsRepeatClick("text", textChoice, 500);
+            textPage.Select(textChoice);
+            if (againT || e.Clicks >= 2) Confirm();
+            Invalidate();
+            return;
+        }
+
         // 编辑页：命中由页面给出（三个选项行的矩形与它自己的绘制同源）
         if (!_work.Mfd.RealisticKeys && _mode == Mode.EditNumber
             && _editPage is { } editPage
@@ -843,7 +855,7 @@ public sealed class MfdFrameForm : Form
         {
             e.Handled = true;
             if (e.KeyCode == Keys.Escape) { _textPage?.Handle(MfdCommand.Of("nav.back")); Invalidate(); return; }
-            if (e.KeyCode == Keys.Enter) { _textPage?.Handle(MfdCommand.Of("tedit.commit")); Invalidate(); return; }
+            if (e.KeyCode == Keys.Enter) { Confirm(); Invalidate(); return; }
             if (e.KeyCode == Keys.Back) { _textPage?.Backspace(); Invalidate(); return; }
             if (e.Control && e.KeyCode == Keys.V)
             {
@@ -1012,7 +1024,9 @@ public sealed class MfdFrameForm : Form
                     _editPage.Choice == 2 ? "edit.pick" : "edit.commit"));
                 break;
             case Mode.TextEdit:
-                _textPage?.Handle(MfdCommand.Of("tedit.commit"));
+                // 与页面高亮的选项一致：选到「取消」后 CONFIRM 就是取消
+                _textPage?.Handle(MfdCommand.Of(
+                    _textPage.Choice == 1 ? "tedit.cancel" : "tedit.commit"));
                 break;
             case Mode.CaptureKey:
                 CommitCapture();
