@@ -1451,6 +1451,7 @@ public static partial class Program
             long lastViewToggleTicks = 0;
             long lastToggleTicks = 0;
             bool wasForeground = false;
+            bool panelBelowHud = false;
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
             {
@@ -1482,6 +1483,15 @@ public static partial class Program
                 // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
                 bool wantVisible = foreground || settingsOpen;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
+
+                // 面板打开时把覆盖层压到面板下面：HUD 仍可见（预览设置效果），
+                // 但编队判定等中央文字不会盖在面板屏幕中间。
+                if (settingsOpen != panelBelowHud)
+                {
+                    panelBelowHud = settingsOpen;
+                    if (settingsOpen && _mfdPanel is { IsHandleCreated: true } pnl)
+                        overlay.PlaceBelow(pnl.Handle);
+                }
 
                 if (foreground != wasForeground)
                 {

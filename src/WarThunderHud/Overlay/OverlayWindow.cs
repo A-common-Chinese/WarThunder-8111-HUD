@@ -466,6 +466,15 @@ public sealed class OverlayWindow : IDisposable
         _backBuffer = null;
     }
 
+    /// <summary>把覆盖层插到另一个窗口下面（两者都保持 topmost）。
+    /// 面板打开时用它：HUD 仍可见，但压不到 MFD 面板上面。</summary>
+    public void PlaceBelow(IntPtr other)
+    {
+        if (other == IntPtr.Zero || _hwnd == IntPtr.Zero) return;
+        NativeMethods.SetWindowPos(_hwnd, other, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+    }
+
     public void Dispose()
     {
         DisposeRenderTarget();
