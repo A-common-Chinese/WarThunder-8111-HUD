@@ -1473,7 +1473,7 @@ public static partial class Program
                 bool foreground = gamePid != 0 && IsForegroundProcess(gamePid);
                 // Steam 游戏内覆盖层（浏览器/好友列表）打开时：它的鼠标要正常工作，
                 // HUD 必须让路（隐藏覆盖层 + 不再抢光标）。
-                bool steamOverlay = SteamOverlayActive();
+                bool steamOverlay = SteamOverlayActive(gamePid);
                 if (steamOverlay != steamOverlayPrev)
                 {
                     steamOverlayPrev = steamOverlay;
@@ -1521,14 +1521,14 @@ public static partial class Program
 
                 // Keep the drawn cursor null while the game is in front. ShowCursor must NOT be
                 // used here: its counter balancing is what made the pointer reappear.
-                if (foreground && !settingsOpen && !steamOverlay) NativeMethods.SetCursor(IntPtr.Zero);
+                if (foreground && !settingsOpen && !steamOverlay && show) NativeMethods.SetCursor(IntPtr.Zero);
 
                 long now = Environment.TickCount64;
 
                 // Watchdog: the game pins the pointer and only re-hides the cursor inside its
                 // WM_SETCURSOR handler. If the OS still reports a visible cursor while the game
                 // owns the foreground, keep poking it until it hides.
-                if (foreground && !settingsOpen && !steamOverlay && now - lastCursorNudge > 150)
+                if (foreground && !settingsOpen && !steamOverlay && show && now - lastCursorNudge > 150)
                 {
                     lastCursorNudge = now;
                     string curState = NativeMethods.DescribeCursor();
@@ -1545,7 +1545,7 @@ public static partial class Program
                         cursorNudges = 0;
                     }
                 }
-                bool armed = foreground && !settingsOpen && !steamOverlay;
+                bool armed = foreground && !settingsOpen && !steamOverlay && show;
 
                 // Aiming layout: Z/key toggles it, holding the right mouse button forces it on
                 // for as long as it is held (momentary), which matches how most players look
@@ -3116,29 +3116,55 @@ public static partial class Program
         }
     }
 
-    /// <summary>Steam 游戏内覆盖层（浏览器/好友）是否打开：它的窗口属于 gameoverlayui 进程。
-    /// 打开时 HUD 隐藏并停止抢光标，否则覆盖层里的鼠标不可用（反馈 2026-11-16）。</summary>
-    private static bool SteamOverlayActive()
+    /// <summary>Steam 游戏内覆盖层是否打开：枚举可见顶层窗口，按「浏览器类名 + Steam 进程」判定。
+    /// 覆盖层打开时 HUD 隐藏并停止抢光标；候选窗口首次出现会打进日志，便于后续适配。</summary>
+    private static bool SteamOverlayActive(int gamePid)
     {
         long now = Environment.TickCount64;
         if (now - steamCheckTicks < 500) return steamOverlayCached;
         steamCheckTicks = now;
         bool active = false;
+        string found = "";
         try
         {
-            foreach (var p in System.Diagnostics.Process.GetProcessesByName("gameoverlayui"))
+            NativeMethods.EnumWindows((h, _) =>
             {
-                var h = p.MainWindowHandle;
-                if (h != IntPtr.Zero && NativeMethods.IsWindowVisible(h)) { active = true; break; }
-            }
+                if (!NativeMethods.IsWindowVisible(h) || NativeMethods.IsIconic(h)) return true;
+                NativeMethods.GetWindowThreadProcessId(h, out int pid);
+                if (pid == 0 || pid == gamePid) return true;   // 游戏自己的窗口不算
+                var sb = new System.Text.StringBuilder(256);
+                NativeMethods.GetClassName(h, sb, sb.Capacity);
+                string cls = sb.ToString();
+                bool browserish = cls.Contains("Cef", StringComparison.OrdinalIgnoreCase)
+                               || cls.Contains("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase)
+                               || cls.Contains("SDL_app", StringComparison.OrdinalIgnoreCase);
+                if (!browserish) return true;
+                string name = "";
+                try { name = System.Diagnostics.Process.GetProcessById(pid).ProcessName; } catch { }
+                string key = pid + "|" + cls;
+                if (steamWindowsSeen.Add(key))
+                    Console.WriteLine($"window candidate: pid={pid} name={name} class={cls}");
+                if (name.Contains("steam", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("overlay", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("webhelper", StringComparison.OrdinalIgnoreCase))
+                {
+                    active = true;
+                    found = name + ":" + cls;
+                    return false;
+                }
+                return true;
+            }, IntPtr.Zero);
         }
         catch { }
+        if (active && steamOverlayCached == false) Console.WriteLine($"steam overlay window: {found}");
         steamOverlayCached = active;
         return active;
     }
 
     private static long steamCheckTicks;
     private static bool steamOverlayCached;
+    private static readonly HashSet<string> steamWindowsSeen = new();
+
 
     private static bool IsForegroundProcess(int pid)
     {
