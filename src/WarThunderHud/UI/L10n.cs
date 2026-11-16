@@ -574,6 +574,7 @@ public static class L10n
         // 认得长机但拿不到自机坐标：8111 半初始化 / 不在对局。这是错误状态，要明说
         ["formation.noSelfPos"] = ("无自机坐标 · 8111 未就绪", "NO OWN POSITION · 8111 NOT READY"),
         ["formation.leadHidden"] = ("长机不在图上 · 超出显示范围", "LEAD NOT ON MAP · OUT OF RANGE"),
+        ["formation.nearVisual"] = ("近距 · 仅高度 · 目视编队", "CLOSE · ALT ONLY · VISUAL"),
         ["formation.noMatch"] = ("无 {0} 型友军 · 检查长机机型", "NO {0} CONTACT · CHECK LEAD TYPE"),
         // 两个 role=1 且没填长机 ID：引导会在两架之间跳，必须说清该怎么办
         ["formation.leadAmbiguous"] = ("长机不唯一 · 填节点 ID", "MULTIPLE LEADS · SET NODE ID"),

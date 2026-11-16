@@ -2757,13 +2757,17 @@ public static partial class Program
                 // 没有自机坐标：认得长机，但算不出它在哪一侧。
                 // ★ 这是错误状态（8111 半初始化 / 不在对局），不是"没有僚机"——
                 //   必须明说，否则飞行员只会看到"圈不见了"。
-                if (!target.HasHorizontal)
+                // 近距（<200 m）：4 Hz 数据链的水平量已不可信（一拍 35 m 级误差），
+                // 按飞行员反馈只保留高度差，水平引导整段不画，让飞行员目视编队。
+                bool nearVisual = target.Source == FormationSource.Link && leadRange < 200.0;
+                if (!target.HasHorizontal || nearVisual)
                 {
                     opt.Guide = null;
                     opt.TargetHeadingDeg = null;
-                    ClearSelfWingReport(cfg.FormationSlot);   // 没有水平量就没有站位误差，别发上一帧的残留
+                    ClearSelfWingReport(cfg.FormationSlot);   // 没有可用的水平量，别发上一帧的残留
                     opt.FormationHint = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Alerts,
-                        target.LeadHidden ? "formation.leadHidden" : "formation.noSelfPos");
+                        nearVisual ? "formation.nearVisual"
+                        : target.LeadHidden ? "formation.leadHidden" : "formation.noSelfPos");
                 }
                 else
                 {
