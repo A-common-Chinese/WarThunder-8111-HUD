@@ -1452,6 +1452,7 @@ public static partial class Program
             long lastToggleTicks = 0;
             bool wasForeground = false;
             bool panelBelowHud = false;
+            bool steamOverlayPrev = false;
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
             {
@@ -1470,6 +1471,14 @@ public static partial class Program
                 }
 
                 bool foreground = gamePid != 0 && IsForegroundProcess(gamePid);
+                // Steam 游戏内覆盖层（浏览器/好友列表）打开时：它的鼠标要正常工作，
+                // HUD 必须让路（隐藏覆盖层 + 不再抢光标）。
+                bool steamOverlay = SteamOverlayActive();
+                if (steamOverlay != steamOverlayPrev)
+                {
+                    steamOverlayPrev = steamOverlay;
+                    Console.WriteLine($"steam overlay -> {(steamOverlay ? "open (HUD hidden, cursor released)" : "closed")}");
+                }
 
                 // While another application owns the foreground, the overlay window is hidden
                 // entirely: a topmost window can still swallow clicks over its whole area even
@@ -1481,7 +1490,7 @@ public static partial class Program
                 // HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏之后，
                 // 游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。现在隐藏是无条件的，
                 // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
-                bool wantVisible = foreground || settingsOpen;
+                bool wantVisible = (foreground || settingsOpen) && !steamOverlay;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 // 面板打开时把覆盖层压到面板下面：HUD 仍可见（预览设置效果），
@@ -1501,7 +1510,7 @@ public static partial class Program
                     // Coming back from another app the OS may still be drawing that app's arrow
                     // (War Thunder pins the pointer to the screen centre, so no new WM_SETCURSOR
                     // ever arrives and the arrow stays). Post one so the game hides it again.
-                    if (foreground)
+                    if (foreground && !steamOverlay)
                     {
                         overlay.ForceInvisibleCursor();
                         overlay.NudgeForegroundCursor();
@@ -1512,14 +1521,14 @@ public static partial class Program
 
                 // Keep the drawn cursor null while the game is in front. ShowCursor must NOT be
                 // used here: its counter balancing is what made the pointer reappear.
-                if (foreground && !settingsOpen) NativeMethods.SetCursor(IntPtr.Zero);
+                if (foreground && !settingsOpen && !steamOverlay) NativeMethods.SetCursor(IntPtr.Zero);
 
                 long now = Environment.TickCount64;
 
                 // Watchdog: the game pins the pointer and only re-hides the cursor inside its
                 // WM_SETCURSOR handler. If the OS still reports a visible cursor while the game
                 // owns the foreground, keep poking it until it hides.
-                if (foreground && !settingsOpen && now - lastCursorNudge > 150)
+                if (foreground && !settingsOpen && !steamOverlay && now - lastCursorNudge > 150)
                 {
                     lastCursorNudge = now;
                     string curState = NativeMethods.DescribeCursor();
@@ -1536,7 +1545,7 @@ public static partial class Program
                         cursorNudges = 0;
                     }
                 }
-                bool armed = foreground && !settingsOpen;
+                bool armed = foreground && !settingsOpen && !steamOverlay;
 
                 // Aiming layout: Z/key toggles it, holding the right mouse button forces it on
                 // for as long as it is held (momentary), which matches how most players look
@@ -3106,6 +3115,30 @@ public static partial class Program
             if (attached) NativeMethods.AttachThreadInput(myTid, fgTid, false);
         }
     }
+
+    /// <summary>Steam 游戏内覆盖层（浏览器/好友）是否打开：它的窗口属于 gameoverlayui 进程。
+    /// 打开时 HUD 隐藏并停止抢光标，否则覆盖层里的鼠标不可用（反馈 2026-11-16）。</summary>
+    private static bool SteamOverlayActive()
+    {
+        long now = Environment.TickCount64;
+        if (now - steamCheckTicks < 500) return steamOverlayCached;
+        steamCheckTicks = now;
+        bool active = false;
+        try
+        {
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("gameoverlayui"))
+            {
+                var h = p.MainWindowHandle;
+                if (h != IntPtr.Zero && NativeMethods.IsWindowVisible(h)) { active = true; break; }
+            }
+        }
+        catch { }
+        steamOverlayCached = active;
+        return active;
+    }
+
+    private static long steamCheckTicks;
+    private static bool steamOverlayCached;
 
     private static bool IsForegroundProcess(int pid)
     {
