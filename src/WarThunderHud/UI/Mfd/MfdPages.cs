@@ -760,7 +760,6 @@ internal static class MfdPages
                    "hint.presetOnly", MfdQuantity.LengthM),
             // 派生几何：只读，改下面任何一项立刻跟着变
             Info("row.fSlant", c => Units.DistancePlainSpaced(WtHud.Hud.FormationGeometry.Station(c).RangeM, c.LengthUnits)),
-            Info("row.fSideM", c => Units.DistancePlainSpaced(WtHud.Hud.FormationGeometry.Station(c).SideM, c.LengthUnits)),
             // 判定余量：完成门槛（斜距 × 完成%）对链路一拍的位移（TAS × 0.25 s）。
             // ★ 原来这里是「纵向」只读行，它和后距输入行是同一个数，占着一格没有新信息。
             Info("row.fMargin", c => MarginText(c, WtHud.Program.FormationLatencyM)),
@@ -838,12 +837,8 @@ internal static class MfdPages
             // 队形几何（形状 + 槽位 + 三个距离）：两边必须用同一个队形，放通用页
             Submenu("row.formationShapeMenu", () => FormationShapePage(), FormationShapeSummary),
 
-            // ---- 完成与脱离判定：门槛由开发者定死（飞行员反馈：不该让用户调）----
-            Info("row.fDoneBand", c => string.Format(L10n.Get(LangScope.Screen, "guide.doneBand"),
-                WtHud.Program.FormationDoneHorizM, WtHud.Program.FormationDoneVertM)),
+            // ---- 完成与脱离判定：保持时间在这里；两个距离门槛可调，排在页面最后 ----
             Number("row.fDoneHold", c => c.FormationDoneHoldS, (c, v) => c.FormationDoneHoldS = v, 0.5, 0.5, 10, "s"),
-            Info("row.fDropBand", c => string.Format(L10n.Get(LangScope.Screen, "guide.dropBand"),
-                WtHud.Program.FormationDropHorizM, WtHud.Program.FormationDropVertM)),
 
             // ---- 两个角色页：各自的专属参数，进去才看得到 ----
             Submenu("row.fWingMenu", () => FormationWingPage(), WingPageSummary),
@@ -852,6 +847,14 @@ internal static class MfdPages
             // ---- 数据链跳板：编队要开数据链，但连接参数不在这页改 ----
             Submenu("row.dlConnMenu", () => DataLinkConnectionPage("page.formationTune"), c =>
                 L10n.Get(LangScope.Screen, c.DataLinkEnabled ? "val.linkOn" : "val.linkOff")),
+
+            // 判定门槛（可调）：排在页面最后，避免干扰主流程
+            Number("row.fDoneBand", c => c.FormationDoneHorizM,
+                   (c, v) => c.FormationDoneHorizM = v, 5, 5, 200, "m",
+                   quantity: MfdQuantity.LengthM),
+            Number("row.fDropBand", c => c.FormationDropHorizM,
+                   (c, v) => c.FormationDropHorizM = v, 5, 5, 500, "m",
+                   quantity: MfdQuantity.LengthM),
         },
     };
 

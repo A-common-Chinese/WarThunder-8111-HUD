@@ -1412,9 +1412,10 @@ public static partial class Program
         Check("G row accepts a typed value",
             gRow.TryParseNumber(ucfg, "3.0", out var gVal) && Math.Abs(gVal - 3.0) < 1e-9);
         // 到位/掉出门槛是开发者定死的米数（飞行员反馈：不该让用户调）
-        Check("done band is fixed in metres",
-            FormationDoneHorizM == 15 && FormationDoneVertM == 10
-            && FormationDropHorizM == 30 && FormationDropVertM == 20);
+        var bandCfg = new HudConfig();
+        Check("done band defaults in metres",
+            Math.Abs(bandCfg.FormationDoneHorizM - 15) < 0.01 && FormationDoneVertM == 10
+            && Math.Abs(bandCfg.FormationDropHorizM - 30) < 0.01 && FormationDropVertM == 20);
 
         // ---- HUD：真的画一次，看画出来的文本 ----
         var unitSnap = new TelemetrySnapshot

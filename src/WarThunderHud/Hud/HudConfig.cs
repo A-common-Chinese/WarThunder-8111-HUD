@@ -333,6 +333,12 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("formationDonePct")] public double FormationDonePct { get; set; } = 10;
 
+    /// <summary>到位门槛：水平误差（米）。默认 15，可在编队页最后两行调整。</summary>
+    [JsonPropertyName("formationDoneHorizM")] public double FormationDoneHorizM { get; set; } = 15;
+
+    /// <summary>掉出门槛：水平误差（米）。默认 30。</summary>
+    [JsonPropertyName("formationDropHorizM")] public double FormationDropHorizM { get; set; } = 30;
+
     /// <summary>进入门槛需要持续多久才算完成（秒）。默认 2.0，防止掠过站位就报完成。</summary>
     [JsonPropertyName("formationDoneHoldS")] public double FormationDoneHoldS { get; set; } = 2.0;
 

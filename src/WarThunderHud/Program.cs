@@ -3607,7 +3607,7 @@ public static partial class Program
     internal static WtHud.Telemetry.DataLink.WingState WingStateFrom(
         double errM, double vertErrM, bool hasVert, double aimDeg, HudConfig cfg)
     {
-        bool inPos = Math.Abs(errM) <= FormationDoneHorizM
+        bool inPos = Math.Abs(errM) <= cfg.FormationDoneHorizM
                      && (!hasVert || Math.Abs(vertErrM) <= FormationDoneVertM)
                      && Math.Abs(aimDeg) <= Math.Max(0.5, cfg.FormationAlignDeg);
         return inPos
@@ -4192,7 +4192,7 @@ public static partial class Program
 
         if (formationStage == FormationStage.Converge)
         {
-            if (err <= FormationDoneHorizM && verr <= FormationDoneVertM && aligned)
+            if (err <= cfg.FormationDoneHorizM && verr <= FormationDoneVertM && aligned)
             {
                 if (formationDoneSince < 0) formationDoneSince = nowS;
                 else if (nowS - formationDoneSince >= Math.Max(0.1, cfg.FormationDoneHoldS))
@@ -4206,7 +4206,7 @@ public static partial class Program
             else formationDoneSince = -1;
         }
         else if (formationStage == FormationStage.Maintain
-                 && (err > FormationDropHorizM || verr > FormationDropVertM || badlyAligned))
+                 && (err > cfg.FormationDropHorizM || verr > FormationDropVertM || badlyAligned))
         {
             formationStage = FormationStage.Converge;
             formationStageSince = nowS;
