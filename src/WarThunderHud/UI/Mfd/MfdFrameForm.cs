@@ -1082,6 +1082,13 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        // 长机不需要队形：队形由僚机各自填，长机端把入口拦掉（飞行员反馈 2026-11-15）
+        if (_work.LeadMode && item.LabelKey is "row.formationShapeMenu" or "row.fWingMenu")
+        {
+            _toast = L10n.Get(LangScope.Screen, "toast.leadNoGeometry");
+            return;
+        }
+
         // 打开击落播报但没填昵称 → 提示先填，避免「开了却没反应」
         if (item.LabelKey == "row.splashEnabled"
             && item.GetBool?.Invoke(_work) == false

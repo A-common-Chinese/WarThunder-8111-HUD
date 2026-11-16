@@ -419,6 +419,7 @@ public static class L10n
         ["row.mfdScale"] = ("面板缩放", "PANEL SCALE"),
         ["row.mfdCompact"] = ("紧凑面板", "COMPACT PANEL"),
         ["toast.panelMoved"] = ("面板位置已记录（SAVE 保存）", "PANEL MOVED · SAVE TO KEEP"),
+        ["toast.leadNoGeometry"] = ("长机不需要队形 · 由僚机各自填写", "LEAD USES WING STATIONS"),
         ["opt.scale100"] = ("100% · 自动", "100% · AUTO"),
         ["opt.scale90"] = ("90%", "90%"),
         ["opt.scale80"] = ("80%", "80%"),
