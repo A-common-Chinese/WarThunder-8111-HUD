@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 
 
@@ -2730,6 +2730,16 @@ public static partial class Program
 
             var target = ResolveFormationTarget(cfg, map, dataLink, opt, sizeX, sizeY, navHeading,
                                                 snap.ElapsedSeconds, selfVxPerS, selfVyPerS);
+            // 近距（<100 m）：水平位置优先用本机 map_obj 的友机数据（本地采样、不经网络），
+            // 数据链只保留高度差（垂直引导本来就来自链路）。链路在近距的 4 Hz 滞后
+            // 已经和队形尺寸同量级，不适合再做水平引导。
+            if (target.Source == FormationSource.Link && target.RangeM < 100.0)
+            {
+                var local = ResolveFormationTarget(cfg, map, null, opt, sizeX, sizeY, navHeading,
+                                                   snap.ElapsedSeconds, selfVxPerS, selfVyPerS);
+                if (local.Source != FormationSource.None && local.HasHorizontal)
+                    target = local;
+            }
             if (target.Source != FormationSource.None)
             {
                 double leadRange = target.RangeM;
@@ -2814,7 +2824,7 @@ public static partial class Program
                 //   必须明说，否则飞行员只会看到"圈不见了"。
                 // 近距（<200 m）：4 Hz 数据链的水平量已不可信（一拍 35 m 级误差），
                 // 按飞行员反馈只保留高度差，水平引导整段不画，让飞行员目视编队。
-                bool nearVisual = target.Source == FormationSource.Link && leadRange < 200.0;
+                bool nearVisual = target.Source == FormationSource.Link && leadRange < 100.0;
                 if (!target.HasHorizontal || nearVisual)
                 {
                     opt.Guide = null;
