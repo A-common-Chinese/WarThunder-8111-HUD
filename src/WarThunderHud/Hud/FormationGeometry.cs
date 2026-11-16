@@ -94,7 +94,7 @@ public static class FormationGeometry
         string shape, int index, double spacingM)
     {
         var i = Math.Clamp(index, 0, MaxSlots - 1);
-        var s = Math.Clamp(spacingM, 50.0, 2000.0);
+        var s = Math.Clamp(spacingM, 25.0, 2000.0);
         var k = i + 1;
         switch (shape)
         {

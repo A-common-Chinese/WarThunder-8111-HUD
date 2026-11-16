@@ -755,7 +755,7 @@ internal static class MfdPages
                        if (c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom)
                            WtHud.Hud.FormationGeometry.ApplyPreset(c, c.FormationShape, c.FormationSlot);
                    },
-                   10, 100, 1500, "m",
+                   5, 25, 1500, "m",
                    c => c.FormationShape != WtHud.Hud.FormationGeometry.ShapeCustom,
                    "hint.presetOnly", MfdQuantity.LengthM),
             // 派生几何：只读，改下面任何一项立刻跟着变
@@ -776,7 +776,7 @@ internal static class MfdPages
             // 下限 200 m：再近的话 4 Hz 链路的滞后就超过完成门槛（见上面那行判定余量），
             // 那个距离上本来也是目视编队更稳。
             Number("row.fStationBack", c => c.FormationStationBackM,
-                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 10, 200, 1500, "m",
+                   (c, v) => { c.FormationStationBackM = v; ValuesEdited(c); }, 5, 25, 1500, "m",
                    quantity: MfdQuantity.LengthM),
             Number("row.fUpM", c => c.FormationUpM,
                    (c, v) => { c.FormationUpM = v; ValuesEdited(c); }, 5, -200, 200, "m",

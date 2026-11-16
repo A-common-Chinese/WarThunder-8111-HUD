@@ -45,10 +45,10 @@ public readonly record struct FormationProfile(
         if (!SenderLead) c.FormationSlot = Math.Clamp(Slot, 0, FormationGeometry.MaxSlots - 1);
         c.FormationWingSide = Math.Clamp(Side, -1, 1);
         c.FormationWingOffsetM = Math.Clamp(Side, -1, 1) * Math.Abs(LateralM);   // 带符号：负 = 左
-        c.FormationStationBackM = Math.Max(10, BackM);
+        c.FormationStationBackM = Math.Max(25, BackM);
         c.FormationUpM = UpM;
         if (c.FormationShape != FormationGeometry.ShapeCustom)
-            FormationGeometry.SetSpacing(c, c.FormationShape, Math.Max(10, SpacingM));
+            FormationGeometry.SetSpacing(c, c.FormationShape, Math.Max(25, SpacingM));
         c.FormationDonePct = Math.Clamp(DonePct, 1, 50);
         c.FormationDoneHoldS = Math.Clamp(HoldS, 0.5, 10);
         c.FormationDropPct = Math.Clamp(DropPct, 5, 100);
