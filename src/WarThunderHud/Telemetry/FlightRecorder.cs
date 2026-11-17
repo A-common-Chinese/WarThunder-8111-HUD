@@ -131,9 +131,17 @@ public sealed class FlightRecorder : IDisposable
         try
         {
             using var w = new StreamWriter(_path, append: false, new UTF8Encoding(false)) { AutoFlush = false };
+            int lines = 0;
+            long lastFlush = Environment.TickCount64;
             foreach (var line in _queue.GetConsumingEnumerable())
             {
                 w.WriteLine(line);
+                // 定期落盘：飞行中文件就能看到内容，崩溃也不会丢整局。
+                if (++lines % 100 == 0 || Environment.TickCount64 - lastFlush > 1000)
+                {
+                    w.Flush();
+                    lastFlush = Environment.TickCount64;
+                }
             }
             w.Flush();
         }

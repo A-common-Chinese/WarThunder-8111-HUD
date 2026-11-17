@@ -1089,6 +1089,12 @@ public static partial class Program
         bool demo = args.Length > 2 && args[2].Equals("demo", StringComparison.OrdinalIgnoreCase);
         bool perf = args.Any(a => a.Equals("--perf", StringComparison.OrdinalIgnoreCase));
 
+    // 正常退出（关窗/结束进程）时把记录器缓冲落盘；被强杀仍可能丢最后几行。
+    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+    {
+        try { flightRecorder?.Stop(); } catch { }
+    };
+
         // 单实例：两个 WtHud 同时跑会互相偷热键（后起的那个 RegisterHotKey 报 err=1409，F10/F1 就
         // 归了先起的那个），而且先起的那个压在游戏上会把点击吃掉（旧版本连点击回跳都没有），
         // 表现就是"HUD 还在、但整块屏幕点不动"。自动提权重启时旧进程要等用户点 UAC 才退，
