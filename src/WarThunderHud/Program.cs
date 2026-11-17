@@ -3223,44 +3223,80 @@ public static partial class Program
     private static readonly HashSet<string> steamWindowsSeen = new();
 
 
-    /// <summary>飞行数据记录：开启时自动按对局开始/结束，只记录本机快照（JSONL）。</summary>
+    /// <summary>
+    /// 飞行数据记录：只本机。开始 = 第一次拿到有效遥测；结束 = 不再发包（5 秒没有新快照）。
+    /// 死亡不停止记录（复活模式同一文件继续），只写一行事件；复活/换机型也写事件。
+    /// </summary>
     private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap)
     {
-        // 8111 在大厅/退局后可能仍报 valid=true，但快照已经不再更新；
-        // 因此以「快照时间戳是否新鲜」判断对局是否还在，5 秒没有新快照就收尾。
-        bool fresh = latest is { } ls && (DateTime.UtcNow - ls.TimestampUtc).TotalSeconds < 5.0;
+        long nowTicks = Environment.TickCount64;
 
-        if (cfg.RecordEnabled)
+        // 「有没有新包」看快照时间戳：8111 退局后仍会应答，只是数据不再更新。
+        bool newPacket = latest is { } ls && ls.TimestampUtc != recLastStampUtc;
+        if (newPacket)
         {
-            if (snap.Valid && fresh)
-            {
-                recLastValidTicks = Environment.TickCount64;
-                if (flightRecorder == null)
-                {
-                    flightRecorder = FlightRecorder.Start(cfg, snap);
-                    recLastStampUtc = default;
-                    Console.WriteLine($"recording -> {flightRecorder.FilePath}");
-                }
-            }
-            else if (flightRecorder != null && Environment.TickCount64 - recLastValidTicks > 3000)
+            recLastStampUtc = latest!.TimestampUtc;
+            recLastPacketTicks = nowTicks;
+        }
+        bool packetsAlive = recLastPacketTicks != 0 && nowTicks - recLastPacketTicks < 5000;
+
+        if (!cfg.RecordEnabled)
+        {
+            if (flightRecorder != null)
             {
                 flightRecorder.Stop();
                 flightRecorder = null;
-                Console.WriteLine("recording stopped (match ended)");
+                recLastStampUtc = default;
+                recLastPacketTicks = 0;
+                Console.WriteLine("recording stopped (toggle off)");
+            }
+            return;
+        }
+
+        // 自动开始：第一次拿到有效遥测。
+        if (flightRecorder == null)
+        {
+            if (!snap.Valid) return;
+            flightRecorder = FlightRecorder.Start(cfg, snap);
+            recLastPacketTicks = nowTicks;
+            recValidPrev = true;
+            recVehiclePrev = snap.VehicleType;
+            Console.WriteLine($"recording -> {flightRecorder.FilePath}");
+        }
+
+        if (newPacket)
+        {
+            // 死亡只写事件、不停止：复活后继续写同一个文件。
+            if (recValidPrev && !snap.Valid)
+            {
+                flightRecorder.Event("death");
+                recValidPrev = false;
+                Console.WriteLine("record event: death");
+            }
+            else if (!recValidPrev && snap.Valid)
+            {
+                flightRecorder.Event("spawn", snap.VehicleType);
+                recValidPrev = true;
+                Console.WriteLine($"record event: spawn {snap.VehicleType}");
+            }
+            else if (snap.Valid && !string.IsNullOrEmpty(snap.VehicleType)
+                     && snap.VehicleType != recVehiclePrev)
+            {
+                flightRecorder.Event("vehicle_change", snap.VehicleType);
             }
 
-            if (flightRecorder != null && snap.Valid && fresh && snap.TimestampUtc != recLastStampUtc)
-            {
-                recLastStampUtc = snap.TimestampUtc;
-                flightRecorder.Add(snap, lastAttitude);
-            }
+            if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
+            if (snap.Valid) flightRecorder.Add(snap, lastAttitude);
         }
-        else if (flightRecorder != null)
+
+        // 对局结束 = 不再发包。
+        if (!packetsAlive)
         {
             flightRecorder.Stop();
             flightRecorder = null;
             recLastStampUtc = default;
-            Console.WriteLine("recording stopped (toggle off)");
+            recLastPacketTicks = 0;
+            Console.WriteLine("recording stopped (no telemetry)");
         }
     }
 
@@ -3493,8 +3529,10 @@ public static partial class Program
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
     private static FlightRecorder? flightRecorder;
-    private static long recLastValidTicks;
+    private static long recLastPacketTicks;
     private static DateTime recLastStampUtc;
+    private static bool recValidPrev = true;
+    private static string recVehiclePrev = "";
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)

@@ -1631,14 +1631,17 @@ public static partial class Program
                 Source = AttitudeSource.Estimated, Confidence = 0.9,
             });
             rec.Marker("selftest");
+            rec.Event("death");
             rec.Stop();
             var lines = File.ReadAllLines(recPath);
             Check("recorder round-trips JSONL",
-                lines.Length >= 4
+                lines.Length >= 5
                 && lines[0].Contains("\"type\":\"meta\"")
                 && lines[1].Contains("\"type\":\"sample\"")
                 && lines[1].Contains("\"ias_kmh\":500")
+                && lines[1].Contains("\"vehicle\":\"selftest\"")
                 && lines.Any(l => l.Contains("\"type\":\"marker\""))
+                && lines.Any(l => l.Contains("\"type\":\"event\"") && l.Contains("\"kind\":\"death\""))
                 && lines[^1].Contains("\"type\":\"end\""));
         }
         finally

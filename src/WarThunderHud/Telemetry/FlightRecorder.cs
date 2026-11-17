@@ -72,6 +72,7 @@ public sealed class FlightRecorder : IDisposable
             Utc = s.TimestampUtc.ToString("O", CultureInfo.InvariantCulture),
             Valid = s.Valid,
             InFlight = s.InFlight,
+            Vehicle = s.VehicleType,
             Ias = Math.Round(s.IasKmh, 1),
             Tas = Math.Round(s.TasKmh, 1),
             Mach = Math.Round(s.Mach, 3),
@@ -97,7 +98,20 @@ public sealed class FlightRecorder : IDisposable
         _queue.TryAdd(line);
     }
 
-    /// <summary>在时间轴上打一个标记（玩家按 marker 键）。</summary>
+    /// <summary>在时间轴上记一个事件（死亡/重生/换机型）。</summary>
+    public void Event(string kind, string? vehicle = null)
+    {
+        if (_closed) return;
+        _queue.TryAdd(JsonSerializer.Serialize(new EventLine
+        {
+            Type = "event",
+            Kind = kind,
+            Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            Vehicle = vehicle ?? "",
+        }, JsonOpts));
+    }
+
+    /// <summary>在时间轴上打一个标记（预留接口）。</summary>
     public void Marker(string label)
     {
         if (_closed) return;
@@ -197,6 +211,7 @@ public sealed class FlightRecorder : IDisposable
         [JsonPropertyName("utc")] public string Utc { get; set; } = "";
         [JsonPropertyName("valid")] public bool Valid { get; set; }
         [JsonPropertyName("inflight")] public bool InFlight { get; set; }
+        [JsonPropertyName("vehicle")] public string Vehicle { get; set; } = "";
         [JsonPropertyName("ias_kmh")] public double Ias { get; set; }
         [JsonPropertyName("tas_kmh")] public double Tas { get; set; }
         [JsonPropertyName("mach")] public double Mach { get; set; }
@@ -225,6 +240,14 @@ public sealed class FlightRecorder : IDisposable
         [JsonPropertyName("type")] public string Type { get; set; } = "";
         [JsonPropertyName("utc")] public string Utc { get; set; } = "";
         [JsonPropertyName("label")] public string Label { get; set; } = "";
+    }
+
+    private sealed class EventLine
+    {
+        [JsonPropertyName("type")] public string Type { get; set; } = "";
+        [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+        [JsonPropertyName("utc")] public string Utc { get; set; } = "";
+        [JsonPropertyName("vehicle")] public string Vehicle { get; set; } = "";
     }
 
     private sealed class EndLine
