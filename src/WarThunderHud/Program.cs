@@ -1653,6 +1653,13 @@ public static partial class Program
                     Console.WriteLine($"stall key -> {cur.VehicleType} stall AOA = {cur.AoaDeg:F1} deg (saved)");
                 }
 
+                // 记录标记：只写一行 marker，不切换记录开关
+                if (armed && flightRecorder != null && _recordMarkerKeyBinding.PressedSinceLastPoll())
+                {
+                    flightRecorder.Marker("hotkey");
+                    Console.WriteLine($"record marker at t={latest?.ElapsedSeconds:F1}s");
+                }
+
                 // Reset key (default F5, configurable): clear view counter / map / scoreboard state.
                 if (armed && _resetKeyBinding.PressedSinceLastPoll())
                 {
@@ -1722,6 +1729,9 @@ public static partial class Program
             var att = rawAtt;
             double frac = cfg.Extrapolate ? ExtrapolationFraction(prevSnapshot, latest, DateTime.UtcNow) : 0;
             var snap = frac > 0.02 ? Extrapolate(prevSnapshot, rawSnap, frac) : rawSnap;
+
+            // 飞行数据记录：只本机、自动按对局；写盘在记录器自己的线程。
+            UpdateFlightRecording(cfg, rawSnap);
 
 
             // Animate the aiming-layout transition (~0.28 s) instead of snapping.
@@ -2341,6 +2351,8 @@ public static partial class Program
         }
 
         cursorStop = true;
+        flightRecorder?.Stop();
+        flightRecorder = null;
         configLink?.Dispose();
         telemetry.Dispose();
         Console.WriteLine($"overlay closed after {frames} frames");
@@ -3212,6 +3224,43 @@ public static partial class Program
     private static readonly HashSet<string> steamWindowsSeen = new();
 
 
+    /// <summary>飞行数据记录：开启时自动按对局开始/结束，只记录本机快照（JSONL）。</summary>
+    private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap)
+    {
+        if (cfg.RecordEnabled)
+        {
+            if (snap.Valid)
+            {
+                recLastValidTicks = Environment.TickCount64;
+                if (flightRecorder == null)
+                {
+                    flightRecorder = FlightRecorder.Start(cfg, snap);
+                    recLastStampUtc = default;
+                    Console.WriteLine($"recording -> {flightRecorder.FilePath}");
+                }
+            }
+            else if (flightRecorder != null && Environment.TickCount64 - recLastValidTicks > 3000)
+            {
+                flightRecorder.Stop();
+                flightRecorder = null;
+                Console.WriteLine("recording stopped (match ended)");
+            }
+
+            if (flightRecorder != null && snap.Valid && snap.TimestampUtc != recLastStampUtc)
+            {
+                recLastStampUtc = snap.TimestampUtc;
+                flightRecorder.Add(snap, lastAttitude);
+            }
+        }
+        else if (flightRecorder != null)
+        {
+            flightRecorder.Stop();
+            flightRecorder = null;
+            recLastStampUtc = default;
+            Console.WriteLine("recording stopped (toggle off)");
+        }
+    }
+
     private static bool IsForegroundProcess(int pid)
     {
         var h = NativeMethods.GetForegroundWindow();
@@ -3440,6 +3489,11 @@ public static partial class Program
     private static WtHud.Input.KeyBinding _formationKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+SHIFT+F", 0x46, "CTRL+SHIFT+F");
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
+    private static WtHud.Input.KeyBinding _recordMarkerKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+M", 0x4D, "CTRL+ALT+M");
+    private static FlightRecorder? flightRecorder;
+    private static long recLastValidTicks;
+    private static DateTime recLastStampUtc;
+
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
     {
@@ -3453,6 +3507,8 @@ public static partial class Program
         _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
         _formationKeyBinding = WtHud.Input.KeyBinding.Parse(
             string.IsNullOrWhiteSpace(c.FormationKey) ? "CTRL+SHIFT+F" : c.FormationKey, 0x46, "CTRL+SHIFT+F");
+        _recordMarkerKeyBinding = WtHud.Input.KeyBinding.Parse(
+            string.IsNullOrWhiteSpace(c.RecordMarkerKey) ? "CTRL+ALT+M" : c.RecordMarkerKey, 0x4D, "CTRL+ALT+M");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
                           $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
     }

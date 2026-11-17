@@ -1595,6 +1595,57 @@ public static partial class Program
         Check("aiming layout keeps the font scaling",
             fBase > 0 && Math.Abs(fScale / fBase - 1.3) < 0.05);
 
+        // ---- 飞行数据记录：保留策略（文件名带时间戳，按名称排序；给新文件留一位） ----
+        var recFiles = new[]
+        {
+            "wtlog-20260101-000001-a.jsonl", "wtlog-20260101-000002-b.jsonl",
+            "wtlog-20260101-000003-c.jsonl", "wtlog-20260101-000004-d.jsonl",
+        };
+        Check("recorder deletes the oldest beyond the keep limit",
+            WtHud.Telemetry.FlightRecorder.PlanDeletions(recFiles, 3).SequenceEqual(new[]
+            {
+                "wtlog-20260101-000001-a.jsonl", "wtlog-20260101-000002-b.jsonl",
+            }));
+        Check("recorder keeps everything below the limit",
+            WtHud.Telemetry.FlightRecorder.PlanDeletions(recFiles, 10).Count == 0);
+        Check("recorder folder is next to the exe",
+            WtHud.Telemetry.FlightRecorder.Folder.EndsWith("recordings",
+                StringComparison.OrdinalIgnoreCase));
+
+        // 记录器端到端：meta → sample → marker → end，读回来验证 JSONL 结构。
+        string? recPath = null;
+        try
+        {
+            var recCfg = new HudConfig { RecordKeep = 200 };
+            var recSnap = new TelemetrySnapshot
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest",
+                ElapsedSeconds = 1.5, TimestampUtc = DateTime.UtcNow,
+                IasKmh = 500, TasKmh = 520, AltM = 1000, VyMs = -2, NyG = 1.2,
+            };
+            var rec = WtHud.Telemetry.FlightRecorder.Start(recCfg, recSnap);
+            recPath = rec.FilePath;
+            rec.Add(recSnap, new AttitudeSolution
+            {
+                PitchDeg = 1, BankDeg = 2,
+                Source = AttitudeSource.Estimated, Confidence = 0.9,
+            });
+            rec.Marker("selftest");
+            rec.Stop();
+            var lines = File.ReadAllLines(recPath);
+            Check("recorder round-trips JSONL",
+                lines.Length >= 4
+                && lines[0].Contains("\"type\":\"meta\"")
+                && lines[1].Contains("\"type\":\"sample\"")
+                && lines[1].Contains("\"ias_kmh\":500")
+                && lines.Any(l => l.Contains("\"type\":\"marker\""))
+                && lines[^1].Contains("\"type\":\"end\""));
+        }
+        finally
+        {
+            if (recPath != null) { try { File.Delete(recPath); } catch { } }
+        }
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }

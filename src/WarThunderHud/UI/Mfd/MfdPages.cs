@@ -1237,6 +1237,12 @@ internal static class MfdPages
             Action("row.copyDiag", _ => DiagState.RequestCopy()),
             Info("row.update", _ => UpdateState.Text),
             Action("row.checkUpdate", _ => UpdateState.Start()),
+
+            // ---- 飞行数据记录（只本机，自动按对局；文件在 exe 同目录 recordings/）----
+            Toggle("row.recEnabled", c => c.RecordEnabled, (c, v) => c.RecordEnabled = v),
+            Number("row.recKeep", c => c.RecordKeep,
+                   (c, v) => c.RecordKeep = Math.Clamp((int)v, 2, 200), 1, 2, 200, ""),
+            Key("row.recMarker", c => c.RecordMarkerKey, (c, v) => c.RecordMarkerKey = v),
         },
     };
 }

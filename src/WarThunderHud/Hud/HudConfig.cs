@@ -372,6 +372,15 @@ public sealed class HudConfig
     /// <summary>转向辅助开关的按键。默认 CTRL+SHIFT+T（与解除引导的 CTRL+SHIFT+F 分开）。</summary>
     [JsonPropertyName("formationTurnAssistKey")] public string FormationTurnAssistKey { get; set; } = "CTRL+SHIFT+T";
 
+    /// <summary>飞行数据记录：开启后自动按对局把本机 telemetry 写入 recordings/（JSONL）。</summary>
+    [JsonPropertyName("recordEnabled")] public bool RecordEnabled { get; set; }
+
+    /// <summary>最多保留多少个记录文件（默认 20；超出删除最老的）。</summary>
+    [JsonPropertyName("recordKeep")] public int RecordKeep { get; set; } = 20;
+
+    /// <summary>记录过程中打标记的热键（只写入一行 marker，不改变记录开关）。</summary>
+    [JsonPropertyName("recordMarkerKey")] public string RecordMarkerKey { get; set; } = "CTRL+ALT+M";
+
     /// <summary>
     /// 目标过载（G）。默认 3.0，范围 1.2–9.0。
     /// <para>换算成目标坡度 φ = acos(1/n) 与目标转向率 ω = g·√(n²−1)/V：
