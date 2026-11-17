@@ -39,6 +39,15 @@ python -m flightlog "C:\path\to\wtlog-xxx.jsonl" --out out\demo.html --png out\p
 默认输出目录是**本工具自己的** `out/`（`wt-hud/tools/flightlog/out/`），与当前工作目录无关；
 文件名默认为 `<日志名>.html`，例如 `wtlog-20261117-131039-jh_7a.html`。
 
+### 独立可执行文件（不需要 Python）
+
+`FlightLog.exe` 与 WtHud 完全分离，可以单独启动，**不需要安装 Python**：
+
+- **双击** → 弹出文件选择框（默认目录 `桌面\WtHud-发布\recordings`）→ 选一个 `.jsonl` → 自动生成 HTML 并用默认浏览器打开
+- 也可以把日志文件**拖到 exe 图标上**
+- 报告写到 `%LOCALAPPDATA%\WtHud\flightlog\`，文件名带时间戳，不会覆盖旧报告
+- 重新打包：双击 `build_exe.bat`（需要本机 Python + `pip install pyinstaller`），产物在 `flightlog\dist\FlightLog.exe`
+
 ### 自检
 
 ```bat
