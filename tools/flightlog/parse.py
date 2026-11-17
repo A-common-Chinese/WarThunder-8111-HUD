@@ -154,6 +154,8 @@ class Flight:
     stats: Dict[str, Any] = field(default_factory=dict)
     death_t: Optional[float] = None
     ended: bool = False
+    #: 回放导入时该架次所属玩家（JSONL 日志恒为 None）
+    player: Optional[str] = None
 
 
 @dataclass

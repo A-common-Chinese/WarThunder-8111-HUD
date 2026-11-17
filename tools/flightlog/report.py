@@ -1105,16 +1105,26 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
     if thumb is not None:
         panels.append(thumb["geometry"])
 
-    return {
-        "index": flight.index,
-        "title": "架次 %d · %s · %s – %s"
-        % (
+    player = getattr(flight, "player", None)
+    title = "架次 %d · %s · %s – %s" % (
+        flight.index,
+        flight.vehicle or "未知机型",
+        _fmt_number(t0, 1) + "s",
+        _fmt_number(flight.end_t, 1) + "s",
+    )
+    if player:
+        title = "架次 %d · 玩家 %s · %s · %s – %s" % (
             flight.index,
+            player,
             flight.vehicle or "未知机型",
             _fmt_number(t0, 1) + "s",
             _fmt_number(flight.end_t, 1) + "s",
-        ),
+        )
+    return {
+        "index": flight.index,
+        "title": title,
         "vehicle": flight.vehicle or "未知机型",
+        "player": player,
         "reason_label": flight.stats.get("reason_label"),
         "t0": t0,
         "t1": t1,
@@ -1238,6 +1248,9 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
         if value is not None and (ralt_max is None or value > ralt_max):
             ralt_max = value
 
+    replay = (model.meta or {}).get("replay") or {}
+    is_replay = bool(replay)
+
     cards = [
         {
             "label": "总时长",
@@ -1247,7 +1260,9 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
         {
             "label": "采样率",
             "value": (_fmt_number(rate, 1) + " Hz") if rate else "—",
-            "sub": "采样 %s" % (model.meta.get("rate") or "?"),
+            "sub": ("ACMI 回放 · %s" % (model.meta.get("rate") or "?"))
+            if is_replay
+            else ("采样 %s" % (model.meta.get("rate") or "?")),
         },
         {
             "label": "最大 IAS",
@@ -1279,35 +1294,54 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
             "sub": "空中能量变化 %s m"
             % _fmt_number(totals.get("energy_delta_inflight_m"), 0),
         },
-        {
-            "label": "事件数",
-            "value": str(counts["events"]),
-            "sub": " · ".join(ev_bits) if ev_bits else "无事件",
-        },
     ]
+    if is_replay:
+        selected = replay.get("selected_players") or "—"
+        cards.append(
+            {
+                "label": "玩家",
+                "value": str(len(replay.get("players") or [])),
+                "sub": "回放估算 · %s" % selected,
+            }
+        )
+    else:
+        cards.append(
+            {
+                "label": "事件数",
+                "value": str(counts["events"]),
+                "sub": " · ".join(ev_bits) if ev_bits else "无事件",
+            }
+        )
     return cards
 
 
 def _flight_badges(flight: Flight) -> List[str]:
     stats = flight.stats
     energy = stats["energy"]
-    badges = [
-        "机型 %s" % (flight.vehicle or "未知"),
-        "时长 %s s" % _fmt_number(stats["duration_s"], 1),
-        "样本 %d" % stats["samples"],
-        "最大 IAS %s km/h" % _fmt_number(stats["ias"]["max"], 0),
-        "最大 TAS %s km/h" % _fmt_number(stats["tas"]["max"], 0),
-        "最大过载 %s g" % _fmt_number(stats["ny"]["abs_max"], 2),
-        "Es %s – %s m" % (
-            _fmt_number(energy["min"], 0),
-            _fmt_number(energy["max"], 0),
-        ),
-        "能量获得 %s / 损失 %s m" % (
-            _fmt_number(energy["gain"], 0),
-            _fmt_number(energy["loss"], 0),
-        ),
-        "空中能量变化 %s m" % _fmt_number(energy.get("inflight_delta"), 0),
-    ]
+    badges = []
+    if getattr(flight, "player", None):
+        badges.append("玩家 %s" % flight.player)
+    badges.extend(
+        [
+            "机型 %s" % (flight.vehicle or "未知"),
+            "时长 %s s" % _fmt_number(stats["duration_s"], 1),
+            "样本 %d" % stats["samples"],
+            "最大 IAS %s km/h" % _fmt_number(stats["ias"]["max"], 0),
+            "最大 TAS %s km/h" % _fmt_number(stats["tas"]["max"], 0),
+            "最大过载 %s g" % _fmt_number(stats["ny"]["abs_max"], 2),
+            "Es %s – %s m"
+            % (
+                _fmt_number(energy["min"], 0),
+                _fmt_number(energy["max"], 0),
+            ),
+            "能量获得 %s / 损失 %s m"
+            % (
+                _fmt_number(energy["gain"], 0),
+                _fmt_number(energy["loss"], 0),
+            ),
+            "空中能量变化 %s m" % _fmt_number(energy.get("inflight_delta"), 0),
+        ]
+    )
     if stats.get("death_t") is not None:
         badges.append("死亡于 %s s" % _fmt_number(stats["death_t"], 1))
     return badges
@@ -1449,6 +1483,8 @@ def _overview_page_html(
     default_index: int,
     cards_html: str,
     warnings_html: str,
+    note_html: str = "",
+    players_html: str = "",
 ) -> str:
     views: List[str] = []
     for flight_payload in flight_payloads:
@@ -1468,12 +1504,16 @@ def _overview_page_html(
         '<div class="page-sub">汇总指标 + 比能量缩略图；多架次时用右上角切换</div>'
         '<div class="page-right">按 ← → 或 PageUp/PageDown 翻页</div></div>'
         '<div class="page-body"><div class="ovwrap">'
+        "%s"
         '<div class="cards">%s</div>'
+        "%s"
         "%s"
         '<div class="ovchart">%s</div>'
         "</div></div></section>"
         % (
+            note_html,
             cards_html,
+            players_html,
             warnings_html,
             "".join(views),
         )
@@ -1574,6 +1614,15 @@ def _global_page_html(overview: Dict[str, Any]) -> str:
     )
 
 
+def _flight_label(flight_payload: Dict[str, Any]) -> str:
+    """架次选择器上的短标签：多玩家时带玩家名。"""
+    player = flight_payload.get("player")
+    vehicle = _html_escape(flight_payload["vehicle"])
+    if player:
+        return "%s · %s" % (_html_escape(player), vehicle)
+    return vehicle
+
+
 def _flight_selector_html(
     flight_payloads: Sequence[Dict[str, Any]], default_index: int
 ) -> str:
@@ -1592,7 +1641,7 @@ def _flight_selector_html(
                     flight_payload["index"],
                     _html_escape(flight_payload["title"]),
                     flight_payload["index"],
-                    _html_escape(flight_payload["vehicle"]),
+                    _flight_label(flight_payload),
                 )
             )
         return '<div class="flights"><span class="flabel">架次</span>%s</div>' % "".join(buttons)
@@ -1605,7 +1654,7 @@ def _flight_selector_html(
                 flight_payload["index"],
                 selected,
                 flight_payload["index"],
-                _html_escape(flight_payload["vehicle"]),
+                _flight_label(flight_payload),
             )
         )
     return (
@@ -1614,11 +1663,107 @@ def _flight_selector_html(
     )
 
 
+def _player_switch_html(player_names: Sequence[str], default_player: Optional[str]) -> str:
+    """页眉的玩家切换按钮（只有多玩家回放才会出现）。"""
+    if len(player_names) < 2:
+        return ""
+    buttons: List[str] = []
+    for name in player_names:
+        active = " active" if name == default_player else ""
+        buttons.append(
+            '<button type="button" class="fbtn%s" data-player-btn="%s" title="跳到该玩家的架次">'
+            "%s</button>" % (active, _html_escape(name), _html_escape(name))
+        )
+    return (
+        '<div class="players-bar" id="player-bar"><span class="flabel">玩家</span>%s</div>'
+        % "".join(buttons)
+    )
+
+
+def _players_strip_html(players: Sequence[Dict[str, Any]], flight_counts: Dict[str, int]) -> str:
+    """概览页的玩家摘要条（玩家 / 机型 / 阵营 / 架次 / 时长）。"""
+    if not players:
+        return ""
+    items: List[str] = []
+    for player in players:
+        name = player.get("name") or "—"
+        vehicles = player.get("vehicles") or []
+        vehicle_text = " / ".join(vehicles[:2]) if vehicles else "未知机型"
+        if len(vehicles) > 2:
+            vehicle_text += " 等"
+        duration = player.get("duration_s")
+        bits = [
+            "机型 %s" % vehicle_text,
+            "阵营 %s" % (player.get("coalition_label") or "未知"),
+            "架次 %d" % flight_counts.get(name, 0),
+            "时长 %s s" % _fmt_number(duration, 0),
+            "样本 %s" % player.get("updates", 0),
+        ]
+        items.append(
+            '<span class="pchip"><b>%s</b>%s</span>'
+            % (_html_escape(name), _html_escape(" · ".join(bits)))
+        )
+    return '<div class="players-strip">%s</div>' % "".join(items)
+
+
+def _replay_note_html(replay: Dict[str, Any]) -> str:
+    """概览页顶部的「回放估算数据」声明条。"""
+    if not replay:
+        return ""
+    bits = ["回放估算数据（IAS = EAS 近似，非座舱遥测）"]
+    header = replay.get("header") or {}
+    source_bits = []
+    if replay.get("wrpl_file"):
+        source_bits.append("源文件 %s" % replay["wrpl_file"])
+    if header.get("title"):
+        source_bits.append(str(header["title"]))
+    if replay.get("samples"):
+        source_bits.append("%s 个样本" % replay["samples"])
+    if replay.get("duration_s") is not None:
+        source_bits.append("时长 %s s" % _fmt_number(replay.get("duration_s"), 1))
+    if source_bits:
+        bits.append(" · ".join(source_bits))
+    bits.append("姿态 / 过载 / AOA 由回放位置反演，速度与高度为估算值")
+    return '<div class="replay-note"><b>%s</b>%s</div>' % (
+        _html_escape(bits[0]),
+        _html_escape(" · " + " · ".join(bits[1:])),
+    )
+
+
 def _build_payload(model: LogModel) -> Dict[str, Any]:
     flight_payloads: List[Dict[str, Any]] = [
         _build_flight_payload(flight) for flight in model.flights
     ]
     default_index = flight_payloads[0]["index"] if flight_payloads else 1
+
+    # 回放相关：玩家切换、概览声明条、玩家摘要条
+    replay = (model.meta or {}).get("replay") or {}
+    player_names: List[str] = []
+    flight_counts: Dict[str, int] = {}
+    for flight_payload in flight_payloads:
+        player = flight_payload.get("player")
+        if not player:
+            continue
+        if player not in player_names:
+            player_names.append(player)
+        flight_counts[player] = flight_counts.get(player, 0) + 1
+    multi_player = len(player_names) > 1
+    default_player = flight_payloads[0].get("player") if flight_payloads else None
+    note_html = _replay_note_html(replay) if replay else ""
+    players_html = ""
+    if replay and player_names:
+        players_html = _players_strip_html(replay.get("players") or [], flight_counts)
+    player_switch = _player_switch_html(player_names, default_player)
+    players_data = [
+        {
+            "name": name,
+            "flight": next(
+                (fp["index"] for fp in flight_payloads if fp.get("player") == name),
+                default_index,
+            ),
+        }
+        for name in player_names
+    ]
 
     cards_html = "".join(
         '<div class="card"><div class="k">%s</div><b>%s</b><span>%s</span></div>'
@@ -1633,7 +1778,14 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
         warnings_html = '<div class="warn"><b>解析提示</b><ul>%s</ul></div>' % items
 
     pages: List[str] = [
-        _overview_page_html(flight_payloads, default_index, cards_html, warnings_html)
+        _overview_page_html(
+            flight_payloads,
+            default_index,
+            cards_html,
+            warnings_html,
+            note_html=note_html,
+            players_html=players_html,
+        )
     ]
     for spec in _flight_panel_specs():
         views: List[str] = []
@@ -1658,13 +1810,15 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
             pages.append(_data_page_html(spec, "".join(views)))
 
     overview = _overview_payload(model)
-    if overview is not None:
+    # 多玩家时不拼"全局总览"：不同玩家的时间轴互相重叠，拼在一起没有意义
+    if overview is not None and not multi_player:
         pages.append(_global_page_html(overview))
 
     payload_flights = [
         {
             "index": flight_payload["index"],
             "title": flight_payload["title"],
+            "player": flight_payload.get("player"),
             "t0": flight_payload["t0"],
             "t1": flight_payload["t1"],
             "times": flight_payload["times"],
@@ -1675,21 +1829,24 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
     ]
 
     overview_data = None
-    if overview is not None:
+    if overview is not None and not multi_player:
         overview_data = {key: value for key, value in overview.items() if key != "html"}
 
+    title_prefix = "回放分析" if replay else "飞行日志分析"
     return {
-        "title": "飞行日志分析 · %s" % os.path.basename(model.path),
+        "title": "%s · %s" % (title_prefix, os.path.basename(model.path)),
         "file": os.path.basename(model.path),
         "meta": model.meta,
         "cards": _cards(model),
         "warnings": warnings,
         "overview": overview_data,
         "flights": payload_flights,
+        "players": players_data,
         "html": {
             "pages": pages,
             "page_count": len(pages),
             "flight_selector": _flight_selector_html(flight_payloads, default_index),
+            "player_switch": player_switch,
         },
     }
 
@@ -1739,6 +1896,29 @@ header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.3px;white-spac
   border:1px solid var(--line);border-radius:8px;padding:3px 8px;cursor:pointer;max-width:240px;
 }
 .fselect:hover{border-color:var(--accent)}
+/* 回放：玩家切换条 / 估算声明 / 概览玩家摘要 */
+.players-bar{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  margin-top:6px;font-size:12px;color:var(--muted);
+}
+.players-bar .flabel{font-size:12px;color:var(--muted);margin-right:2px;white-space:nowrap}
+.replay-banner{
+  color:#ffd79b!important;font-size:11.5px;white-space:normal!important;
+  overflow:visible!important;text-overflow:clip!important;
+}
+.replay-banner b{color:#ffcf7a}
+.replay-note{
+  flex:0 0 auto;background:#1b2735;border:1px solid #2f4a66;color:#bcd6ee;
+  border-radius:9px;padding:5px 12px;font-size:12px;
+}
+.replay-note b{color:#e6f1ff;margin-right:2px}
+.players-strip{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;max-height:58px;overflow:auto}
+.pchip{
+  font-size:11.5px;color:#9fb4c8;background:#131c26;border:1px solid var(--line);
+  border-radius:7px;padding:2px 8px;white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.pchip b{color:#dbe7f3;font-weight:600;margin-right:6px}
 main{position:relative;flex:1 1 auto;min-height:0}
 .page{position:absolute;inset:0;display:none;flex-direction:column;padding:9px 26px 4px;min-height:0}
 .page.active{display:flex}
@@ -2386,6 +2566,8 @@ JS = r"""
   var flightBtns = qsa("[data-flight-btn]");
   var flightViews = qsa(".flight-view[data-flight]");
   var flightSelect = document.getElementById("flight-select");
+  var flightPlayer = {};
+  (DATA.flights || []).forEach(function(fl){ flightPlayer[fl.index] = fl.player || ""; });
   function selectFlight(value){
     flightViews.forEach(function(view){
       view.classList.toggle("active", view.getAttribute("data-flight") === value);
@@ -2395,6 +2577,7 @@ JS = r"""
     });
     if (flightSelect && flightSelect.value !== value) flightSelect.value = value;
     if (AVG) AVG.onFlight(value);
+    syncPlayer(value);
     hideAll();
   }
   flightBtns.forEach(function(btn){
@@ -2407,6 +2590,30 @@ JS = r"""
       selectFlight(flightSelect.value);
     });
   }
+
+  // ---------------- 玩家切换（多玩家回放；跳到该玩家第一个架次） ----------------
+  var playerBtns = qsa("[data-player-btn]");
+  function syncPlayer(value){
+    if (!playerBtns.length) return;
+    var name = flightPlayer[parseInt(value, 10)] || "";
+    playerBtns.forEach(function(btn){
+      btn.classList.toggle("active", btn.getAttribute("data-player-btn") === name);
+    });
+  }
+  playerBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var name = btn.getAttribute("data-player-btn");
+      var target = null;
+      (DATA.players || []).forEach(function(player){
+        if (player.name === name) target = player.flight;
+      });
+      if (target !== null) selectFlight(String(target));
+    });
+  });
+  (function initPlayer(){
+    var view = document.querySelector(".flight-view.active[data-flight]");
+    if (view) syncPlayer(view.getAttribute("data-flight"));
+  })();
 
   // ---------------- 初始页（支持 #page-speed 直链） ----------------
   var startPage = 0;
@@ -2441,15 +2648,33 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
     pages_html = "\n".join(payload["html"]["pages"])
 
     meta = model.meta or {}
-    meta_bits = [
-        "文件 <code>%s</code>" % _html_escape(payload["file"]),
-        "机型 %s" % _html_escape(meta.get("vehicle") or "未知"),
-        "WtHud %s" % _html_escape(meta.get("app") or "未知"),
-        "schema %s" % _html_escape(meta.get("schema") if meta.get("schema") is not None else "?"),
-        "采样 %s" % _html_escape(meta.get("rate") or "?"),
-        "生成于 %s" % _html_escape(model.summary.get("generated_utc", "")),
-    ]
+    replay = meta.get("replay") or {}
+    meta_bits = ["文件 <code>%s</code>" % _html_escape(payload["file"])]
+    if replay:
+        header = replay.get("header") or {}
+        if header.get("title"):
+            meta_bits.append("场景 %s" % _html_escape(header["title"]))
+        meta_bits.append("玩家 %s" % _html_escape(replay.get("selected_players") or "—"))
+        if header.get("file_version"):
+            meta_bits.append("ACMI %s" % _html_escape(header["file_version"]))
+        meta_bits.append("导出器 %s" % _html_escape(header.get("exporter") or "wrpl-acmi"))
+    else:
+        meta_bits.append("机型 %s" % _html_escape(meta.get("vehicle") or "未知"))
+        meta_bits.append("WtHud %s" % _html_escape(meta.get("app") or "未知"))
+        meta_bits.append(
+            "schema %s" % _html_escape(meta.get("schema") if meta.get("schema") is not None else "?")
+        )
+    meta_bits.append("采样 %s" % _html_escape(meta.get("rate") or "?"))
+    meta_bits.append("生成于 %s" % _html_escape(model.summary.get("generated_utc", "")))
     subline = " · ".join(meta_bits)
+    replay_banner = ""
+    if replay:
+        replay_banner = (
+            '<div class="subline replay-banner">'
+            "<b>回放估算数据</b>（IAS = EAS 近似，非座舱遥测）"
+            " · 姿态 / 过载 / AOA 由回放位置反演估算，速度与高度为估算值，"
+            "仅供参考，不等同于游戏内遥测。</div>"
+        )
 
     pager = (
         '<nav class="pager" aria-label="翻页">'
@@ -2468,6 +2693,7 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
             "title": page_title,
             "overview": payload["overview"],
             "flights": payload["flights"],
+            "players": payload.get("players") or [],
         },
         ensure_ascii=False,
         allow_nan=False,
@@ -2483,7 +2709,9 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         "<title>%s</title>\n<style>%s</style>\n</head>\n<body>\n"
         '<div class="app">\n'
         "<header>\n"
-        '<div class="hrow"><h1>飞行日志分析</h1>%s</div>\n'
+        '<div class="hrow"><h1>%s</h1>%s</div>\n'
+        "%s"
+        "%s"
         '<div class="subline">%s</div>\n'
         "</header>\n"
         "%s\n"
@@ -2502,7 +2730,10 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         % (
             _html_escape(page_title),
             CSS,
+            "回放分析" if replay else "飞行日志分析",
             payload["html"]["flight_selector"],
+            payload["html"].get("player_switch") or "",
+            replay_banner,
             subline,
             NOSCRIPT,
             pages_html,

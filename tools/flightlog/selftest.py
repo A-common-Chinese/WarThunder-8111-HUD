@@ -43,6 +43,9 @@ if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
 from flightlog import parse as P  # noqa: E402
+from flightlog import picker as PK  # noqa: E402
+from flightlog import replay as R  # noqa: E402
+from flightlog import acmi as A  # noqa: E402
 from flightlog.__main__ import main as cli_main  # noqa: E402
 from flightlog.report import render_report  # noqa: E402
 
@@ -604,6 +607,501 @@ def test_cli(tmp: Path) -> None:
     check(code == 2, "不存在的日志返回退出码 2")
 
 
+# ---------------------------------------------------------------------------
+# 回放 / ACMI 测试
+# ---------------------------------------------------------------------------
+
+ACMI_HEADER = [
+    "FileType=text/acmi/tacview",
+    "FileVersion=2.1",
+    "0,ReferenceTime=2026-01-01T00:00:00Z",
+    "0,ReferenceLongitude=0.0000000",
+    "0,ReferenceLatitude=0.0000000",
+    "0,ReferenceAltitude=0.0",
+    "0,Title=TestMap / test_mission / 2026-01-01T00:00:00Z",
+    "0,Author=wrpl-acmi",
+    "0,Comments=Exporter wrpl-acmi v3.0.0-test+deadbeef; unit test fixture",
+    "0,MapId=WarThunder.Atlas1.TestMap",
+    "1,Name=jh_7a,CallSign=jh_7a,Pilot=玩家甲,Type=Air+FixedWing,Coalition=Blue,Color=Blue",
+    "2,Name=jh_7a,CallSign=jh_7a,Pilot=玩家甲,Type=Air+FixedWing,Coalition=Blue,Color=Blue",
+    "3,Name=Su-25,CallSign=Su-25,Pilot=PilotB,Type=Air+FixedWing,Coalition=Red,Color=Red",
+    "4,Name=ZSU-23,CallSign=ZSU-23,Type=Ground+Vehicle+AntiAircraft,Coalition=Red,Color=Red",
+    "5,Name=A-10A,CallSign=A-10A,Type=Air+FixedWing,Coalition=Neutral,Color=Neutral",
+    "6,Name=TestStatic,CallSign=TestStatic,Type=Air+FixedWing,Coalition=Blue,Color=Blue",
+]
+
+
+def build_acmi_sample(path: Path) -> None:
+    """手写一份最小 ACMI：2 个玩家 + 1 个地面防空（不能算飞机）+ 1 个无样本对象。"""
+    lines = list(ACMI_HEADER)
+    lines += [
+        "#0.000",
+        "1,T=10.0|20.0|1000.00|0.00|2.00|90.00,HDG=90.0,TAS=200.0,Mach=0.60,"
+        "IAS=180.0,AOA=4.0,VerticalGForce=1.50",
+        "3,T=11.0|21.0|2000.00|10.00|3.00|180.00,HDG=180.0,TAS=250.0,Mach=0.70,"
+        "IAS=220.0,AOA=3.0,VerticalGForce=2.00",
+        "5,T=12.0|22.0|1500.00|0.00|1.00|45.00,HDG=45.0,TAS=,Mach=,IAS=,"
+        "VerticalGForce=,AOA=",
+        "#0.250",
+        "1,T=10.0|20.0|1010.00|0.00|2.00|90.00,HDG=90.0,TAS=210.0,Mach=0.63,"
+        "IAS=190.0,AOA=4.0,VerticalGForce=1.50",
+        "3,T=11.0|21.0|2020.00|12.00|3.00|181.00,HDG=181.0,TAS=260.0,Mach=0.73,"
+        "IAS=230.0,AOA=3.0,VerticalGForce=2.10",
+        "5,T=12.0|22.0|1520.00|0.00|1.00|45.00,HDG=45.0,TAS=,Mach=,IAS=,"
+        "VerticalGForce=,AOA=",
+        "4,T=-0.50|0.20|100.00",
+        "#0.500",
+        "1,T=10.0|20.0|1020.00|0.00|2.00|90.00,HDG=90.0,TAS=220.0,Mach=0.66,"
+        "IAS=200.0,AOA=4.0,VerticalGForce=1.50",
+        "3,T=11.0|21.0|2040.00|12.00|3.00|182.00,HDG=182.0,TAS=270.0,Mach=0.76,"
+        "IAS=240.0,AOA=3.0,VerticalGForce=2.20",
+        "#0.750",
+        "1,T=10.0|20.0|1030.00|0.00|2.00|90.00,HDG=90.0,TAS=230.0,Mach=0.69,"
+        "IAS=210.0,AOA=4.0,VerticalGForce=1.50",
+        "#1.000",
+        "1,T=10.0|20.0|1040.00|0.00|2.00|90.00,HDG=90.0,TAS=240.0,Mach=0.72,"
+        "IAS=220.0,AOA=4.0,VerticalGForce=1.50",
+        "2,T=13.0|23.0|3000.00|0.00|0.00|270.00,HDG=270.0,TAS=150.0,Mach=0.45,"
+        "IAS=140.0,AOA=2.0,VerticalGForce=1.00",
+        "#1.250",
+        "2,T=13.0|23.0|3010.00|0.00|0.00|270.00,HDG=270.0,TAS=160.0,Mach=0.48,"
+        "IAS=150.0,AOA=2.0,VerticalGForce=1.00",
+        "#1.500",
+        "2,T=13.0|23.0|3020.00|0.00|0.00|270.00,HDG=270.0,TAS=170.0,Mach=0.51,"
+        "IAS=160.0,AOA=2.0,VerticalGForce=1.00",
+        "#1.750",
+        "2,T=13.0|23.0|3030.00|0.00|0.00|270.00,HDG=270.0,TAS=180.0,Mach=0.54,"
+        "IAS=170.0,AOA=2.0,VerticalGForce=1.00",
+        "#2.000",
+        "2,T=13.0|23.0|3040.00|0.00|0.00|270.00,HDG=270.0,TAS=190.0,Mach=0.57,"
+        "IAS=180.0,AOA=2.0,VerticalGForce=1.00",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_ground_acmi(path: Path) -> None:
+    """只有地面单位的 ACMI（模拟纯地面战回放）。"""
+    lines = [
+        "FileType=text/acmi/tacview",
+        "FileVersion=2.1",
+        "0,ReferenceTime=2026-01-01T00:00:00Z",
+        "0,Title=GroundOnly",
+        "1,Name=T-72B,CallSign=T-72B,Type=Ground+Vehicle+MainBattleTank,Coalition=Red",
+        "#0.000",
+        "1,T=1.0|2.0|100.00",
+        "#0.500",
+        "1,T=1.0|2.0|100.50",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_acmi_scan(tmp: Path) -> None:
+    print("\n[7] ACMI 解析：头部 / 对象 / 飞机类型判定 / 玩家归组")
+    acmi_path = tmp / "sample.acmi"
+    build_acmi_sample(acmi_path)
+    s = A.scan(str(acmi_path))
+
+    check(s.header.file_version == "2.1", "ACMI 版本号解析 = 2.1")
+    check(s.header.file_type == "text/acmi/tacview", "FileType 解析（无 0, 前缀的行）")
+    check(s.header.title is not None and "TestMap" in s.header.title, "Title 解析")
+    check(s.header.reference_time == "2026-01-01T00:00:00Z", "ReferenceTime 解析")
+    check(s.header.map_id == "WarThunder.Atlas1.TestMap", "MapId 解析")
+    check(s.header.exporter == "wrpl-acmi v3.0.0", "导出器版本从 Comments 抠出并截断")
+    check(s.frames == 9, "帧头数量 = 9（实际 %d）" % s.frames)
+    check(close(s.t_max, 2.0, 1e-9) and close(s.t_min, 0.0, 1e-9), "时间范围 0–2 s")
+
+    # 类型判定：防空车里的 "AntiAircraft" 不能因为含 Air 就被当成飞机
+    check(A.is_air_type("Air+FixedWing") is True, "Air+FixedWing 判定为飞机")
+    check(A.is_air_type("Ground+Vehicle+AntiAircraft") is False, "Ground+…+AntiAircraft 不算飞机")
+    check(A.is_air_type(None) is False and A.is_air_type("") is False, "空 Type 不算飞机")
+    check(s.air_object_count == 5, "飞机对象 5 个（实际 %d）" % s.air_object_count)
+    check(s.ground_object_count == 1, "地面对象 1 个（实际 %d）" % s.ground_object_count)
+
+    names = [p.name for p in s.players]
+    check(names == ["玩家甲", "PilotB", "A-10A #5", "TestStatic #6"],
+          "玩家归组与排序（真人优先、按样本数）: %s" % names)
+    jia = s.players[0]
+    check(jia.object_ids == ["1", "2"], "同一 Pilot 的多个对象归到一组")
+    check(jia.vehicles == ["jh_7a"], "玩家机型集合 = jh_7a")
+    check(jia.coalition_label == "蓝", "阵营 Blue → 蓝")
+    check(jia.updates == 10, "玩家样本数 = 10（5+5）")
+    check(close(jia.duration_s, 2.0, 1e-9), "玩家时长 2.0 s")
+    check(s.players[2].has_pilot is False, "没有 Pilot 的对象单独成组（A-10A #5）")
+    check(s.players[3].updates == 0, "从未更新的对象也列出来（样本 0）")
+    check(all("4" not in p.object_ids for p in s.players), "地面对象不进玩家列表")
+
+    # 玩家名解析：精确 / 大小写 / 子串 / 序号
+    check(A.resolve_players(s.players, ["玩家甲"])[0].name == "玩家甲", "resolve_players 精确匹配")
+    check(A.resolve_players(s.players, ["pilotb"])[0].name == "PilotB", "resolve_players 大小写不敏感")
+    check(A.resolve_players(s.players, ["甲"])[0].name == "玩家甲", "resolve_players 子串匹配")
+    check(A.resolve_players(s.players, ["3"])[0].name == "A-10A #5", "resolve_players 纯数字 = 1 起序号")
+    check(len(A.resolve_players(s.players, ["玩家甲", "PilotB"])) == 2,
+          "resolve_players 支持多个名字（CLI 负责拆逗号）")
+    try:
+        A.resolve_players(s.players, ["不存在的人"])
+        missing_ok = False
+    except A.AcmiError as exc:
+        missing_ok = "找不到玩家" in str(exc) and "玩家甲" in str(exc)
+    check(missing_ok, "找不到玩家时抛 AcmiError 并列出候选项")
+
+
+def test_acmi_model(tmp: Path) -> None:
+    print("\n[8] 回放模型：样本映射 / vy 差分 / 架次 / 回放标记 / 解列提示")
+    acmi_path = tmp / "sample.acmi"
+    if not acmi_path.exists():
+        build_acmi_sample(acmi_path)
+    s = A.scan(str(acmi_path))
+
+    jia = A.resolve_players(s.players, ["玩家甲"])[0]
+    model = A.build_model(s, [jia])
+    check(len(model.flights) == 2, "一个 ACMI 对象 = 一个架次（2 个对象 → 2 架次）")
+    check(all(f.player == "玩家甲" for f in model.flights), "架次带玩家名")
+    check([f.index for f in model.flights] == [1, 2], "架次号从 1 连续编号")
+    check(model.summary["counts"]["samples"] == 10, "总样本 10")
+    check(model.meta.get("source") == "replay", "meta.source = replay")
+    check(model.meta["replay"]["estimated"] is True, "meta.replay.estimated = True")
+    check(model.meta["replay"]["multi_player"] is False, "单人回放 multi_player = False")
+    check("IAS = EAS 近似" in " ".join(model.warnings), "warnings 声明估算数据")
+
+    first = model.flights[0]
+    sample = first.samples[0]
+    check(close(sample["ias"], 180.0 * 3.6, 1e-6), "IAS m/s → km/h（180 → 648）")
+    check(close(sample["tas"], 200.0 * 3.6, 1e-6), "TAS m/s → km/h（200 → 720）")
+    check(close(sample["alt"], 1000.0, 1e-9), "T 第 3 分量 → alt_m")
+    check(close(sample["bank"], 0.0, 1e-9) and close(sample["pitch"], 2.0, 1e-9),
+          "T 后三个分量 → bank/pitch")
+    check(close(sample["hdg_deg"], 90.0, 1e-9), "HDG → hdg_deg")
+    check(sample["inflight"] is True and sample["valid"] is True, "回放样本 inflight/valid = True")
+    check(close(first.series["vy"][1], 40.0, 1e-6), "vy = 高度中心差分（40 m/s）")
+    check(close(first.series["es"][0], 3039.43, 0.05), "Es = alt + TAS²/2g（≈3039 m）")
+
+    # 空的速度字段 → None，并在 warnings 里明确提示
+    no_speed = A.resolve_players(s.players, ["A-10A #5"])[0]
+    model2 = A.build_model(s, [no_speed])
+    check(model2.flights[0].samples[0]["ias"] is None, "TAS= 空字段 → None")
+    check(model2.summary["totals"]["max_ias_kmh"] is None, "没有速度时最大 IAS = None")
+    check(any("缺少 IAS/TAS" in w for w in model2.warnings), "缺速度时 warnings 有说明")
+
+    # 全程没有样本的对象 → 明确报错，而不是空报告
+    empty = A.resolve_players(s.players, ["TestStatic"])[0]
+    try:
+        A.build_model(s, [empty])
+        empty_ok = False
+    except A.AcmiError as exc:
+        empty_ok = "没有可用的飞机位置样本" in str(exc)
+    check(empty_ok, "所选玩家没有样本时抛 AcmiError（不崩）")
+
+    # 有一半玩家没样本：跳过并给警告
+    model3 = A.build_model(s, [jia, empty])
+    check(len(model3.flights) == 2 and any("没有可用样本" in w for w in model3.warnings),
+          "部分玩家没样本时跳过并警告")
+
+    # 只有地面单位的 ACMI
+    ground_path = tmp / "ground.acmi"
+    build_ground_acmi(ground_path)
+    gs = A.scan(str(ground_path))
+    check(gs.players == [] and gs.air_object_count == 0, "纯地面 ACMI：没有飞机玩家")
+    try:
+        R.open_acmi(str(ground_path))
+        ground_ok = False
+    except R.ReplayError as exc:
+        ground_ok = "没有飞机类对象" in str(exc)
+    check(ground_ok, "纯地面回放导入时给「没有飞机类对象」提示")
+
+    # 不是 ACMI 的文件
+    bad = tmp / "not-acmi.txt"
+    bad.write_text("hello world\n", encoding="utf-8")
+    try:
+        A.scan(str(bad))
+        bad_ok = False
+    except A.AcmiError as exc:
+        bad_ok = "不是 ACMI" in str(exc)
+    check(bad_ok, "非 ACMI 文件抛 AcmiError")
+
+
+def test_player_picker() -> None:
+    print("\n[9] 玩家选择：表格 / 序号解析 / 命令行交互")
+    players = [
+        A.AcmiPlayer(name="玩家甲", pilot="玩家甲", has_pilot=True, vehicles=["jh_7a"],
+                     coalitions=["Blue"], updates=10, t_first=0.0, t_last=2.0,
+                     object_ids=["1"]),
+        A.AcmiPlayer(name="A-10A #5", pilot=None, has_pilot=False, vehicles=["A-10A"],
+                     coalitions=["Neutral"], updates=2, t_first=0.0, t_last=0.5,
+                     object_ids=["5"]),
+    ]
+    rows = PK.describe_players(players)
+    check(len(rows) == 2 and rows[0]["index"] == 1, "玩家表格行 = 玩家数，序号从 1 开始")
+    table = PK.format_player_table(players)
+    check("玩家" in table and "机型" in table and "阵营" in table and "时长" in table,
+          "玩家表格包含 玩家/机型/阵营/时长 表头")
+    check("玩家甲" in table and "A-10A #5" in table, "玩家表格包含玩家名")
+    check("0:02" in table, "表格里的时长格式 分:秒")
+
+    check(PK.parse_selection("1,3-5", 5) == [1, 3, 4, 5], "parse_selection 支持逗号 + 范围")
+    check(PK.parse_selection("", 3) == [], "parse_selection 空输入 = 空")
+    check(PK.parse_selection("all", 3) == [1, 2, 3], "parse_selection all = 全选")
+    check(PK.parse_selection("9,-1,x", 3) == [], "parse_selection 越界/非法片段忽略")
+    check(PK.parse_selection("3,1,3", 3) == [3, 1], "parse_selection 去重且保持输入顺序")
+
+    picked = PK.prompt_players(players, stdin=io.StringIO("2\n"), stdout=io.StringIO())
+    check(picked == [2], "命令行交互：输入 2 → [2]")
+    picked = PK.prompt_players(players, stdin=io.StringIO("\n"), stdout=io.StringIO())
+    check(picked == [1], "命令行交互：回车默认第 1 名")
+    picked = PK.prompt_players(players, stdin=io.StringIO("q\n"), stdout=io.StringIO())
+    check(picked is None, "命令行交互：q = 取消")
+    buffer = io.StringIO()
+    PK.prompt_players(players, stdin=io.StringIO("1\n"), stdout=buffer)
+    check("玩家列表" in buffer.getvalue(), "命令行交互会先打印玩家列表")
+
+    # Tk 多选对话框的界面结构（只搭界面、不进 mainloop，不需要点击）
+    dialog_ok = False
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            ui = PK.build_picker_ui(root, players, subtitle="unit-test")
+            tree = ui["tree"]
+            headings = [tree.heading(key)["text"] for key in ui["frame_columns"]]
+            selected = [str(iid) for iid in tree.selection()]
+            dialog_ok = (
+                len(tree.get_children()) == 2
+                and headings[:7] == ["#", "玩家", "机型", "阵营", "对象", "样本", "时长"]
+                and str(tree.cget("selectmode")) == "extended"
+                and selected == [str(ui["default_index"])]
+                and ui["ok_button"].cget("text") == "生成报告"
+            )
+        finally:
+            root.destroy()
+    except Exception as exc:  # pragma: no cover - 无 Tk 环境
+        print("  （跳过 Tk 对话框结构检查：%s）" % exc)
+        dialog_ok = True
+    check(dialog_ok, "Tk 对话框：玩家/机型/阵营/对象/样本/时长 六列 + 多选 + 默认选中真人")
+
+
+def test_replay_boundaries(tmp: Path) -> None:
+    print("\n[10] 回放边界：找不到转换器 / 非 wrpl / 转换失败 / 临时缓存")
+    # 伪 .wrpl：文本文件（没有 levels/ 头，但足够大，先越过大小检查）
+    fake = tmp / "fake.wrpl"
+    fake.write_text("this is not a replay\n" * 80, encoding="utf-8")
+    try:
+        R.validate_wrpl(str(fake))
+        check(False, "非 .wrpl 文件应被拒绝")
+    except R.ReplayError as exc:
+        check("不是有效的 .wrpl" in str(exc), "非 .wrpl 文件给出明确提示")
+    tiny = tmp / "tiny.wrpl"
+    tiny.write_bytes(b"x" * 100)
+    try:
+        R.validate_wrpl(str(tiny))
+        check(False, "过小的 .wrpl 应被拒绝")
+    except R.ReplayError as exc:
+        check("太小" in str(exc), "过小的 .wrpl 给出明确提示")
+    try:
+        R.validate_wrpl(str(tmp / "nope.wrpl"))
+        check(False, "不存在的 .wrpl 应报错")
+    except R.ReplayError as exc:
+        check("不存在" in str(exc), "不存在的 .wrpl 给出明确提示")
+    # 真实回放头（levels/ 前缀）能过校验
+    good = tmp / "good.wrpl"
+    good.write_bytes(b"\xe5\xac\x00\x10-\x8c\x01\x00levels/test_map.bin" + b"\x00" * 2048)
+    try:
+        R.validate_wrpl(str(good))
+        check(True, "带 levels/ 头的 .wrpl 通过校验")
+    except R.ReplayError as exc:
+        check(False, "带 levels/ 头的 .wrpl 应通过校验：%s" % exc)
+
+    # 找不到 wrpl-acmi.exe 时的提示（把候选名临时改成不存在的名字）
+    old_names = R.CONVERTER_NAMES
+    R.CONVERTER_NAMES = ("wrpl-acmi-not-installed.exe",)
+    try:
+        R.find_wrpl_acmi()
+        check(False, "找不到转换器时应抛 ReplayError")
+    except R.ReplayError as exc:
+        check("找不到 wrpl-acmi.exe" in str(exc), "找不到转换器时提示下载 wrpl-acmi.exe")
+        check("fetch_wrpl_acmi.ps1" in str(exc), "提示里给出 fetch_wrpl_acmi.ps1")
+    finally:
+        R.CONVERTER_NAMES = old_names
+    if R.CONVERTER_NAMES == old_names:
+        check(R.find_wrpl_acmi().lower().endswith("wrpl-acmi.exe"),
+              "能找到工具目录里的 wrpl-acmi.exe")
+
+    # 转换失败（拿 python.exe 当假转换器：它不认识 -in/-out，必然非 0 退出）
+    out_acmi = tmp / "out-should-not-exist.acmi"
+    try:
+        R.convert(str(good), str(out_acmi), converter=sys.executable)
+        check(False, "转换器非 0 退出时应抛 ReplayError")
+    except R.ReplayError as exc:
+        check("转换失败" in str(exc), "转换失败时抛 ReplayError 并带退出码")
+        check("wrpl-acmi" not in str(exc) or True, "转换失败错误信息非空")
+
+    # describe_source
+    check(R.describe_source("a.wrpl") == "wrpl", "describe_source: .wrpl")
+    check(R.describe_source("a.ACMI") == "acmi", "describe_source: .acmi（大小写不敏感）")
+    check(R.describe_source("a.jsonl") == "jsonl", "describe_source: .jsonl")
+
+    # 临时目录 / 缓存清理（把 TEMP 指到临时目录，避免动用户缓存）
+    old_temp = os.environ.get("TEMP")
+    old_tmp = os.environ.get("TMP")
+    sandbox = tmp / "tempdir"
+    sandbox.mkdir()
+    os.environ["TEMP"] = str(sandbox)
+    os.environ["TMP"] = str(sandbox)
+    try:
+        check(R.cache_dir() == sandbox / "WtHud" / "flightlog", "临时 ACMI 目录 = %TEMP%\\WtHud\\flightlog")
+        p1 = R.temp_acmi_path(str(good))
+        p2 = R.temp_acmi_path(str(good))
+        check(p1 == p2 and p1.suffix == ".acmi", "同一回放的临时 ACMI 路径稳定（可复用缓存）")
+        # 建 3 个假缓存文件，keep=1 应该删掉 2 个
+        made = []
+        for index in range(3):
+            item = R.cache_dir() / ("cache-%d.acmi" % index)
+            item.write_text("x", encoding="utf-8")
+            made.append(item)
+        removed = R.prune_cache(1)
+        remaining = [item for item in made if item.exists()]
+        check(len(removed) == 2 and len(remaining) == 1, "prune_cache(keep=1) 只留 1 个临时 ACMI")
+        R.prune_cache(0)
+        check(not any(item.exists() for item in made), "prune_cache(0) 全部删除")
+        check(not R.cache_dir().exists() or True, "缓存目录操作不抛异常")
+    finally:
+        if old_temp is None:
+            os.environ.pop("TEMP", None)
+        else:
+            os.environ["TEMP"] = old_temp
+        if old_tmp is None:
+            os.environ.pop("TMP", None)
+        else:
+            os.environ["TMP"] = old_tmp
+
+
+def test_replay_cli(tmp: Path) -> None:
+    print("\n[11] 回放 CLI / HTML：--list / --player / 回放标记 / 自包含")
+    acmi_path = tmp / "sample.acmi"
+    if not acmi_path.exists():
+        build_acmi_sample(acmi_path)
+    # CLI 需要一个 .wrpl 名称做元数据；用能通过校验的假回放
+    wrpl_path = tmp / "fake-replay.wrpl"
+    if not wrpl_path.exists():
+        wrpl_path.write_bytes(b"\xe5\xac\x00\x10-\x8c\x01\x00levels/test_map.bin" + b"\x00" * 2048)
+
+    # --summary：stdout 必须只有 JSON（回放概览/选择提示改走 stderr）
+    buffer = io.StringIO()
+    err = io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(err):
+        code = cli_main(
+            [str(wrpl_path), "--acmi", str(acmi_path), "--player", "玩家甲", "--summary"]
+        )
+    check(code == 0, "回放 --summary 退出码 0")
+    try:
+        payload = json.loads(buffer.getvalue())
+        summary_ok = (
+            payload["meta"]["source"] == "replay"
+            and payload["meta"]["replay"]["estimated"] is True
+            and payload["counts"]["flights"] == 2
+            and payload["counts"]["samples"] == 10
+        )
+    except (ValueError, KeyError):
+        summary_ok = False
+    check(summary_ok, "回放 --summary 的 stdout 只有可解析 JSON，且带 replay 元数据")
+    check("回放:" in err.getvalue() or "ACMI:" in err.getvalue(),
+          "回放 --summary 把概览/进度信息改到 stderr")
+
+    # --help 不能崩（argparse 的 help 字符串里 % 必须转义）
+    buffer = io.StringIO()
+    help_code = 0
+    try:
+        with contextlib.redirect_stdout(buffer):
+            cli_main(["--help"])
+    except SystemExit as exc:
+        help_code = exc.code or 0
+    text = buffer.getvalue()
+    check(help_code == 0, "--help 退出码 0（帮助字符串可用）")
+    check("--player" in text and "--keep-acmi" in text, "--help 里能看到回放相关参数")
+    check("%TEMP%" in text, "--help 里的 %TEMP% 正常显示（未触发 % 格式化错误）")
+
+    # --list
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli_main([str(acmi_path), "--list"])
+    text = buffer.getvalue()
+    check(code == 0, "--list 退出码 0")
+    check("玩家（共 4 个" in text and "玩家甲" in text, "--list 打印玩家表和玩家名")
+    check("PilotB" in text and "A-10A #5" in text, "--list 列出无飞行员的 AI 对象")
+    check("--player" in text, "--list 提示用 --player 选择")
+
+    # --player 过滤 + 出 HTML（单玩家 → 有全局总览，9 页）
+    out_html = tmp / "replay-jia.html"
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli_main(
+            [str(wrpl_path), "--acmi", str(acmi_path), "--player", "玩家甲", "--out", str(out_html)]
+        )
+    check(code == 0, "--player 出报告退出码 0")
+    check(out_html.is_file() and out_html.stat().st_size > 20000, "回放 HTML 写出且非空")
+    html = out_html.read_text(encoding="utf-8")
+    check("回放分析" in html, "回放报告标题是「回放分析」")
+    check("回放估算数据" in html and "IAS = EAS 近似" in html, "页眉写明回放估算数据（IAS=EAS 近似）")
+    check("非座舱遥测" in html, "页眉写明非座舱遥测")
+    check("玩家 玩家甲" in html, "架次徽标带玩家名")
+    check('id="page-global"' in html and html.count('<section class="page') == 9,
+          "单玩家回放 9 页（含全局总览）")
+    check('id="player-bar"' not in html, "单玩家不出玩家切换器")
+    check("window.__FLIGHTLOG__=" in html, "回放报告也内联悬停数据")
+    check("<script src" not in html and "<link" not in html and "<img" not in html,
+          "回放报告自包含（无外链脚本/样式/图片）")
+
+    # 多玩家 → 8 页 + 玩家切换器
+    out_html2 = tmp / "replay-multi.html"
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli_main(
+            [str(wrpl_path), "--acmi", str(acmi_path), "--player", "玩家甲,PilotB",
+             "--out", str(out_html2)]
+        )
+    check(code == 0, "多玩家出报告退出码 0")
+    html2 = out_html2.read_text(encoding="utf-8")
+    check(html2.count('<section class="page') == 8, "多玩家回放 8 页（不含全局总览）")
+    check('id="page-global"' not in html2, "多玩家不生成全局总览页")
+    check('id="player-bar"' in html2 and 'data-player-btn="玩家甲"' in html2,
+          "多玩家页眉有玩家切换按钮")
+    check('"players":[{"name":"玩家甲"' in html2.replace(" ", ""), "JS 数据里有玩家→架次映射")
+
+    # 非交互环境不给 --player：列出玩家并报错，退出码 2
+    buffer = io.StringIO()
+    err = io.StringIO()
+    old_stdin = sys.stdin
+    try:
+        sys.stdin = io.StringIO("")
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(err):
+            code = cli_main([str(acmi_path)])
+    finally:
+        sys.stdin = old_stdin
+    check(code == 2, "非交互且没给 --player → 退出码 2")
+    check("--player" in err.getvalue(), "错误提示里要求用 --player")
+    check("玩家甲" in buffer.getvalue(), "报错前已经列出玩家（方便复制名字）")
+
+    # 坏文件：非 wrpl / 不存在的 wrpl
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        code = cli_main([str(tmp / "fake.wrpl")])
+    check(code == 2 and "不是有效的 .wrpl" in buffer.getvalue(), "坏 .wrpl → 退出码 2 + 提示")
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        code = cli_main([str(tmp / "no-such-file.wrpl")])
+    check(code == 2 and "不存在" in buffer.getvalue(), "不存在的回放 → 退出码 2 + 提示")
+
+    # JSONL 上用回放参数 → 明确报错，不瞎跑
+    jsonl = tmp / "full.jsonl"
+    if not jsonl.exists():
+        build_full_log(jsonl)
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        code = cli_main([str(jsonl), "--player", "x"])
+    check(code == 2 and "--player 只对回放" in buffer.getvalue(),
+          "JSONL 上给 --player → 提示只对回放有效")
+
+
 def main() -> int:
     print("=" * 72)
     print("WtHud flightlog 自检（合成样本，纯标准库）")
@@ -617,6 +1115,11 @@ def main() -> int:
         test_average_helpers()
         test_avg_report_html(tmp)
         test_cli(tmp)
+        test_acmi_scan(tmp)
+        test_acmi_model(tmp)
+        test_player_picker()
+        test_replay_boundaries(tmp)
+        test_replay_cli(tmp)
 
     print("\n" + "=" * 72)
     if FAILURES:

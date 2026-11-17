@@ -1,8 +1,8 @@
 # WtHud 飞行日志解析 / 可视化工具（flightlog）
 
-独立的小工具：读取 WtHud 录制的 `wtlog-*.jsonl`，把 **能量、速度、高度、过载、姿态** 等
-随时间（以及死亡 / 复活 / 换机型事件）的变化画成图，生成**一个自包含的 HTML 文件**
-（内联 CSS/JS/SVG，无 External 依赖，离线双击即看）。
+独立的小工具：读取 WtHud 录制的 `wtlog-*.jsonl`（或 **War Thunder `.wrpl` 回放**），把
+**能量、速度、高度、过载、姿态** 等随时间（以及死亡 / 复活 / 换机型事件）的变化画成图，
+生成**一个自包含的 HTML 文件**（内联 CSS/JS/SVG，无 External 依赖，离线双击即看）。
 
 报告是**翻页式**的：第 1 页是概览（汇总卡片 + 比能量缩略图），之后**每个数据主题一页**
 （速度 / 高度 / Es / dEs/dt / Vy / 迎角与过载 / 姿态），用 `‹ 上一页` `下一页 ›`、
@@ -11,6 +11,9 @@
 **速度页顶部显示平均 IAS / TAS / Mach**，可以手动输入起止时间、只统计所选区间
 （默认整个当前架次），区间在图上用浅色底纹标出、平均值画成水平虚线。
 可选再用 Pillow 出一张 PNG 预览。
+
+输入除了 JSONL 还支持 **`.wrpl` 回放**：自动调用 `wrpl-acmi.exe` 转 ACMI → 列出玩家 →
+选玩家（CLI 或 Tk 多选）→ 同一个报告（回放是**估算数据**，见第 3 节）。
 
 > 该工具**不改动** `wt-hud/src` 下的任何产品代码，只是 `wt-hud/tools/` 里的独立脚本。
 > 许可证与仓库一致：AGPL-3.0-or-later。
@@ -39,14 +42,24 @@ python -m flightlog "C:\path\to\wtlog-xxx.jsonl" --out out\demo.html --png out\p
 默认输出目录是**本工具自己的** `out/`（`wt-hud/tools/flightlog/out/`），与当前工作目录无关；
 文件名默认为 `<日志名>.html`，例如 `wtlog-20261117-131039-jh_7a.html`。
 
+回放只需要把位置参数换成 `.wrpl`（详见第 3 节）：
+
+```bat
+cd wt-hud\tools
+python -m flightlog "D:\...\Replays\#2026.11.15 15.24.09.wrpl" --list
+python -m flightlog "D:\...\Replays\#2026.11.15 15.24.09.wrpl" --player HCN_WT --out out\replay.html
+```
+
 ### 独立可执行文件（不需要 Python）
 
 `FlightLog.exe` 与 WtHud 完全分离，可以单独启动，**不需要安装 Python**：
 
-- **双击** → 弹出文件选择框（默认目录 `桌面\WtHud-发布\recordings`）→ 选一个 `.jsonl` → 自动生成 HTML 并用默认浏览器打开
-- 也可以把日志文件**拖到 exe 图标上**
+- **双击** → 弹出文件选择框（默认目录 `桌面\WtHud-发布\recordings`，回放默认找 War Thunder 的 `Replays`）→
+  选 `.jsonl` 或 `.wrpl` → 自动生成 HTML 并用默认浏览器打开；选到回放会先弹**玩家多选**对话框
+- 也可以把日志/回放文件**拖到 exe 图标上**
 - 报告写到 `%LOCALAPPDATA%\WtHud\flightlog\`，文件名带时间戳，不会覆盖旧报告
-- 重新打包：双击 `build_exe.bat`（需要本机 Python + `pip install pyinstaller`），产物在 `flightlog\dist\FlightLog.exe`
+- 重新打包：双击 `build_exe.bat`（需要本机 Python + `pip install pyinstaller`），产物在
+  `flightlog\dist\FlightLog.exe`；脚本会把 `wrpl-acmi.exe` 一起复制到 `dist\`
 
 ### 自检
 
@@ -56,7 +69,8 @@ python selftest.py
 ```
 
 纯标准库合成样本自检（解析、坏行跳过、缺字段、事件切分、能量公式、**分页 HTML 结构**、
-**平均速度纯函数与速度页控件结构**、自包含检查、CLI），当前 **152/152 项全部通过**。
+**平均速度纯函数与速度页控件结构**、**ACMI 回放解析 / 玩家归组 / 回放模式标记 /
+回放边界情况**、自包含检查、CLI），当前 **266/266 项全部通过**（原 152 项 + 回放/ACMI 114 项）。
 
 ---
 
@@ -64,18 +78,118 @@ python selftest.py
 
 | 参数 | 说明 |
 | --- | --- |
-| `log`（位置参数） | `wtlog-*.jsonl` 路径 |
-| `--out PATH` | HTML 输出路径；不传则 `out/<日志名>.html` |
+| `log`（位置参数） | `wtlog-*.jsonl` 日志、`.wrpl` 回放或 `.acmi` 文件 |
+| `--out PATH` | HTML 输出路径；不传则 `out/<文件名>.html` |
 | `--summary` | 只打印统计 JSON（若同时给 `--out` 也会写 HTML） |
 | `--png PATH` | 额外生成 PNG 预览（Pillow 可选，缺库时跳过并提示） |
 | `--title TEXT` | HTML 页面标题 |
 | `--gap SEC` | 相邻样本间隔超过多少秒切新架次，默认 `30` |
+| `--list` | **（回放）** 只列出玩家，不生成 HTML |
+| `--player NAME` | **（回放）** 选玩家，可重复 / 逗号分隔 / 也可用 1 起的序号 |
+| `--acmi PATH` | **（回放）** 跳过转换，直接解析已经转好的 ACMI |
+| `--wrpl-acmi PATH` | **（回放）** 指定 `wrpl-acmi.exe` 路径（默认自动找） |
+| `--keep-acmi N` | **（回放）** `%TEMP%\WtHud\flightlog` 保留最近几个 ACMI，默认 `3`，`0` = 用完即删 |
+| `--convert-timeout SEC` | **（回放）** 单次转换超时，默认 `900` |
 
 `python -m flightlog --help` 可查看完整帮助。
 
 ---
 
-## 3. 输出：HTML 报告里有什么
+## 3. 导入 War Thunder `.wrpl` 回放
+
+WtHud 自己的 `wtlog-*.jsonl` 是"第一人称遥测"；本工具也能直接吃 **War Thunder 回放**：
+先把 `.wrpl` 用第三方工具 `wrpl-acmi.exe` 转成 ACMI（Tacview 文本），再解析出**飞机类对象**，
+按玩家归组，让用户选玩家，然后走**同一套翻页式 HTML 报告**。
+
+```bat
+:: 1) 列出回放里的玩家（.wrpl 会自动转换成临时 ACMI，18.7 MB 回放约 4 s）
+cd wt-hud\tools
+python -m flightlog "D:\...\Replays\#2026.11.15 15.24.09.wrpl" --list
+
+:: 2) 给某个玩家出报告（--player 可重复 / 逗号分隔 / 也支持 1 起的序号）
+python -m flightlog "xxx.wrpl" --player HCN_WT --out out\replay.html
+
+:: 3) 多个玩家 → 一份报告，页眉有玩家切换按钮
+python -m flightlog "xxx.wrpl" --player HCN_WT --player "送塟者"
+
+:: 4) 已经转好 ACMI：跳过转换直接解析（调试 / 复用，秒开）
+python -m flightlog "xxx.wrpl" --acmi "%TEMP%\WtHud\flightlog\xxx.acmi" --list
+```
+
+双击 `FlightLog.exe` 时：文件选择框同时接受 `.jsonl` / `.wrpl` / `.acmi`；选到回放会先转换，
+然后弹出 **Tk 多选对话框**（列出 玩家 / 机型 / 阵营 / 对象数 / 样本数 / 时长，
+「全选 / 清空 / 取消 / 生成报告」），确认后出报告，取消则直接退出。
+
+### 依赖：`wrpl-acmi.exe`（第三方，AGPL-3.0）
+
+* 来源：<https://github.com/3794432/wrpl-acmi/releases>
+  （实测版本 `v3.0.0-20261101175226-9ed43b9f108b`，15,784,448 字节，
+  SHA256 `C80D9C5C04531DADC27342788F9800A440A6F258076054DABFB6F9904E71890E`）；
+* 放在 `FlightLog.exe` 旁边、或 `tools\flightlog\` 里都行（也认环境变量 `WRPL_ACMI`）；
+* 没下载时运行脚本（**GitHub 直连会被本机 Steam++ 的加速规则拦**，脚本自动改走 gh-proxy 镜像）：
+
+```powershell
+cd wt-hud\tools\flightlog
+powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
+# 可选：-Dest <目录> / -Force / -CheckOnly / -Url <自定义地址>
+```
+
+* 重新打包 `FlightLog.exe` 时 `build_exe.bat` 会把它一起复制到 `dist\`。
+
+### 流程与临时文件
+
+1. **转换**：`wrpl-acmi.exe -in x.wrpl -out x.acmi`。默认参数：
+   `-events=none -radar-locks=false -radar-modes=false -countermeasures=false
+   -missile-seeker=false -bookmarks=false -airfields=false -estimate-bomb-trajectories=false`；
+   **必须保留** `-estimate-telemetry`（默认开），否则没有 IAS/TAS/Mach/AOA/G。
+   注意：**不能**加 `-ground-units=false`——实测某些回放会连飞机位置一起丢掉。
+2. **临时目录**：`%TEMP%\WtHud\flightlog\`，按「回放路径 + 大小 + mtime + 参数版本」缓存，
+   同一个回放换玩家看不必重复转换；默认**保留最近 3 个**（`--keep-acmi N`，`0` = 用完即删）。
+   一个 18.7 MB 回放转出来约 **107 MB**，注意 tmp 磁盘占用。
+3. **扫描**：流式读 ACMI，收集头部、对象声明（`Name/CallSign/Pilot/Type/Coalition`）、
+   每个对象的出现时间与更新时间数。
+4. **玩家归组**：只保留 `Type` 按 `+` 切词后含 `Air` 的对象（防空车 `AntiAircraft` 不算），
+   按 `Pilot` 归组；没有 `Pilot` 的 AI/无人对象按对象单独列出，名字形如 `A-10A #33`。
+5. **选择**：CLI `--player`（可多次/逗号/序号），或双击时的 Tk 多选；非交互环境不给
+   `--player` 会**列出玩家并报错**（退出码 2），不会瞎猜。
+6. **抽取**：第二遍只保留所选对象的样本（147 MB 的 ACMI 也不整体进内存）。
+7. **出报告**：一个 ACMI 飞机对象 = 一个架次（玩家死亡重生会换对象 id），
+   映射成与 JSONL 完全相同的报告模型。
+
+### 回放报告和 JSONL 报告的区别
+
+* 标题是「回放分析」，页眉固定一条橙色声明：
+  **回放估算数据（IAS = EAS 近似，非座舱遥测）**；
+* 概览页多一条回放说明条（源文件 / 场景 / 样本数 / 时长）+ 玩家摘要条；
+* 多玩家时页眉有**玩家切换**按钮（点一下跳到该玩家第一个架次），此时不生成第 9 页
+  "全局总览"（不同玩家时间轴重叠，拼在一起没意义），共 **8 页**；
+* 回放里没有 HUD 的 spawn/death 事件，事件条为空；架次按"一个 ACMI 飞机对象"切分；
+* 概览卡片的「事件数」换成「玩家」。
+
+### 回放字段映射（重要：都是估算值）
+
+| 报告字段 | ACMI 来源 | 说明 |
+| --- | --- | --- |
+| `t` | 帧头 `#<秒>` | 回放内相对秒（原生时间轴，不从 0 重排） |
+| `ias_kmh` | `IAS` × 3.6 | ACMI 里是 m/s；导出器注明 **IAS = EAS 近似** |
+| `tas_kmh` | `TAS` × 3.6 | m/s；零风 + ISA 标准大气估算 |
+| `mach` | `Mach` | 导出器按当地声速反算 |
+| `alt_m` | `T` 第 3 分量 | 游戏高度（米，相对 `ReferenceAltitude`） |
+| `vy_ms` | 高度中心差分 | ACMI 里没有，本工具自己算（跨缺口/跳变留空） |
+| `aoa_deg` | `AOA` | 体轴估计值 |
+| `ny_g` | `VerticalGForce` | 体轴过载估计值（含重力补偿） |
+| `pitch_deg` / `bank_deg` | `T` 第 5 / 第 4 分量 | Tacview 欧拉角 roll/pitch/yaw |
+| `hdg_deg` | `HDG` | 度 |
+| `es` / `des` | 同 JSONL | `Es = alt + (TAS/3.6)²/2g`，`dEs/dt` 用同一条能量导数管线 |
+
+* 速度/过载/AOA 会出现**单帧跳变伪影**（反演估计的锅）：本工具把"相对相邻帧中位数跳得离谱"
+  的孤立值置空，并在报告「解析提示」里写明剔除了多少个；持续多帧的估计偏差无法区分真假，予以保留。
+* 回放样本一律按 `inflight=true` 处理（ACMI 没给起落架/停机状态），停机坪滑行也会算进"架次"。
+* **采样率约 2–4 Hz**（以回放实际导出为准），比 HUD 自己的 10–20 Hz 稀疏，尖峰会被平滑掉。
+
+---
+
+## 4. 输出：HTML 报告里有什么
 
 报告是**翻页式**的：一共 N 页，**每页只放一个数据主题**，页面固定铺满视口（不出现长滚动）。
 
@@ -95,6 +209,9 @@ python selftest.py
 
 > 若某类数据整份日志都没有（例如旧日志没有姿态），对应的页会**自动省略**，
 > 页码与圆点数量随之变化（例如 `第 3 / 8 页`）。
+>
+> 回放模式：概览卡片里的「事件数」换成「玩家」，概览页多一条回放声明与玩家摘要；
+> **多玩家**时不生成第 9 页（共 8 页），页眉多一个玩家切换器。
 
 ### 翻页方式
 
@@ -157,7 +274,7 @@ python selftest.py
 
 ---
 
-## 4. 日志格式（输入）
+## 5. 日志格式（输入）
 
 JSONL，一行一个 JSON 对象，共四类记录：
 
@@ -190,7 +307,7 @@ JSONL，一行一个 JSON 对象，共四类记录：
 
 ---
 
-## 5. 架次（flight）切分规则
+## 6. 架次（flight）切分规则
 
 一个架次 ≈ 一次"出航"：
 
@@ -203,9 +320,12 @@ JSONL，一行一个 JSON 对象，共四类记录：
 
 每个架次的"原因"会显示在报告标题旁（`日志起点` / `复活生成` / `换机型` / `时间跳变`）。
 
+回放（`.wrpl`）没有事件，切分规则是：**一个 ACMI 飞机对象 = 一个架次**（玩家死亡重生会
+拿到新的对象 id），同一对象内再按 `--gap`（默认 30 s）补切；架次原因记为 `复活生成`。
+
 ---
 
-## 6. 能量定义与导数处理
+## 7. 能量定义与导数处理
 
 **比能量高度**（单位米，把动能折算成等效高度）：
 
@@ -228,7 +348,7 @@ Es = alt_m + (tas_kmh / 3.6)² / (2 × 9.80665)
 
 ---
 
-## 7. `--summary` 统计摘要
+## 8. `--summary` 统计摘要
 
 输出结构（节选）：
 
@@ -259,29 +379,41 @@ Es = alt_m + (tas_kmh / 3.6)² / (2 × 9.80665)
 
 ---
 
-## 8. 代码结构
+## 9. 代码结构
 
 ```
 wt-hud/tools/flightlog/
 ├─ __init__.py        # 包导出
-├─ __main__.py        # CLI（python -m flightlog）
+├─ __main__.py        # CLI（python -m flightlog），JSONL / .wrpl / .acmi 都走这里
 ├─ analyze.py         # 任意 cwd 可用的便捷入口（内部转调 __main__）
 ├─ parse.py           # JSONL 解析 / 容错 / 架次切分 / 能量 / 统计 / 平均速度纯函数
+├─ acmi.py            # ACMI（Tacview 文本）解析：对象/玩家归组/样本抽取/回放模型
+├─ replay.py          # .wrpl 导入：找 wrpl-acmi.exe、转换、临时缓存、ReplaySession
+├─ picker.py          # 玩家表格 / 命令行选择 / Tk 多选对话框
 ├─ report.py          # 自包含翻页 HTML：每页一张内联 SVG + 内联 CSS/JS
-│                     # （翻页、架次、悬停、速度页平均速度与手动范围）
+│                     # （翻页、架次、玩家切换、悬停、速度页平均速度与手动范围）
 ├─ preview_png.py     # 可选 Pillow PNG 预览（缺库优雅降级）
+├─ launch.py          # FlightLog.exe 启动器（双击选文件 / 回放弹玩家多选）
 ├─ selftest.py        # 合成样本自检（纯标准库）
+├─ build_exe.bat      # PyInstaller 打包（并把 wrpl-acmi.exe 复制到 dist\）
+├─ fetch_wrpl_acmi.ps1# 下载 wrpl-acmi.exe（GitHub 直连不通时走 gh-proxy 镜像）
+├─ wrpl-acmi.exe      # 第三方转换器（AGPL-3.0，可用上面的 ps1 重新下载）
 ├─ README.md          # 本文件
 └─ out/               # 生成物（HTML / PNG / 截图），默认输出目录
 ```
 
-数据流：`parse.analyze()` → `LogModel`（meta + flights + series + stats + summary）
-→ `report._build_payload()`（按页组装：每架次每主题一张 SVG + 悬停几何）
+两条数据流：
+
+* JSONL：`parse.analyze()` → `LogModel`（meta + flights + series + stats + summary）；
+* 回放：`.wrpl` → `replay.open_replay()`（转换 + `acmi.scan()`）→ 玩家选择
+  → `acmi.build_model()`（抽取 + 映射）→ 同样得到 `LogModel`。
+
+之后统一进入 `report._build_payload()`（按页组装：每架次每主题一张 SVG + 悬停几何）
 → `report.render_report()`（页面 + CSS + JS + JSON 数据）→ 单文件 HTML。
 
 ---
 
-## 9. 已验证
+## 10. 已验证
 
 以下都用**真实日志**跑过（`out/` 里有生成物）：
 
@@ -309,18 +441,46 @@ wt-hud/tools/flightlog/
   输入框回车即应用、切架次后按新时间轴夹取并重算（架次 2：1.0 / 1.0 / 0.00）、
   悬停十字线与翻页无回归。截图 `out/avg-default.png`、`out/avg-range.png`，
   拼图 `out/preview-avg.png`。
-* `python selftest.py`：**152/152 通过**（原 105 项 + 平均速度函数 21 项 + 速度页平均控件结构 26 项）。
+
+回放（`.wrpl`，全部真实跑过，2026-11-17）：
+
+* **真实空战/直升机回放** `#2026.11.15 15.24.09.wrpl`（18.7 MB）：
+  转换 **3.97 s** → ACMI **107.2 MB** → 扫描 0.63 s → 抽取 0.54 s；
+  共 49631 帧、1270 个对象、**80 架飞机**，玩家列表 **56 条**（真人 8 名 +
+  48 个无飞行员的 A-10A AI 对象），含中文名（送塟者、Furry_坦鹿_TanLu）与俄文名
+  （KМС по ПМС）；
+* 选 `送塟者`（Mi-28NM）→ `out/wrpl-air-送塟者.html`（**2.68 MB**、9 页、6 架次、
+  8513 样本），页眉写明"回放估算数据（IAS = EAS 近似，非座舱遥测）"，
+  无头 Edge 逐页截图 **0 溢出 / 0 JS 异常**；截图 `out/wrpl-overview.png`（概览）、
+  `out/wrpl-speed.png`（速度页，平均 187.6 / 192.6 / 0.16），拼图 `out/preview-wrpl.png`；
+* **多玩家**（HCN_WT + 送塟者 + MrWDD131）→ `out/wrpl-air-3players.html`（7.3 MB、
+  **8 页**（无全局总览）、15 架次、25832 样本）；用 CDP 真实点击页眉玩家按钮验证
+  **14/14 项通过**：切换后高亮/架次视图/下拉框同步、切回、翻页后保持所选架次、
+  速度页平均值正常、无横向溢出、0 JS 异常；
+* **打包验证**：`build_exe.bat` 重新打包出 `dist\FlightLog.exe` 并把
+  `wrpl-acmi.exe` 复制到 `dist\`；直接运行 `dist\FlightLog.exe "回放.wrpl" --player 1`
+  （3.3 MB 地面局回放，真实玩家 ic1257 / MiG-29）**3.04 s** 出报告（489 KB），
+  转换器在 exe 旁边被正确找到；
+* **边界实跑**：不存在的回放 / 文本冒充的 `.wrpl` / 空回放（wrpl-acmi 报
+  `no tracks found`）/ 纯地面 ACMI（无飞机）/ 玩家 0 样本 / 非交互不给 `--player`
+  → 全部给出明确提示、退出码 2、不崩；
+* `fetch_wrpl_acmi.ps1` 实跑：GitHub 直连超时 → 自动改走 gh-proxy 镜像下载成功，
+  SHA256 与脚本内置期望值一致；
+* `python selftest.py`：**266/266 通过**（原 152 项 + 回放/ACMI 114 项）。
 
 预览图：
 
 * `out/preview.png` — 概览页 + 比能量页的纵向拼图（Pillow 生成），可直接查看翻页效果。
 * `out/preview-avg.png` — **速度页平均速度**两张截图拼图：默认全程 vs 手动 `120–180 s`。
+* `out/preview-wrpl.png` — **回放报告**概览页 + 速度页拼图（`out/wrpl-overview.png`、
+  `out/wrpl-speed.png`）。
 * `out/avg-default.png` / `out/avg-range.png` — 上述两张单图（1600×900）。
+* `out/wrpl-air-送塟者.html` — 单玩家回放报告；`out/wrpl-air-3players.html` — 三玩家回放报告。
 * `out/page-01.png` … `out/page-09.png` — 逐页无头截图（1600×900）。
 
 ---
 
-## 10. 已知限制 / 后续建议
+## 11. 已知限制 / 后续建议
 
 1. **悬停数据是全量内联**：样本极多（>10 万）时 HTML 会偏大，可按需抽稀或改成分片加载。
    多架次日志的每个架次都会独立渲染一套页面图表（14 架次 / 26k 样本约 5.6 MB）。
@@ -346,8 +506,27 @@ wt-hud/tools/flightlog/
 13. **切换架次时的范围夹取**：范围保留但会夹到新架次时间轴内；若两者完全不相交则自动
     退回新架次全程，并在数值下方用黄字提示（避免"空区间"看起来像程序坏了）。
 
+回放（`.wrpl`）相关：
+
+14. **回放数据是估算值，不是座舱遥测**：`IAS` 是导出器的 EAS 近似，`TAS/姿态/过载/AOA`
+    全部由回放位置反演（零风、ISA 标准大气）。绝对数值只能横向自比，不能当作真实仪表读数。
+15. **ACMI 体积大**：18.7 MB 回放转出约 107 MB ACMI（导弹轨迹占大头，`wrpl-acmi` 没有
+    "只导飞机"的开关），转换约 4 s、解析约 1–3 s；临时文件在 `%TEMP%\WtHud\flightlog`，
+    默认保留 3 个（`--keep-acmi` 可调，`0` = 用完即删），注意磁盘占用。
+16. **采样率只有 2–4 Hz**（HUD 自己是 10–20 Hz），短时尖峰会被抹平；`vy` 由高度中心差分
+    得到，比 HUD 原生的 `vy_ms` 更糙。
+17. **单帧跳变伪影**：反演估计偶尔出现一两帧物理上不可能的值（实测 AH-1W 蹦到 1400 km/h、
+    68 g）；本工具会按相邻帧中位数把孤立跳变置空并在报告里注明数量，但**持续多帧**的估计
+    偏差无法区分真假，予以保留（所以卡片上的"最大 IAS/最大过载"可能仍偏高）。
+18. **回放没有事件**：击杀/复活/被击落都不在 ACMI 里，事件条为空，架次 = 一个 ACMI 飞机
+    对象；被击落前后若对象仍在更新，那一段会留在同一架次里。
+19. **一个 ACMI 玩家 ≠ 一个 War Thunder 玩家**：导出器按 `Pilot` 归组，观战者/无飞行员
+    的 AI 对象会单独列成 `机型 #id`；同一玩家多架飞机时按对象 id 分组（而不是按真实出击编号）。
+20. **多玩家合并成一份报告**时 HTML 体积随样本线性增长（每个玩家 8 页各一套图表），
+    3 个玩家约 9 MB；人再多建议一人一份报告（分别 `--player` 生成）。
+
 ---
 
-## 11. 许可
+## 12. 许可
 
 与 WtHud 仓库一致：AGPL-3.0-or-later。本工具为独立脚本，不修改产品代码。

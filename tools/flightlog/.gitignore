@@ -3,3 +3,9 @@ out/
 dist/
 build_tmp/
 *.spec
+
+# 第三方回放转换器（wrpl-acmi，AGPL-3.0 的二进制，不入库）
+# 需要时用 fetch_wrpl_acmi.ps1 下载到本目录，或放进 dist\ 与 FlightLog.exe 同目录
+wrpl-acmi.exe
+wrpl-acmi.exe.err
+wrpl-acmi.download.*.exe.part
