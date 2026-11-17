@@ -1242,7 +1242,6 @@ internal static class MfdPages
             Toggle("row.recEnabled", c => c.RecordEnabled, (c, v) => c.RecordEnabled = v),
             Number("row.recKeep", c => c.RecordKeep,
                    (c, v) => c.RecordKeep = Math.Clamp((int)v, 2, 200), 1, 2, 200, ""),
-            Key("row.recMarker", c => c.RecordMarkerKey, (c, v) => c.RecordMarkerKey = v),
         },
     };
 }

@@ -308,7 +308,6 @@ public static class L10n
         ["row.dupKeys"] = ("重复热键", "DUPLICATE KEYS"),
         ["row.recEnabled"] = ("记录飞行数据", "RECORD FLIGHT"),
         ["row.recKeep"] = ("记录保留条数", "KEEP FILES"),
-        ["row.recMarker"] = ("记录标记键", "MARKER KEY"),
         ["row.copyDiag"] = ("复制诊断信息", "COPY DIAGNOSTICS"),
         ["row.diagState"] = ("/state 状态", "/STATE"),
         ["row.diagInd"] = ("/indicators", "/INDICATORS"),

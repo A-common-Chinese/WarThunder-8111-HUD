@@ -1659,13 +1659,6 @@ public static partial class Program
                     Console.WriteLine($"stall key -> {cur.VehicleType} stall AOA = {cur.AoaDeg:F1} deg (saved)");
                 }
 
-                // 记录标记：只写一行 marker，不切换记录开关
-                if (armed && flightRecorder != null && _recordMarkerKeyBinding.PressedSinceLastPoll())
-                {
-                    flightRecorder.Marker("hotkey");
-                    Console.WriteLine($"record marker at t={latest?.ElapsedSeconds:F1}s");
-                }
-
                 // Reset key (default F5, configurable): clear view counter / map / scoreboard state.
                 if (armed && _resetKeyBinding.PressedSinceLastPoll())
                 {
@@ -3233,9 +3226,13 @@ public static partial class Program
     /// <summary>飞行数据记录：开启时自动按对局开始/结束，只记录本机快照（JSONL）。</summary>
     private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap)
     {
+        // 8111 在大厅/退局后可能仍报 valid=true，但快照已经不再更新；
+        // 因此以「快照时间戳是否新鲜」判断对局是否还在，5 秒没有新快照就收尾。
+        bool fresh = latest is { } ls && (DateTime.UtcNow - ls.TimestampUtc).TotalSeconds < 5.0;
+
         if (cfg.RecordEnabled)
         {
-            if (snap.Valid)
+            if (snap.Valid && fresh)
             {
                 recLastValidTicks = Environment.TickCount64;
                 if (flightRecorder == null)
@@ -3252,7 +3249,7 @@ public static partial class Program
                 Console.WriteLine("recording stopped (match ended)");
             }
 
-            if (flightRecorder != null && snap.Valid && snap.TimestampUtc != recLastStampUtc)
+            if (flightRecorder != null && snap.Valid && fresh && snap.TimestampUtc != recLastStampUtc)
             {
                 recLastStampUtc = snap.TimestampUtc;
                 flightRecorder.Add(snap, lastAttitude);
@@ -3495,7 +3492,6 @@ public static partial class Program
     private static WtHud.Input.KeyBinding _formationKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+SHIFT+F", 0x46, "CTRL+SHIFT+F");
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
-    private static WtHud.Input.KeyBinding _recordMarkerKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+M", 0x4D, "CTRL+ALT+M");
     private static FlightRecorder? flightRecorder;
     private static long recLastValidTicks;
     private static DateTime recLastStampUtc;
@@ -3513,8 +3509,6 @@ public static partial class Program
         _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
         _formationKeyBinding = WtHud.Input.KeyBinding.Parse(
             string.IsNullOrWhiteSpace(c.FormationKey) ? "CTRL+SHIFT+F" : c.FormationKey, 0x46, "CTRL+SHIFT+F");
-        _recordMarkerKeyBinding = WtHud.Input.KeyBinding.Parse(
-            string.IsNullOrWhiteSpace(c.RecordMarkerKey) ? "CTRL+ALT+M" : c.RecordMarkerKey, 0x4D, "CTRL+ALT+M");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
                           $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
     }

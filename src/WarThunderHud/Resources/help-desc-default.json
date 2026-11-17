@@ -763,9 +763,5 @@
   "row.recKeep": {
     "zh": "最多保留多少个记录文件（默认 20）；超出时自动删除最老的，给新文件留位置。",
     "en": "How many recording files to keep (default 20); the oldest are deleted to make room."
-  },
-  "row.recMarker": {
-    "zh": "记录过程中按这个键会在时间轴上写一行 marker，方便回看某一刻。",
-    "en": "Pressing this key while recording writes a marker line into the log."
   }
 }

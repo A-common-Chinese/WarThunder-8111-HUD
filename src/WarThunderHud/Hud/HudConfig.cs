@@ -378,9 +378,6 @@ public sealed class HudConfig
     /// <summary>最多保留多少个记录文件（默认 20；超出删除最老的）。</summary>
     [JsonPropertyName("recordKeep")] public int RecordKeep { get; set; } = 20;
 
-    /// <summary>记录过程中打标记的热键（只写入一行 marker，不改变记录开关）。</summary>
-    [JsonPropertyName("recordMarkerKey")] public string RecordMarkerKey { get; set; } = "CTRL+ALT+M";
-
     /// <summary>
     /// 目标过载（G）。默认 3.0，范围 1.2–9.0。
     /// <para>换算成目标坡度 φ = acos(1/n) 与目标转向率 ω = g·√(n²−1)/V：
