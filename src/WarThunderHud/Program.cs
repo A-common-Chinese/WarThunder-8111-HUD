@@ -1730,7 +1730,7 @@ public static partial class Program
             var snap = frac > 0.02 ? Extrapolate(prevSnapshot, rawSnap, frac) : rawSnap;
 
             // 飞行数据记录：只本机、自动按对局；写盘在记录器自己的线程。
-            UpdateFlightRecording(cfg, rawSnap);
+            UpdateFlightRecording(cfg, rawSnap, mapData.Self is not null);
 
 
             // Animate the aiming-layout transition (~0.28 s) instead of snapping.
@@ -3224,10 +3224,12 @@ public static partial class Program
 
 
     /// <summary>
-    /// 飞行数据记录：只本机。开始 = 第一次拿到有效遥测；结束 = 不再发包（5 秒没有新快照）。
+    /// 飞行数据记录：只本机。开始 = 第一次「对局内（map_obj 有自己的图标）+ 有效遥测」；
+    /// 结束 = 5 秒无新快照，或连续 60 秒不在对局（回大厅/结算）。
     /// 死亡不停止记录（复活模式同一文件继续），只写一行事件；复活/换机型也写事件。
+    /// 注意：8111 在机库里仍报 valid=true、机型也在，所以「是否对局」只能靠 map self 判断。
     /// </summary>
-    private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap)
+    private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
     {
         long nowTicks = Environment.TickCount64;
 
@@ -3237,11 +3239,12 @@ public static partial class Program
         {
             recLastStampUtc = latest!.TimestampUtc;
             recLastPacketTicks = nowTicks;
-            // 大厅里 8111 仍在应答、但 valid=false：连续 60 秒无效也算这局结束。
-            if (snap.Valid) recInvalidSince = 0;
-            else if (recInvalidSince == 0) recInvalidSince = nowTicks;
         }
         bool packetsAlive = recLastPacketTicks != 0 && nowTicks - recLastPacketTicks < 5000;
+
+        // 大厅/结算：map 里没有自己；60 秒都不在局内才收尾（复活观战期间也算「不在」）。
+        if (inBattle) recOutSince = 0;
+        else if (recOutSince == 0) recOutSince = nowTicks;
 
         if (!cfg.RecordEnabled)
         {
@@ -3251,21 +3254,21 @@ public static partial class Program
                 flightRecorder = null;
                 recLastStampUtc = default;
                 recLastPacketTicks = 0;
-                recInvalidSince = 0;
+                recOutSince = 0;
                 Console.WriteLine("recording stopped (toggle off)");
             }
             return;
         }
 
-        // 自动开始：第一次拿到有效遥测。
+        // 自动开始：进入对局且拿到有效遥测。
         if (flightRecorder == null)
         {
-            if (!snap.Valid) return;
+            if (!snap.Valid || !inBattle) return;
             flightRecorder = FlightRecorder.Start(cfg, snap);
             recLastPacketTicks = nowTicks;
             recValidPrev = true;
             recVehiclePrev = snap.VehicleType;
-            recInvalidSince = 0;
+            recOutSince = 0;
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
@@ -3291,19 +3294,19 @@ public static partial class Program
             }
 
             if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
-            if (snap.Valid) flightRecorder.Add(snap, lastAttitude);
+            if (snap.Valid && inBattle) flightRecorder.Add(snap, lastAttitude);
         }
 
-        // 对局结束 = 不再发包（5 秒无新快照）或 持续 60 秒 valid=false（回大厅/结算）。
-        bool idleInvalid = recInvalidSince != 0 && nowTicks - recInvalidSince > 60_000;
-        if (!packetsAlive || idleInvalid)
+        // 对局结束 = 不再发包（5 秒无新快照）或 连续 60 秒不在对局（回大厅）。
+        bool idleOut = recOutSince != 0 && nowTicks - recOutSince > 60_000;
+        if (!packetsAlive || idleOut)
         {
             flightRecorder.Stop();
             flightRecorder = null;
             recLastStampUtc = default;
             recLastPacketTicks = 0;
-            recInvalidSince = 0;
-            Console.WriteLine(idleInvalid
+            recOutSince = 0;
+            Console.WriteLine(idleOut
                 ? "recording stopped (out of battle for 60 s)"
                 : "recording stopped (no telemetry)");
         }
@@ -3542,7 +3545,7 @@ public static partial class Program
     private static DateTime recLastStampUtc;
     private static bool recValidPrev = true;
     private static string recVehiclePrev = "";
-    private static long recInvalidSince;
+    private static long recOutSince;
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
