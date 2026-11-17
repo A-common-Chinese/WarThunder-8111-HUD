@@ -54,12 +54,16 @@ python -m flightlog "D:\...\Replays\#2026.11.15 15.24.09.wrpl" --player HCN_WT -
 
 `FlightLog.exe` 与 WtHud 完全分离，可以单独启动，**不需要安装 Python**：
 
-- **双击** → 弹出文件选择框（默认目录 `桌面\WtHud-发布\recordings`，回放默认找 War Thunder 的 `Replays`）→
-  选 `.jsonl` 或 `.wrpl` → 自动生成 HTML 并用默认浏览器打开；选到回放会先弹**玩家多选**对话框
-- 也可以把日志/回放文件**拖到 exe 图标上**
+- **双击** → 先弹出一个**来源选择小窗**：
+  - `War Thunder 回放（.wrpl）` → 文件框直接打开 War Thunder 的 `Replays` 目录
+  - `WtHud 飞行记录（.jsonl）` → 文件框直接打开 exe 旁边的 `recordings` 目录
+  - 取消则退出
+- 选文件后自动生成 HTML 并用默认浏览器打开；选到回放会再弹**玩家多选**对话框
+- 也可以把日志/回放文件**拖到 exe 图标上**（跳过选择小窗，按扩展名自动识别）
 - 报告写到 `%LOCALAPPDATA%\WtHud\flightlog\`，文件名带时间戳，不会覆盖旧报告
 - 重新打包：双击 `build_exe.bat`（需要本机 Python + `pip install pyinstaller`），产物在
   `flightlog\dist\FlightLog.exe`；脚本会把 `wrpl-acmi.exe` 一起复制到 `dist\`
+- 自动化调用可加 `--mode jsonl|wrpl` 跳过启动选择窗（仍需给出文件路径）
 
 ### 自检
 
