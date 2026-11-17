@@ -249,6 +249,15 @@ def _parse_argv(argv: list[str]) -> tuple[Path | None, list[str], str | None]:
 
 
 def main(argv: list[str]) -> int:
+    # ``--mfd-json`` 是 flightlog 包自己的 CLI 选项：直接转交给 __main__ 的实现，
+    # 这样打包成 FlightLog.exe 后 ``FlightLog.exe --mfd-json ...`` 与
+    # ``python -m flightlog --mfd-json ...`` 行为一致（HUD 侧只需调 exe）。
+    cli_argv = argv[1:]
+    if any(token == "--mfd-json" or token.startswith("--mfd-json=") for token in cli_argv):
+        from flightlog.__main__ import main as flightlog_main
+
+        return flightlog_main(cli_argv)
+
     path, players, mode = _parse_argv(argv)
 
     if path is not None:

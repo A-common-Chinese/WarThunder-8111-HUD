@@ -22,6 +22,10 @@
 
     # 只打印统计 JSON（不写 HTML）
     python -m flightlog wtlog-xxx.jsonl --summary
+
+    # 导出 HUD MFD 面板用的机器可读 JSON（schema=1）
+    python -m flightlog --mfd-json wtlog-xxx.jsonl --out "%TEMP%\\mfd.json"
+    python -m flightlog --mfd-json wtlog-xxx.jsonl        # 不给 --out 时 stdout 输出纯 JSON
 """
 
 from __future__ import annotations
@@ -68,11 +72,26 @@ def build_parser() -> argparse.ArgumentParser:
             "默认 HTML 输出目录: " + str(default_out_dir())
         ),
     )
-    parser.add_argument("log", help="wtlog-*.jsonl 日志、.wrpl 回放或 .acmi 文件路径")
+    parser.add_argument(
+        "log",
+        nargs="?",
+        default=None,
+        help="wtlog-*.jsonl 日志、.wrpl 回放或 .acmi 文件路径",
+    )
     parser.add_argument(
         "--out",
-        help="HTML 输出路径（默认 <工具目录>/out/<文件名>.html）",
+        help="HTML 输出路径（默认 <工具目录>/out/<文件名>.html）；配合 --mfd-json 时是 JSON 输出路径",
         default=None,
+    )
+    parser.add_argument(
+        "--mfd-json",
+        dest="mfd_json",
+        default=None,
+        metavar="LOG",
+        help=(
+            "导出 WtHud MFD 面板用的机器可读 JSON（schema=1）；"
+            "不给 --out 时把纯 JSON 写到 stdout（不混日志）"
+        ),
     )
     parser.add_argument(
         "--summary",
@@ -148,6 +167,107 @@ def _print_summary_line(model) -> None:
             "--" if totals["energy_max_m"] is None else "%.0f" % totals["energy_max_m"],
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# MFD 导出模式（--mfd-json）
+# ---------------------------------------------------------------------------
+
+
+def _say(text: str, stream: str = "stderr") -> None:
+    """安全输出一行（PyInstaller ``--noconsole`` 下 stdout/stderr 可能是 None）。"""
+    handle = getattr(sys, stream, None)
+    if handle is None:
+        return
+    try:
+        handle.write(text + "\n")
+        handle.flush()
+    except Exception:
+        pass
+
+
+def _mfd_model(target: str, args):
+    """读取日志/ACMI 得到 ``LogModel``（MFD 只要模型，不渲染 HTML/SVG）。"""
+    from .parse import LogError, analyze
+    from .replay import describe_source
+
+    kind = describe_source(target)
+    if kind == "wrpl":
+        raise LogError(
+            "--mfd-json 暂不支持 .wrpl 回放（需要先转 ACMI）；"
+            "请给 .jsonl 日志，或把回放转成 .acmi 后再导出"
+        )
+    if kind == "acmi":
+        from .acmi import resolve_players
+        from .replay import open_acmi
+
+        session = open_acmi(target)
+        names = _split_players(args.player)
+        if names:
+            chosen = resolve_players(session.players, names)
+        else:
+            chosen = [max(session.players, key=lambda item: item.updates)]
+            _say(
+                "MFD: 自动选择样本最多的玩家 %s（可用 --player 指定）"
+                % chosen[0].name
+            )
+        return session.model_for(players=chosen, gap_split_s=args.gap)
+    if args.player or args.list_players:
+        raise LogError(
+            "--player / --list 只对回放（.wrpl / .acmi）有效；JSONL 日志里没有玩家信息"
+        )
+    return analyze(target, gap_split_s=args.gap)
+
+
+def _mfd_main(args) -> int:
+    """``--mfd-json``：导出 MFD JSON。有 ``--out`` 写文件（stdout 不输出），否则 stdout 只有 JSON。"""
+    from .mfd import build_mfd_payload, dump_mfd_json, write_mfd_json
+    from .parse import LogError
+
+    target = args.mfd_json
+    if args.log and os.path.abspath(args.log) != os.path.abspath(target):
+        _say(
+            "错误: 位置参数 %s 与 --mfd-json %s 指向不同文件"
+            % (args.log, target)
+        )
+        return 2
+    if args.summary or args.png or args.list_players:
+        _say("错误: --summary / --png / --list 不能和 --mfd-json 一起用")
+        return 2
+
+    try:
+        model = _mfd_model(target, args)
+        payload = build_mfd_payload(model)
+    except LogError as exc:
+        _say("错误: %s" % exc)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - 自动化调用要拿到明确退出码而不是崩栈
+        _say("错误: MFD 导出失败: %s" % exc)
+        return 2
+
+    if args.out:
+        try:
+            written = write_mfd_json(payload, args.out)
+            size_kb = os.path.getsize(written) / 1024.0
+        except OSError as exc:
+            _say("错误: 无法写入 %s (%s)" % (args.out, exc))
+            return 2
+        # 有 --out 时 stdout 保持干净（日志只走 stderr）
+        _say("MFD JSON: %s (%.1f KB)" % (written, size_kb))
+        return 0
+
+    text = dump_mfd_json(payload)
+    handle = sys.stdout
+    if handle is None:
+        _say("错误: 当前程序没有 stdout（窗口模式），请用 --out 指定 JSON 输出路径")
+        return 2
+    try:
+        handle.write(text + "\n")
+        handle.flush()
+    except OSError as exc:
+        _say("错误: 写 stdout 失败: %s" % exc)
+        return 2
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +469,13 @@ def _render_png(model, target: str) -> None:
 def main(argv: Optional[List[str]] = None) -> int:
     _utf8_stdout()
     args = build_parser().parse_args(argv)
+
+    if args.mfd_json:
+        return _mfd_main(args)
+
+    if not args.log:
+        _say("错误: 缺少输入文件（给位置参数 log 或 --mfd-json LOG）")
+        return 2
 
     from .replay import describe_source
 
