@@ -17,7 +17,8 @@
 6. 比能量公式与能量变化率符号/数值；
 7. 时间跳变自动切架次；
 8. 统计摘要可 JSON 序列化；
-9. 生成的 HTML 自包含（无外链脚本/样式/图片）、含事件与图表；
+9. 生成的 HTML 是**翻页结构**（概览 + 每个数据主题一页、页码/导航/圆点、架次选择器、
+   每页都有事件时间线），且自包含（无外链脚本/样式/图片）；
 10. CLI ``--summary`` / ``--out`` 可用。
 """
 
@@ -29,6 +30,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -311,9 +313,9 @@ def test_parse_old(tmp: Path) -> None:
     check(any("旧格式" in w or "vehicle" in w for w in model.warnings), "给出旧格式/缺字段提示")
 
     html = render_report(model)
-    check('<div class="ptitle">姿态</div>' not in html, "没有姿态数据时不画姿态面板")
+    check('id="page-attitude"' not in html, "没有姿态数据时不生成姿态页")
     check("background:#2f9e75" not in html, "没有 ralt 数据时不画雷达高度图例")
-    check("全局总览" in html, "两个架次（时间跳变）会生成全局总览")
+    check('id="page-global"' in html, "两个架次（时间跳变）会生成全局总览页")
 
 
 def test_energy_helpers() -> None:
@@ -345,7 +347,7 @@ def test_energy_helpers() -> None:
 
 
 def test_report_html(tmp: Path) -> None:
-    print("\n[4] HTML 报告：自包含 / 事件 / 图表 / 转义")
+    print("\n[4] HTML 报告：分页结构 / 自包含 / 事件 / 图表")
     path = tmp / "full.jsonl"
     if not path.exists():
         build_full_log(path)
@@ -357,15 +359,101 @@ def test_report_html(tmp: Path) -> None:
     check('<meta charset="utf-8">' in html, "声明 UTF-8")
     check("飞行日志分析" in html, "包含中文标题（UTF-8 正常）")
     check("window.__FLIGHTLOG__=" in html, "内联了悬停数据")
+    check("<script>window.__FLIGHTLOG__=" in html, "数据脚本内联在页面里")
+
+    # ---- 自包含（无任何外链）----
     check("<script src" not in html, "没有外链脚本")
     check("<link" not in html, "没有外链样式")
     check("<img" not in html, "没有外部图片")
     check("@import" not in html, "没有 CSS @import")
-    check(html.count("<svg ") >= 8, "内联 SVG 图数量 >= 8（%d）" % html.count("<svg "))
-    check("死亡" in html and "dEs/dt" in html, "包含事件标签与能量变化率")
+    check('src="http' not in html and 'href="http' not in html, "没有 http(s) 外链资源")
+
+    # ---- 翻页结构：概览 + 每个数据主题一页 ----
+    page_ids = re.findall(r'<section class="page[^"]*" id="(page-[a-z_]+)"', html)
+    check(len(page_ids) == 9,
+          "共 9 页（概览 + 7 个数据主题 + 全局总览），实际 %d 页" % len(page_ids))
+    check(page_ids[0] == "page-overview", "第 1 页是概览（汇总卡片 + Es 缩略图）")
+    check(
+        page_ids[1:8]
+        == [
+            "page-speed",
+            "page-altitude",
+            "page-energy",
+            "page-energy_rate",
+            "page-vy",
+            "page-aoa_ny",
+            "page-attitude",
+        ],
+        "速度/高度/Es/dEs/dt/Vy/迎角过载/姿态 各一页且顺序固定",
+    )
+    check(page_ids[-1] == "page-global", "多架次时最后追加全局总览页")
+    check(html.count('<section class="page') == 9, "每页一个 .page 容器（翻页用 CSS 切换）")
+    check(html.count('<section class="page active"') == 1, "初始只有第 1 页带 active")
+    check(html.count('class="flight-view') == 24,
+          "8 个可切换页 × 3 架次 = 24 个架次视图（切架次只换当前页）")
+    check(html.count('class="flight-view active" data-flight="1"') == 8,
+          "每个可切换页默认显示架次 1")
+
+    # ---- 页码 / 导航 / 圆点 / 架次选择器 ----
+    check(html.count('id="page-label"') == 1, "有页码容器 #page-label")
+    check("第 1 / 9 页" in html, "初始页码文字为 第 1 / 9 页")
+    check(html.count('id="dots"') == 1, "有圆点导航容器 #dots")
+    check('class="dot"' not in html, "圆点由内联 JS 生成（不占静态体积）")
+    check(html.count('data-nav="prev"') >= 2 and 'class="side prev"' in html,
+          "上一页按钮有底部 + 左侧两份")
+    check(html.count('data-nav="next"') >= 2 and 'class="side next"' in html,
+          "下一页按钮有底部 + 右侧两份")
+    check(html.count('data-flight-btn="') == 3, "3 架次有分段按钮选择器")
+    check('data-flight="' in html and "isShown" in html,
+          "视图带架次标记，悬停只联动当前页/当前架次")
+
+    # ---- 每页固定铺满视口（不做长滚动）----
+    check("html,body{height:100%" in html and "overflow:hidden" in html,
+          "视口固定高度 + 隐藏长滚动")
+    check(".page.active{display:flex}" in html, "翻页用 .page.active 切换显示")
+    check(".flight-view.active{display:flex}" in html, "切架次用 .flight-view.active 切换")
+    check('preserveAspectRatio="none"' in html, "SVG 铺满页面容器（不退化成小图）")
+
+    # ---- 每页都有事件竖线/标签 + 图表 ----
+    check(html.count('class="strip"') >= 9, "事件时间线出现在每一页")
+    check('id="ev-f1-speed"' in html and 'id="ev-f3-energy"' in html,
+          "每页事件条 id 唯一（架次 + 页）")
+    check(html.count("<svg ") >= 20, "内联 SVG 图数量 >= 20（%d）" % html.count("<svg "))
     check("svg-f1-speed" in html and "svg-f3-speed" in html, "三个架次都有速度图")
-    check(html.count('id="flight-') == 3, "三个架次小节都渲染")
-    check("<script>window.__FLIGHTLOG__=" in html, "数据脚本内联在页面里")
+    check("svg-f1-attitude" in html, "姿态页有姿态图")
+    check("svg-ovf1-es" in html and "svg-ovf3-es" in html, "概览页有每架次的 Es 缩略图")
+    check("死亡" in html and "dEs/dt" in html, "包含事件标签与能量变化率")
+    check('href="#flight-' not in html, "不再使用长页面锚点跳转")
+
+    svg_ids = re.findall(r'id="(svg-[^"]+)"', html)
+    check(len(svg_ids) == len(set(svg_ids)), "SVG id 不重复（%d 个）" % len(svg_ids))
+    strip_ids = re.findall(r'id="(ev-[^"]+)"', html)
+    check(len(strip_ids) == len(set(strip_ids)), "事件条 id 不重复（%d 个）" % len(strip_ids))
+
+    # ---- 交互脚本 ----
+    check("function showPage" in html and '"keydown"' in html and "PageDown" in html,
+          "内联 JS 含翻页函数与 ←/→/PageUp/PageDown 键盘处理")
+    check("replaceState" in html, "翻页时同步 URL hash（可直链某页）")
+    check("flight-select" in html or "data-flight-btn" in html, "架次切换逻辑内联")
+
+    # ---- 混合日志：某架次没有某个主题 -> 页面仍生成，该架次显示占位 ----
+    mixed = tmp / "mixed.jsonl"
+    mixed_lines = [
+        json.dumps(
+            {"type": "meta", "schema": 1, "app": "0.4.0", "utc": _iso(EPOCH0),
+             "vehicle": "f_15ex", "rate": "per-sample"}
+        )
+    ]
+    for i in range(6):  # 架次 1：旧样本，没有姿态
+        mixed_lines.append(json.dumps(_old_sample(1.0 + 0.4 * i, EPOCH0)))
+    for i in range(6):  # 架次 2：有姿态（时间跳变切架次）
+        mixed_lines.append(json.dumps(_sample(120.0 + 0.4 * i, EPOCH0)))
+    mixed.write_text("\n".join(mixed_lines) + "\n", encoding="utf-8")
+    mixed_html = render_report(P.analyze(str(mixed)))
+    check('id="page-attitude"' in mixed_html,
+          "混合日志：只要有一个架次有姿态数据就生成姿态页")
+    check("该架次没有此项数据" in mixed_html,
+          "缺该主题数据的架次显示占位提示而非空白页")
 
     out = tmp / "report.html"
     from flightlog.report import write_report

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""把解析后的飞行日志渲染成一个**自包含单文件 HTML**。
+"""把解析后的飞行日志渲染成一个**自包含单文件 HTML（翻页式）**。
 
 特点：
 
-* 不依赖任何外部资源（无 CDN / 无图片 / 无第三方 JS），离线可直接双击打开；
-* 图表全部用内联 SVG 在 Python 侧绘制好，**即使浏览器禁用脚本也能看到图**；
-* 内联一小段 JS 只做"锦上添花"：鼠标悬停十字线 + 数值浮窗、架次跳转；
-* 事件（死亡 / 复活 / 换机型）以竖线 + 标签画在每条时间轴上方，并叠加在全部图上；
-* 多架次分段展示（每次 spawn / 换机型 / 时间跳变一节），顶栏还有全局总览。
+* **翻页视图**：第 1 页是概览（汇总卡片 + 比能量缩略图），之后每个数据主题一页
+  （速度 / 高度 / 比能量 Es / dEs/dt / Vy / 迎角与过载 / 姿态），多架次时最后追加
+  "全局总览"页；每页固定铺满视口，不做长滚动。
+* 翻页交互：底部 ``‹ 上一页`` / ``下一页 ›``、页码 ``第 3 / 8 页``、圆点导航、
+  左右两侧大按钮，键盘 ←/→、PageUp/PageDown、Home/End 均可翻页；
+* 多架次：页眉的架次选择器切换后，**当前页**的曲线换成该架次（事件竖线/标签保留）；
+* 图表全部用内联 SVG 在 Python 侧画好，**浏览器禁用脚本也能看到全部图**；
+* 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
+* 事件（死亡 / 复活 / 换机型）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
+* 不依赖任何外部资源（无 CDN / 图片 / 第三方 JS），离线双击即看。
 
 坐标/颜色/面板配置都集中在文件开头的常量里，方便调整。
 """
@@ -28,9 +33,11 @@ from .parse import EVENT_LABELS, Flight, LogModel
 # 版式与配色
 # ---------------------------------------------------------------------------
 
-VIEW_W = 1180.0
-MARGIN_L = 68.0
-MARGIN_R = 82.0
+#: SVG 内部坐标系宽度。页面用 preserveAspectRatio="none" 铺满容器，
+#: 因此这个值只决定"文字/线宽在 1500 单位里多大"，不决定实际像素。
+VIEW_W = 1500.0
+MARGIN_L = 78.0
+MARGIN_R = 96.0
 PLOT_LEFT = MARGIN_L
 PLOT_RIGHT = VIEW_W - MARGIN_R
 PLOT_W = PLOT_RIGHT - PLOT_LEFT
@@ -43,6 +50,13 @@ MAX_SVG_POINTS = 1800
 MAX_OVERVIEW_POINTS = 2600
 #: 序列在两条曲线之间断开的时间阈值（秒）
 PATH_GAP_S = 2.5
+
+#: 单页图表的 viewBox 高度（页面铺满时按容器比例拉伸）
+PAGE_CHART_H = 650.0
+#: 概览页比能量缩略图的 viewBox 高度
+THUMB_CHART_H = 470.0
+#: 全局总览页每张堆叠图的高度
+GLOBAL_CHART_H = 200.0
 
 COLORS = {
     "ias": "#4aa3ff",
@@ -278,7 +292,7 @@ class _XAxis:
 
 
 # ---------------------------------------------------------------------------
-# 面板配置
+# 面板配置（每个 key 对应报告里的一页）
 # ---------------------------------------------------------------------------
 
 
@@ -305,23 +319,27 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
 
 
 def _flight_panel_specs() -> List[Dict[str, Any]]:
+    """单架次的 7 个数据主题（顺序 = 报告里的页面顺序）。"""
+    height = PAGE_CHART_H
     return [
         {
             "key": "speed",
             "title": "速度",
-            "height": 250,
+            "subtitle": "IAS / TAS（左轴 km/h）与 Mach（右轴）",
+            "height": height,
             "left_unit": "km/h",
             "right_unit": "Mach",
             "series": [
                 _series("ias", "IAS 指示空速", COLORS["ias"], "km/h", decimals=0),
                 _series("tas", "TAS 真空速", COLORS["tas"], "km/h", decimals=0),
-                _series("mach", "Mach", COLORS["mach"], "", axis="right", decimals=2, width=1.4),
+                _series("mach", "Mach", COLORS["mach"], "", axis="right", decimals=2, width=1.2),
             ],
         },
         {
             "key": "altitude",
             "title": "高度",
-            "height": 195,
+            "subtitle": "气压高度 + 雷达高度（虚线，有数据才画）",
+            "height": height,
             "left_unit": "m",
             "series": [
                 _series("alt", "气压高度", COLORS["alt"], "m", decimals=0, width=1.8),
@@ -331,8 +349,8 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "energy",
             "title": "比能量高度 Es",
-            "subtitle": "Es = 高度 + 速度² / 2g（米）",
-            "height": 215,
+            "subtitle": "Es = 高度 + 速度² / 2g（米），面积填充",
+            "height": height,
             "left_unit": "m",
             "series": [
                 _series("es", "比能量高度 Es", COLORS["es"], "m", decimals=0, width=2.0, fill="min"),
@@ -341,8 +359,8 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "energy_rate",
             "title": "能量变化率 dEs/dt",
-            "subtitle": "正 = 获得能量（爬升或加速），负 = 损失能量",
-            "height": 205,
+            "subtitle": "绿色 = 获得能量（爬升或加速），红色 = 损失能量（m/s）",
+            "height": height,
             "left_unit": "m/s",
             "series": [
                 _series("des", "获得能量", COLORS["des_pos"], "m/s", decimals=1, width=1.4,
@@ -356,7 +374,8 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "vy",
             "title": "垂直速度 Vy",
-            "height": 175,
+            "subtitle": "爬升率为正、下降率为负（m/s）",
+            "height": height,
             "left_unit": "m/s",
             "series": [
                 _series("vy", "Vy 垂直速度", COLORS["vy"], "m/s", decimals=1, width=1.6,
@@ -366,7 +385,8 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "aoa_ny",
             "title": "迎角与过载",
-            "height": 200,
+            "subtitle": "AoA 迎角（左轴 °）+ Ny 过载（右轴 g）",
+            "height": height,
             "left_unit": "°",
             "right_unit": "g",
             "series": [
@@ -377,24 +397,41 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "attitude",
             "title": "姿态",
-            "height": 195,
+            "subtitle": "Pitch 俯仰（左轴 °）+ Bank 滚转（右轴 °）",
+            "height": height,
             "left_unit": "°",
             "right_unit": "°",
             "series": [
                 _series("pitch", "Pitch 俯仰", COLORS["pitch"], "°", decimals=1, width=1.6),
                 _series("bank", "Bank 滚转", COLORS["bank"], "°", axis="right", decimals=1,
-                        width=1.4),
+                        width=1.2),
             ],
         },
     ]
 
 
+def _thumb_panel_spec() -> Dict[str, Any]:
+    """概览页的比能量缩略图。"""
+    return {
+        "key": "es_thumb",
+        "title": "比能量高度 Es",
+        "subtitle": "Es = 高度 + 速度² / 2g（米）",
+        "height": THUMB_CHART_H,
+        "left_unit": "m",
+        "series": [
+            _series("es", "比能量高度 Es", COLORS["es"], "m", decimals=0, width=2.0, fill="min"),
+        ],
+    }
+
+
 def _overview_panel_specs() -> List[Dict[str, Any]]:
+    """多架次"全局总览"页：三张堆叠的合并时间轴图。"""
+    height = GLOBAL_CHART_H
     return [
         {
             "key": "speed",
             "title": "速度（全局）",
-            "height": 145,
+            "height": height,
             "left_unit": "km/h",
             "right_unit": "Mach",
             "series": [
@@ -406,7 +443,7 @@ def _overview_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "altitude",
             "title": "高度（全局）",
-            "height": 140,
+            "height": height,
             "left_unit": "m",
             "series": [
                 _series("alt", "气压高度", COLORS["alt"], "m", decimals=0, width=1.3),
@@ -416,7 +453,7 @@ def _overview_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "energy",
             "title": "比能量高度 Es（全局）",
-            "height": 155,
+            "height": height,
             "left_unit": "m",
             "series": [
                 _series("es", "Es", COLORS["es"], "m", decimals=0, width=1.5, fill="min"),
@@ -795,7 +832,7 @@ def _render_event_strip(
     height = 38.0
     xaxis = _XAxis(t0, t1, PLOT_LEFT, PLOT_RIGHT)
     parts: List[str] = [
-        '<svg id="%s" viewBox="0 0 %.0f %.1f" class="event-strip-svg"'
+        '<svg id="%s" viewBox="0 0 %.0f %.1f" class="strip-svg"'
         ' preserveAspectRatio="none" role="img" aria-label="事件时间线">'
         % (strip_id, VIEW_W, height)
     ]
@@ -935,16 +972,34 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
     events = _visible_events(_events_dicts(flight), t0, t1)
     regions = _invalid_regions(series) + _post_death_regions(flight)
 
-    kept = _render_all_panels(
-        _flight_panel_specs(),
+    # 每个数据主题渲染一张独立的 SVG（每页一张，都带时间刻度）
+    blocks: Dict[str, Dict[str, Any]] = {}
+    panels: List[Dict[str, Any]] = []
+    for spec in _flight_panel_specs():
+        chart_id = "f%d-%s" % (flight.index, spec["key"])
+        block = _render_chart(
+            spec, times, series, t0, t1, chart_id, True, events=events, regions=regions
+        )
+        if block is None:
+            continue
+        blocks[spec["key"]] = block
+        panels.append(block["geometry"])
+
+    thumb_spec = _thumb_panel_spec()
+    thumb = _render_chart(
+        thumb_spec,
         times,
         series,
         t0,
         t1,
-        "f%d" % flight.index,
+        "ovf%d-es" % flight.index,
+        True,
         events=events,
         regions=regions,
     )
+    if thumb is not None:
+        panels.append(thumb["geometry"])
+
     return {
         "index": flight.index,
         "title": "架次 %d · %s · %s – %s"
@@ -954,17 +1009,17 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
             _fmt_number(t0, 1) + "s",
             _fmt_number(flight.end_t, 1) + "s",
         ),
+        "vehicle": flight.vehicle or "未知机型",
         "reason_label": flight.stats.get("reason_label"),
         "t0": t0,
         "t1": t1,
         "times": payload_series["t"],
         "series": payload_series,
-        "panels": [block["geometry"] for _spec, block in kept],
-        "html": {
-            "strip": _render_event_strip(events, t0, t1, "ev-f%d" % flight.index),
-            "blocks": kept,
-            "events": events,
-        },
+        "panels": panels,
+        "blocks": blocks,
+        "thumb": thumb,
+        "events": events,
+        "badges": _flight_badges(flight),
     }
 
 
@@ -1053,31 +1108,76 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# HTML 组装
+# 卡片 / 徽标
 # ---------------------------------------------------------------------------
 
 
 def _cards(model: LogModel) -> List[Dict[str, str]]:
     totals = model.summary["totals"]
     counts = model.summary["counts"]
+    time = model.summary.get("time") or {}
+    span = time.get("span_s") or 0.0
+    samples = counts.get("samples") or 0
+    rate = (samples - 1) / span if span > 0 and samples > 1 else None
+
+    event_counts = model.summary.get("event_counts") or {}
+    ev_bits = []
+    for kind, label in (("death", "死亡"), ("spawn", "复活"), ("vehicle_change", "换机型")):
+        if event_counts.get(kind):
+            ev_bits.append("%s %d" % (label, event_counts[kind]))
+
+    ralt_max: Optional[float] = None
+    for flight in model.flights:
+        value = (flight.stats.get("ralt") or {}).get("max")
+        if value is not None and (ralt_max is None or value > ralt_max):
+            ralt_max = value
+
     cards = [
-        {"label": "总时长", "value": _fmt_number(totals["duration_s"], 1) + " s",
-         "sub": "%s 个样本" % counts["samples"]},
-        {"label": "架次", "value": str(counts["flights"]),
-         "sub": "%s 个事件" % counts["events"]},
-        {"label": "最大 IAS", "value": _fmt_number(totals["max_ias_kmh"], 0) + " km/h",
-         "sub": "TAS %s km/h" % _fmt_number(totals["max_tas_kmh"], 0)},
-        {"label": "最大 Mach", "value": _fmt_number(totals["max_mach"], 2),
-         "sub": "最高 %s m" % _fmt_number(totals["max_alt_m"], 0)},
-        {"label": "最大过载", "value": _fmt_number(totals["max_ny_g"], 2) + " g",
-         "sub": "最大滚转 %s°" % _fmt_number(totals["max_bank_deg"], 1)},
-        {"label": "比能量范围",
-         "value": "%s – %s m" % (
-             _fmt_number(totals["energy_min_m"], 0),
-             _fmt_number(totals["energy_max_m"], 0),
-         ),
-         "sub": "空中能量变化 %s m"
-         % _fmt_number(totals.get("energy_delta_inflight_m"), 0)},
+        {
+            "label": "总时长",
+            "value": _fmt_number(totals["duration_s"], 1) + " s",
+            "sub": "%s 个样本" % samples,
+        },
+        {
+            "label": "采样率",
+            "value": (_fmt_number(rate, 1) + " Hz") if rate else "—",
+            "sub": "采样 %s" % (model.meta.get("rate") or "?"),
+        },
+        {
+            "label": "最大 IAS",
+            "value": _fmt_number(totals["max_ias_kmh"], 0) + " km/h",
+            "sub": "TAS %s km/h" % _fmt_number(totals["max_tas_kmh"], 0),
+        },
+        {
+            "label": "最大 Mach",
+            "value": _fmt_number(totals["max_mach"], 2),
+            "sub": "最大高度 %s m" % _fmt_number(totals["max_alt_m"], 0),
+        },
+        {
+            "label": "最大高度",
+            "value": _fmt_number(totals["max_alt_m"], 0) + " m",
+            "sub": "雷达 %s m" % _fmt_number(ralt_max, 0),
+        },
+        {
+            "label": "最大过载",
+            "value": _fmt_number(totals["max_ny_g"], 2) + " g",
+            "sub": "最大滚转 %s°" % _fmt_number(totals["max_bank_deg"], 1),
+        },
+        {
+            "label": "比能量范围",
+            "value": "%s – %s m"
+            % (
+                _fmt_number(totals["energy_min_m"], 0),
+                _fmt_number(totals["energy_max_m"], 0),
+            ),
+            "sub": "空中能量变化 %s m"
+            % _fmt_number(totals.get("energy_delta_inflight_m"), 0),
+        },
+        {
+            "label": "事件数",
+            "value": str(counts["events"]),
+            "sub": " · ".join(ev_bits) if ev_bits else "无事件",
+        },
     ]
     return cards
 
@@ -1086,6 +1186,7 @@ def _flight_badges(flight: Flight) -> List[str]:
     stats = flight.stats
     energy = stats["energy"]
     badges = [
+        "机型 %s" % (flight.vehicle or "未知"),
         "时长 %s s" % _fmt_number(stats["duration_s"], 1),
         "样本 %d" % stats["samples"],
         "最大 IAS %s km/h" % _fmt_number(stats["ias"]["max"], 0),
@@ -1110,13 +1211,275 @@ def _html_escape(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
+# ---------------------------------------------------------------------------
+# 页面组装
+# ---------------------------------------------------------------------------
+
+
+def _strip_html(flight_payload: Dict[str, Any], page_key: str) -> str:
+    """一页一份事件时间线（id 按 架次+页 唯一，避免重复 id）。"""
+    strip = _render_event_strip(
+        flight_payload["events"],
+        flight_payload["t0"],
+        flight_payload["t1"],
+        "ev-f%d-%s" % (flight_payload["index"], page_key),
+    )
+    return strip or ""
+
+
+def _flight_view_html(
+    flight_payload: Dict[str, Any],
+    page_key: str,
+    block: Optional[Dict[str, Any]],
+    is_active: bool,
+    badges_html: str = "",
+) -> str:
+    """一页里"某个架次"的可切换内容：事件条 + 图例 + 图。"""
+    parts = [
+        '<div class="flight-view%s" data-flight="%d">'
+        % (" active" if is_active else "", flight_payload["index"])
+    ]
+    if badges_html:
+        parts.append(badges_html)
+    strip = _strip_html(flight_payload, page_key)
+    if strip:
+        parts.append('<div class="strip">%s</div>' % strip)
+    if block is None:
+        parts.append('<div class="empty">该架次没有此项数据</div>')
+    else:
+        parts.append('<div class="legend">%s</div>' % block["legend"])
+        parts.append('<div class="chart-wrap">%s</div>' % block["svg"])
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _overview_page_html(
+    flight_payloads: Sequence[Dict[str, Any]],
+    default_index: int,
+    cards_html: str,
+    warnings_html: str,
+) -> str:
+    views: List[str] = []
+    for flight_payload in flight_payloads:
+        badges = "".join("<span>%s</span>" % _html_escape(b) for b in flight_payload["badges"])
+        views.append(
+            _flight_view_html(
+                flight_payload,
+                "overview",
+                flight_payload["thumb"],
+                flight_payload["index"] == default_index,
+                badges_html='<div class="badges">%s</div>' % badges,
+            )
+        )
+    return (
+        '<section class="page active" id="page-overview" data-page="overview">'
+        '<div class="page-head"><div class="page-title">概览</div>'
+        '<div class="page-sub">汇总指标 + 比能量缩略图；多架次时用右上角切换</div>'
+        '<div class="page-right">按 ← → 或 PageUp/PageDown 翻页</div></div>'
+        '<div class="page-body"><div class="ovwrap">'
+        '<div class="cards">%s</div>'
+        "%s"
+        '<div class="ovchart">%s</div>'
+        "</div></div></section>"
+        % (
+            cards_html,
+            warnings_html,
+            "".join(views),
+        )
+    )
+
+
+def _data_page_html(spec: Dict[str, Any], views_html: str) -> str:
+    key = spec["key"]
+    units = []
+    if spec.get("left_unit"):
+        units.append("左轴 %s" % spec["left_unit"])
+    if spec.get("right_unit"):
+        units.append("右轴 %s" % spec["right_unit"])
+    units.append("时间轴 秒 (s)")
+    return (
+        '<section class="page" id="page-%s" data-page="%s">'
+        '<div class="page-head"><div class="page-title">%s</div>'
+        '<div class="page-sub">%s</div>'
+        '<div class="page-right">%s</div></div>'
+        '<div class="page-body single">%s</div>'
+        "</section>"
+        % (
+            key,
+            key,
+            _html_escape(spec["title"]),
+            _html_escape(spec.get("subtitle") or ""),
+            _html_escape(" · ".join(units)),
+            views_html,
+        )
+    )
+
+
+def _global_page_html(overview: Dict[str, Any]) -> str:
+    items: List[str] = []
+    for spec, block in overview["html"]["blocks"]:
+        units = []
+        if block.get("left_unit"):
+            units.append("左轴 %s" % block["left_unit"])
+        if block.get("right_unit"):
+            units.append("右轴 %s" % block["right_unit"])
+        items.append(
+            '<div class="stack-item">'
+            '<div class="chart-label">%s<span>%s</span></div>'
+            '<div class="legend">%s</div>'
+            '<div class="chart-wrap">%s</div>'
+            "</div>"
+            % (
+                _html_escape(spec["title"]),
+                _html_escape(" · ".join(units)),
+                block["legend"],
+                block["svg"],
+            )
+        )
+    strip = overview["html"].get("strip")
+    return (
+        '<section class="page" id="page-global" data-page="global">'
+        '<div class="page-head"><div class="page-title">全局总览</div>'
+        '<div class="page-sub">全部架次拼在同一条时间轴上，竖虚线为架次边界</div>'
+        '<div class="page-right">时间轴 秒 (s)</div></div>'
+        '<div class="page-body"><div class="stackwrap">'
+        "%s%s"
+        "</div></div></section>"
+        % (
+            ('<div class="strip">%s</div>' % strip) if strip else "",
+            "".join(items),
+        )
+    )
+
+
+def _flight_selector_html(
+    flight_payloads: Sequence[Dict[str, Any]], default_index: int
+) -> str:
+    """架次选择器：<=6 架次用分段按钮，更多用下拉框（避免页眉被撑爆）。"""
+    if len(flight_payloads) < 2:
+        return ""
+    if len(flight_payloads) <= 6:
+        buttons: List[str] = []
+        for flight_payload in flight_payloads:
+            active = " active" if flight_payload["index"] == default_index else ""
+            buttons.append(
+                '<button type="button" class="fbtn%s" data-flight-btn="%d" title="%s">'
+                "架次 %d · %s</button>"
+                % (
+                    active,
+                    flight_payload["index"],
+                    _html_escape(flight_payload["title"]),
+                    flight_payload["index"],
+                    _html_escape(flight_payload["vehicle"]),
+                )
+            )
+        return '<div class="flights"><span class="flabel">架次</span>%s</div>' % "".join(buttons)
+    options: List[str] = []
+    for flight_payload in flight_payloads:
+        selected = " selected" if flight_payload["index"] == default_index else ""
+        options.append(
+            '<option value="%d"%s>架次 %d · %s</option>'
+            % (
+                flight_payload["index"],
+                selected,
+                flight_payload["index"],
+                _html_escape(flight_payload["vehicle"]),
+            )
+        )
+    return (
+        '<div class="flights"><label class="flabel" for="flight-select">架次</label>'
+        '<select id="flight-select" class="fselect">%s</select></div>' % "".join(options)
+    )
+
+
+def _build_payload(model: LogModel) -> Dict[str, Any]:
+    flight_payloads: List[Dict[str, Any]] = [
+        _build_flight_payload(flight) for flight in model.flights
+    ]
+    default_index = flight_payloads[0]["index"] if flight_payloads else 1
+
+    cards_html = "".join(
+        '<div class="card"><div class="k">%s</div><b>%s</b><span>%s</span></div>'
+        % (_html_escape(card["label"]), _html_escape(card["value"]), _html_escape(card["sub"]))
+        for card in _cards(model)
+    )
+
+    warnings = model.warnings or []
+    warnings_html = ""
+    if warnings:
+        items = "".join("<li>%s</li>" % _html_escape(w) for w in warnings)
+        warnings_html = '<div class="warn"><b>解析提示</b><ul>%s</ul></div>' % items
+
+    pages: List[str] = [
+        _overview_page_html(flight_payloads, default_index, cards_html, warnings_html)
+    ]
+    for spec in _flight_panel_specs():
+        views: List[str] = []
+        any_data = False
+        for flight_payload in flight_payloads:
+            block = flight_payload["blocks"].get(spec["key"])
+            if block is not None:
+                any_data = True
+            views.append(
+                _flight_view_html(
+                    flight_payload,
+                    spec["key"],
+                    block,
+                    flight_payload["index"] == default_index,
+                )
+            )
+        if not any_data:
+            continue
+        pages.append(_data_page_html(spec, "".join(views)))
+
+    overview = _overview_payload(model)
+    if overview is not None:
+        pages.append(_global_page_html(overview))
+
+    payload_flights = [
+        {
+            "index": flight_payload["index"],
+            "title": flight_payload["title"],
+            "t0": flight_payload["t0"],
+            "t1": flight_payload["t1"],
+            "times": flight_payload["times"],
+            "series": flight_payload["series"],
+            "panels": flight_payload["panels"],
+        }
+        for flight_payload in flight_payloads
+    ]
+
+    overview_data = None
+    if overview is not None:
+        overview_data = {key: value for key, value in overview.items() if key != "html"}
+
+    return {
+        "title": "飞行日志分析 · %s" % os.path.basename(model.path),
+        "file": os.path.basename(model.path),
+        "meta": model.meta,
+        "cards": _cards(model),
+        "warnings": warnings,
+        "overview": overview_data,
+        "flights": payload_flights,
+        "html": {
+            "pages": pages,
+            "page_count": len(pages),
+            "flight_selector": _flight_selector_html(flight_payloads, default_index),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# CSS / JS（内联，无外链）
+# ---------------------------------------------------------------------------
+
 CSS = """
 :root{
   --bg:#0a0e13; --panel:#0f151d; --panel2:#121a24; --line:#1e2a36;
   --text:#dde6f0; --muted:#8ea1b4; --accent:#4aa3ff;
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+html,body{height:100%;margin:0;padding:0;overflow:hidden}
 body{
   background:var(--bg); color:var(--text);
   font-family:"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",
@@ -1124,56 +1487,112 @@ body{
   font-size:14px; line-height:1.5;
   -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:1240px;margin:0 auto;padding:26px 20px 60px}
-header h1{font-size:24px;margin:0 0 4px;font-weight:650;letter-spacing:.3px}
-.subline{color:var(--muted);font-size:13px;word-break:break-all}
+.app{height:100%;display:flex;flex-direction:column;min-height:0}
+header{
+  flex:0 0 auto;display:flex;flex-direction:column;
+  padding:11px 22px 8px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,#0d141c,#0a0e13);
+}
+.hrow{display:flex;align-items:baseline;gap:14px;min-width:0;flex-wrap:wrap}
+header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.3px;white-space:nowrap}
+.subline{
+  color:var(--muted);font-size:12px;margin-top:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
 .subline code{background:#16202b;border:1px solid var(--line);padding:1px 5px;border-radius:4px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:10px;margin:16px 0 6px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 13px}
-.card b{display:block;font-size:18px;font-weight:650;letter-spacing:.2px;font-variant-numeric:tabular-nums}
-.card span{display:block;font-size:12px;color:var(--muted);margin-top:1px}
-.card .k{font-size:12px;color:var(--muted)}
-.nav{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 18px;align-items:center}
-.nav a{
-  color:var(--text);text-decoration:none;font-size:13px;
-  background:var(--panel2);border:1px solid var(--line);border-radius:999px;
-  padding:5px 12px;transition:.15s;
+.flights{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.flights .flabel{font-size:12px;color:var(--muted);margin-right:2px;white-space:nowrap}
+.fbtn{
+  font-family:inherit;font-size:12px;color:#c3d2e1;background:var(--panel2);
+  border:1px solid var(--line);border-radius:999px;padding:3px 11px;cursor:pointer;
+  transition:.15s;white-space:nowrap;
 }
-.nav a:hover{border-color:var(--accent);color:#fff}
-.nav .navlabel{color:var(--muted);font-size:12px;margin-right:2px}
-.warn{
-  background:#2c2113;border:1px solid #6a4a1c;color:#ffd79b;border-radius:9px;
-  padding:9px 13px;font-size:13px;margin:12px 0;
+.fbtn:hover{border-color:var(--accent);color:#fff}
+.fbtn.active{background:#12324f;border-color:var(--accent);color:#fff}
+.fselect{
+  font-family:inherit;font-size:12px;color:#c3d2e1;background:var(--panel2);
+  border:1px solid var(--line);border-radius:8px;padding:3px 8px;cursor:pointer;max-width:240px;
 }
-.warn ul{margin:4px 0 0;padding-left:20px}
-section.flight{
-  background:var(--panel);border:1px solid var(--line);border-radius:13px;
-  padding:16px 16px 10px;margin:18px 0;scroll-margin-top:14px;
-}
-section.flight:target{border-color:#31527a;box-shadow:0 0 0 1px #31527a inset}
-.fhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:2px}
-.fhead h2{font-size:17px;margin:0;font-weight:650}
-.reason{font-size:12px;color:#0a0e13;background:#7dd3fc;border-radius:4px;padding:1px 7px;font-weight:600}
-.badges{display:flex;flex-wrap:wrap;gap:7px;margin:9px 0 4px}
+.fselect:hover{border-color:var(--accent)}
+main{position:relative;flex:1 1 auto;min-height:0}
+.page{position:absolute;inset:0;display:none;flex-direction:column;padding:9px 26px 4px;min-height:0}
+.page.active{display:flex}
+.page-head{flex:0 0 auto;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.page-title{font-size:16px;font-weight:650}
+.page-sub{font-size:12px;color:var(--muted)}
+.page-right{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.page-body{flex:1 1 auto;min-height:0;position:relative}
+.page-body.single>.flight-view{position:absolute;inset:0}
+.flight-view{display:none;flex-direction:column;min-height:0}
+.flight-view.active{display:flex}
+.badges{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px;overflow:hidden;max-height:56px}
 .badges span{
-  font-size:12px;color:#bfcedd;background:#141d27;border:1px solid var(--line);
+  font-size:11.5px;color:#bfcedd;background:#141d27;border:1px solid var(--line);
   border-radius:6px;padding:2px 8px;font-variant-numeric:tabular-nums;
 }
-.panel{margin-top:14px}
-.phead{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;justify-content:space-between}
-.ptitle{font-size:14px;font-weight:650}
-.psub{font-size:12px;color:var(--muted)}
-.punit{font-size:12px;color:var(--muted);margin-left:auto}
-.legend{display:flex;flex-wrap:wrap;gap:13px;font-size:12px;color:#b8c7d6;margin:3px 0 2px}
+.strip{flex:0 0 auto;margin-bottom:1px}
+.strip svg{width:100%;height:34px;display:block;overflow:hidden}
+.legend{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:13px;font-size:12px;color:#b8c7d6;margin:2px 0 3px}
 .lg{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .lg i{display:inline-block;width:15px;height:3px;border-radius:2px}
 .lg i.dashed{background-image:linear-gradient(90deg,#fff 0 60%,transparent 60% 100%)!important;background-size:7px 3px;background-repeat:repeat-x}
-.chart-svg,.event-strip-svg{width:100%;height:auto;display:block;overflow:visible}
-.event-strip-svg{margin-top:2px}
+.chart-wrap{flex:1 1 auto;min-height:0;position:relative}
+.chart-svg{width:100%;height:100%;display:block;overflow:hidden}
 .chart-svg text{font-family:inherit}
-svg .dot{pointer-events:none}
-.note{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.7}
-.note code{background:#16202b;border:1px solid var(--line);padding:1px 5px;border-radius:4px}
+.empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+/* 概览页 */
+.ovwrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;min-height:0}
+.cards{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 11px}
+.card .k{font-size:12px;color:var(--muted)}
+.card b{
+  display:block;font-size:17px;font-weight:650;letter-spacing:.2px;
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.card span{
+  display:block;font-size:11.5px;color:var(--muted);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.warn{
+  flex:0 0 auto;background:#2c2113;border:1px solid #6a4a1c;color:#ffd79b;
+  border-radius:9px;padding:6px 12px;font-size:12.5px;max-height:64px;overflow:auto;
+}
+.warn ul{margin:3px 0 0;padding-left:18px}
+.ovchart{flex:1 1 auto;min-height:0;position:relative}
+.ovchart>.flight-view{position:absolute;inset:0}
+/* 全局总览页（多图堆叠） */
+.stackwrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:5px;min-height:0}
+.stack-item{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
+.chart-label{flex:0 0 auto;font-size:12.5px;font-weight:650;color:#cfdcea}
+.chart-label span{font-weight:400;color:var(--muted);margin-left:8px;font-size:11.5px}
+.stack-item .legend{margin:0 0 2px;font-size:11.5px}
+/* 翻页控件 */
+.pager{
+  flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:14px;
+  padding:7px 22px 9px;border-top:1px solid var(--line);background:#0b1118;position:relative;
+}
+.pbtn{
+  font-family:inherit;font-size:13px;color:var(--text);background:var(--panel2);
+  border:1px solid var(--line);border-radius:999px;padding:5px 15px;cursor:pointer;transition:.15s;
+}
+.pbtn:hover:not(:disabled){border-color:var(--accent);color:#fff}
+.pbtn:disabled{opacity:.35;cursor:default}
+.page-label{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;min-width:104px;text-align:center}
+.dots{display:flex;gap:7px;align-items:center}
+.dot{width:9px;height:9px;padding:0;border:0;border-radius:50%;background:#2b3c4f;cursor:pointer;transition:.15s}
+.dot:hover{background:#5b7a99}
+.dot.active{background:var(--accent);box-shadow:0 0 0 3px #4aa3ff2e}
+.hint{position:absolute;right:16px;bottom:12px;font-size:11.5px;color:#6d7f92;white-space:nowrap}
+.side{
+  position:absolute;top:50%;transform:translateY(-50%);z-index:6;width:32px;height:76px;
+  display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;
+  color:#bcd0e4;background:#0d151ef2;border:1px solid var(--line);cursor:pointer;
+  font-family:inherit;border-radius:8px;transition:.15s;
+}
+.side:hover:not(:disabled){border-color:var(--accent);color:#fff;background:#12324f}
+.side:disabled{opacity:.22;cursor:default}
+.side.prev{left:3px}
+.side.next{right:3px}
 .tip{
   position:fixed;z-index:999;display:none;pointer-events:none;
   background:#080c11f2;border:1px solid #2e4054;border-radius:9px;
@@ -1185,19 +1604,37 @@ svg .dot{pointer-events:none}
 .tip td{padding:1px 0;vertical-align:top}
 .tip td.v{text-align:right;padding-left:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tip td i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-footer{color:var(--muted);font-size:12px;margin-top:28px;line-height:1.7}
 a{color:var(--accent)}
-@media (max-width:640px){
-  .wrap{padding:16px 10px 40px}
-  .cards{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
-  section.flight{padding:12px 10px 6px}
+@media (max-width:1000px){
+  .hint{display:none}
+  .side{width:26px;height:60px;font-size:18px}
+}
+@media (max-width:760px){
+  .side{display:none}
+  header{padding:9px 12px 6px}
+  .page{padding:7px 12px 3px}
+  .cards{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+}
+@media (max-height:660px){
+  .strip svg{height:26px}
+  .legend{font-size:11px;margin:0 0 2px}
+  .badges{max-height:28px}
+  .cards .card b{font-size:15px}
 }
 @media print{
-  body{background:#fff;color:#111}
-  section.flight{break-inside:avoid;border-color:#ccc;background:#fff}
+  html,body{height:auto;overflow:visible;background:#fff;color:#111}
+  .app{height:auto}
+  header{background:#fff;border-color:#ccc}
+  main{position:static}
+  .page{position:relative;inset:auto;display:flex!important;height:auto;min-height:72vh;
+        page-break-after:always;border-top:1px solid #ddd}
+  .page-body{min-height:420px}
+  .flight-view{display:none!important}
+  .flight-view.active{display:flex!important}
+  .pager,.side,.hint{display:none}
   .card,.badges span{background:#f6f8fa;border-color:#ddd;color:#111}
-  .subline,.card span,.badges span,.legend,.note,footer,.psub,.punit{color:#555}
-  .nav{display:none}
+  .subline,.card span,.badges span,.legend,.psub,.punit,.page-sub,.page-right,.chart-label{color:#555}
+  .warn{background:#fff7e6;color:#5a3d00;border-color:#e0c080}
 }
 """
 
@@ -1207,7 +1644,11 @@ JS = r"""
   var DATA = window.__FLIGHTLOG__ || {};
   var NS = "http://www.w3.org/2000/svg";
   var tip = document.getElementById("tip");
-  if (!tip) return;
+  var hiders = [];
+
+  function qsa(sel, root){
+    return Array.prototype.slice.call((root || document).querySelectorAll(sel));
+  }
 
   function nearest(times, t){
     var lo = 0, hi = times.length - 1;
@@ -1235,6 +1676,36 @@ JS = r"""
     if (v > 0) return "+" + s;
     if (v < 0) return "-" + s;
     return s;
+  }
+
+  // 只对"当前页 + 当前架次"里可见的图表做十字线联动
+  function isShown(el){
+    if (!el || !el.closest) return true;
+    var page = el.closest(".page");
+    if (page && !page.classList.contains("active")) return false;
+    var view = el.closest(".flight-view");
+    if (view && !view.classList.contains("active")) return false;
+    return true;
+  }
+
+  function hideAll(){
+    for (var i = 0; i < hiders.length; i++) hiders[i]();
+  }
+
+  // 屏幕坐标 -> SVG 用户坐标（兼容 preserveAspectRatio="none" 的拉伸）
+  function localPoint(svg, clientX, clientY){
+    if (svg.getScreenCTM){
+      var m = svg.getScreenCTM();
+      if (m && m.inverse){
+        var pt = svg.createSVGPoint();
+        pt.x = clientX;
+        pt.y = clientY;
+        return pt.matrixTransform(m.inverse());
+      }
+    }
+    var rect = svg.getBoundingClientRect();
+    var vb = (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 1500;
+    return {x: rect.width ? (clientX - rect.left) / rect.width * vb : 0, y: 0};
   }
 
   function setup(desc){
@@ -1284,6 +1755,7 @@ JS = r"""
       var t = desc.times[index];
       var rows = [];
       panels.forEach(function(P){
+        if (!isShown(P.svg)) return;
         var px = xFor(P.p, t);
         P.line.setAttribute("x1", px);
         P.line.setAttribute("x2", px);
@@ -1318,6 +1790,7 @@ JS = r"""
           }
         });
       });
+      if (!rows.length){ hide(); return; }
       var html = '<div class="tip-t">t = ' + t.toFixed(2) + " s</div><table>";
       rows.forEach(function(r){
         html += '<tr><td><i style="background:' + r.color + '"></i>' +
@@ -1333,182 +1806,160 @@ JS = r"""
       tip.style.left = Math.max(4, x) + "px";
       tip.style.top = Math.max(4, y) + "px";
     }
+    function hover(ev){
+      var clientX = ev.clientX, clientY = ev.clientY;
+      var q = localPoint(ev.currentTarget, clientX, clientY);
+      if (!isFinite(q.x)) return;
+      var t = desc.t0 + (q.x - panels[0].p.x0) / (panels[0].p.x1 - panels[0].p.x0) *
+        (desc.t1 - desc.t0);
+      var idx = nearest(desc.times, t);
+      if (idx >= 0) show(idx, clientX, clientY);
+    }
+    function touchHover(ev){
+      var touch = ev.touches && ev.touches[0];
+      if (!touch) return;
+      var q = localPoint(ev.currentTarget, touch.clientX, touch.clientY);
+      if (!isFinite(q.x)) return;
+      var t = desc.t0 + (q.x - panels[0].p.x0) / (panels[0].p.x1 - panels[0].p.x0) *
+        (desc.t1 - desc.t0);
+      var idx = nearest(desc.times, t);
+      if (idx >= 0) show(idx, touch.clientX, touch.clientY);
+    }
     panels.forEach(function(P){
-      P.svg.addEventListener("mousemove", function(ev){
-        var rect = P.svg.getBoundingClientRect();
-        if (!rect.width) return;
-        var vb = P.svg.viewBox.baseVal.width || 1180;
-        var vx = (ev.clientX - rect.left) / rect.width * vb;
-        var t = desc.t0 + (vx - P.p.x0) / (P.p.x1 - P.p.x0) * (desc.t1 - desc.t0);
-        var idx = nearest(desc.times, t);
-        if (idx < 0) return;
-        show(idx, ev.clientX, ev.clientY);
-      });
+      P.svg.addEventListener("mousemove", hover);
       P.svg.addEventListener("mouseleave", hide);
-      P.svg.addEventListener("touchstart", function(ev){
-        var touch = ev.touches && ev.touches[0];
-        if (!touch) return;
-        var rect = P.svg.getBoundingClientRect();
-        var vb = P.svg.viewBox.baseVal.width || 1180;
-        var vx = (touch.clientX - rect.left) / rect.width * vb;
-        var t = desc.t0 + (vx - P.p.x0) / (P.p.x1 - P.p.x0) * (desc.t1 - desc.t0);
-        var idx = nearest(desc.times, t);
-        if (idx >= 0) show(idx, touch.clientX, touch.clientY);
-      }, {passive: true});
+      P.svg.addEventListener("touchstart", touchHover, {passive: true});
+      P.svg.addEventListener("touchmove", touchHover, {passive: true});
     });
+    hiders.push(hide);
   }
 
   if (DATA.overview) setup(DATA.overview);
   (DATA.flights || []).forEach(setup);
 
-  // 架次导航：当前可见架次高亮
-  var links = Array.prototype.slice.call(document.querySelectorAll(".nav a[data-target]"));
-  if (links.length && "IntersectionObserver" in window){
-    var map = {};
-    links.forEach(function(a){ map[a.getAttribute("data-target")] = a; });
-    var obs = new IntersectionObserver(function(entries){
-      entries.forEach(function(entry){
-        var a = map[entry.target.id];
-        if (!a) return;
-        if (entry.isIntersecting){
-          links.forEach(function(x){ x.style.borderColor = ""; x.style.color = ""; });
-          a.style.borderColor = "#4aa3ff";
-          a.style.color = "#fff";
-        }
-      });
-    }, {rootMargin: "-20% 0px -70% 0px"});
-    Object.keys(map).forEach(function(id){
-      var el = document.getElementById(id);
-      if (el) obs.observe(el);
+  // ---------------- 翻页 ----------------
+  var pages = qsa(".page");
+  var labelEl = document.getElementById("page-label");
+  var dotsBox = document.getElementById("dots");
+  var prevBtns = qsa('[data-nav="prev"]');
+  var nextBtns = qsa('[data-nav="next"]');
+  var current = 0;
+  var dots = [];
+
+  pages.forEach(function(page, i){
+    if (!dotsBox) return;
+    var dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "dot";
+    dot.title = "第 " + (i + 1) + " 页 · " + (page.querySelector(".page-title") || {}).textContent;
+    dot.setAttribute("aria-label", "第 " + (i + 1) + " 页");
+    dot.addEventListener("click", function(){ showPage(i, true); });
+    dotsBox.appendChild(dot);
+    dots.push(dot);
+  });
+
+  function showPage(index, updateHash){
+    if (!pages.length) return;
+    index = Math.max(0, Math.min(pages.length - 1, index));
+    current = index;
+    pages.forEach(function(page, i){
+      page.classList.toggle("active", i === index);
+    });
+    if (labelEl) labelEl.textContent = "第 " + (index + 1) + " / " + pages.length + " 页";
+    dots.forEach(function(dot, i){
+      dot.classList.toggle("active", i === index);
+    });
+    prevBtns.forEach(function(btn){ btn.disabled = index === 0; });
+    nextBtns.forEach(function(btn){ btn.disabled = index === pages.length - 1; });
+    hideAll();
+    if (updateHash){
+      try { history.replaceState(null, "", "#" + pages[index].id); } catch (err) { /* file:// */ }
+    }
+  }
+
+  prevBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){ showPage(current - 1, true); });
+  });
+  nextBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){ showPage(current + 1, true); });
+  });
+
+  document.addEventListener("keydown", function(ev){
+    if (ev.defaultPrevented || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var tag = (ev.target && ev.target.tagName) || "";
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    var key = ev.key;
+    if (key === "ArrowLeft" || key === "PageUp"){
+      ev.preventDefault();
+      showPage(current - 1, true);
+    } else if (key === "ArrowRight" || key === "PageDown"){
+      ev.preventDefault();
+      showPage(current + 1, true);
+    } else if (key === "Home"){
+      ev.preventDefault();
+      showPage(0, true);
+    } else if (key === "End"){
+      ev.preventDefault();
+      showPage(pages.length - 1, true);
+    }
+  });
+
+  // ---------------- 架次切换（只换当前页的曲线） ----------------
+  var flightBtns = qsa("[data-flight-btn]");
+  var flightViews = qsa(".flight-view[data-flight]");
+  var flightSelect = document.getElementById("flight-select");
+  function selectFlight(value){
+    flightViews.forEach(function(view){
+      view.classList.toggle("active", view.getAttribute("data-flight") === value);
+    });
+    flightBtns.forEach(function(btn){
+      btn.classList.toggle("active", btn.getAttribute("data-flight-btn") === value);
+    });
+    if (flightSelect && flightSelect.value !== value) flightSelect.value = value;
+    hideAll();
+  }
+  flightBtns.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      selectFlight(btn.getAttribute("data-flight-btn"));
+    });
+  });
+  if (flightSelect){
+    flightSelect.addEventListener("change", function(){
+      selectFlight(flightSelect.value);
     });
   }
+
+  // ---------------- 初始页（支持 #page-speed 直链） ----------------
+  var startPage = 0;
+  var hash = (window.location.hash || "").replace(/^#/, "");
+  if (hash){
+    for (var i = 0; i < pages.length; i++){
+      if (pages[i].id === hash){ startPage = i; break; }
+    }
+  }
+  showPage(startPage, false);
 })();
 """
 
-
-def _render_panel_html(
-    block: Dict[str, Any], panel_spec: Dict[str, Any], is_last: bool = False
-) -> str:
-    units = []
-    if block.get("left_unit"):
-        units.append("左轴 %s" % _html_escape(block["left_unit"]))
-    if block.get("right_unit"):
-        units.append("右轴 %s" % _html_escape(block["right_unit"]))
-    if is_last:
-        units.append("时间轴 秒 (s)")
-    subtitle = panel_spec.get("subtitle")
-    parts = ['<div class="panel">', '<div class="phead">', '<div>']
-    parts.append('<div class="ptitle">%s</div>' % _html_escape(panel_spec["title"]))
-    if subtitle:
-        parts.append('<div class="psub">%s</div>' % _html_escape(subtitle))
-    parts.append("</div>")
-    if units:
-        parts.append('<div class="punit">%s</div>' % " · ".join(units))
-    parts.append("</div>")
-    parts.append('<div class="legend">%s</div>' % block["legend"])
-    parts.append(block["svg"])
-    parts.append("</div>")
-    return "".join(parts)
-
-
-def _build_payload(model: LogModel) -> Dict[str, Any]:
-    flights_payload: List[Dict[str, Any]] = []
-    sections: List[str] = []
-    nav: List[str] = []
-
-    for flight in model.flights:
-        payload = _build_flight_payload(flight)
-        flights_payload.append(
-            {
-                "index": payload["index"],
-                "title": payload["title"],
-                "t0": payload["t0"],
-                "t1": payload["t1"],
-                "times": payload["times"],
-                "series": payload["series"],
-                "panels": payload["panels"],
-            }
-        )
-        specs = _flight_panel_specs()
-        blocks = payload["html"]["blocks"]
-        panel_html = "".join(
-            _render_panel_html(block, spec, is_last=(i == len(blocks) - 1))
-            for i, (spec, block) in enumerate(blocks)
-        )
-        badges = "".join("<span>%s</span>" % _html_escape(b) for b in _flight_badges(flight))
-        strip = payload["html"]["strip"]
-        section = [
-            '<section class="flight" id="flight-%d">' % flight.index,
-            '<div class="fhead">',
-            "<h2>%s</h2>" % _html_escape(payload["title"]),
-            '<span class="reason">%s</span>' % _html_escape(payload["reason_label"]),
-            "</div>",
-            '<div class="badges">%s</div>' % badges,
-        ]
-        if strip:
-            section.append(strip)
-        section.append(panel_html)
-        section.append("</section>")
-        sections.append("".join(section))
-        nav.append(
-            '<a href="#flight-%d" data-target="flight-%d">架次 %d</a>'
-            % (flight.index, flight.index, flight.index)
-        )
-
-    overview = _overview_payload(model)
-    overview_html = ""
-    if overview is not None:
-        blocks = overview["html"]["blocks"]
-        panel_html = "".join(
-            _render_panel_html(block, spec, is_last=(i == len(blocks) - 1))
-            for i, (spec, block) in enumerate(blocks)
-        )
-        strip = overview["html"]["strip"] or ""
-        overview_html = (
-            '<section class="flight" id="overview">'
-            '<div class="fhead"><h2>全局总览</h2>'
-            '<span class="psub">全部架次拼在同一条时间轴上，竖虚线为架次边界</span></div>'
-            + strip
-            + panel_html
-            + "</section>"
-        )
-        nav.insert(0, '<a href="#overview" data-target="overview">全局总览</a>')
-
-    overview_data = None
-    if overview is not None:
-        overview_data = {key: value for key, value in overview.items() if key != "html"}
-
-    return {
-        "title": "飞行日志分析 · %s" % os.path.basename(model.path),
-        "file": os.path.basename(model.path),
-        "meta": model.meta,
-        "cards": _cards(model),
-        "warnings": model.warnings,
-        "overview": overview_data,
-        "flights": flights_payload,
-        "html": {
-            "overview": overview_html,
-            "sections": sections,
-            "nav": "".join(nav),
-        },
-    }
+NOSCRIPT = """<noscript><style>
+html,body{height:auto;overflow:auto}
+.app{height:auto}
+main{position:static}
+.page{position:relative;inset:auto;display:flex!important;flex-direction:column;
+  height:auto;min-height:70vh;border-top:1px solid #1e2a36;margin-top:8px}
+.page-body{min-height:420px}
+.pager,.side,.hint,.flights{display:none}
+</style><p style="color:#8ea1b4;font-size:12px;padding:0 22px">
+本报告用脚本实现翻页；当前浏览器禁用了脚本，已改为纵向平铺显示全部页面。
+</p></noscript>"""
 
 
 def render_report(model: LogModel, title: Optional[str] = None) -> str:
-    """把模型渲染成完整 HTML 字符串。"""
+    """把模型渲染成完整 HTML 字符串（翻页式、单文件自包含）。"""
     payload = _build_payload(model)
     page_title = title or payload["title"]
-
-    cards_html = "".join(
-        '<div class="card"><div class="k">%s</div><b>%s</b><span>%s</span></div>'
-        % (_html_escape(card["label"]), _html_escape(card["value"]), _html_escape(card["sub"]))
-        for card in payload["cards"]
-    )
-
-    warnings_html = ""
-    if payload["warnings"]:
-        items = "".join("<li>%s</li>" % _html_escape(w) for w in payload["warnings"])
-        warnings_html = '<div class="warn"><b>解析提示</b><ul>%s</ul></div>' % items
+    page_count = payload["html"]["page_count"]
+    pages_html = "\n".join(payload["html"]["pages"])
 
     meta = model.meta or {}
     meta_bits = [
@@ -1520,6 +1971,18 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         "生成于 %s" % _html_escape(model.summary.get("generated_utc", "")),
     ]
     subline = " · ".join(meta_bits)
+
+    pager = (
+        '<nav class="pager" aria-label="翻页">'
+        '<button type="button" class="pbtn" data-nav="prev" id="nav-prev"'
+        ' aria-label="上一页" disabled>&#8249; 上一页</button>'
+        '<span class="page-label" id="page-label">第 1 / %d 页</span>'
+        '<span class="dots" id="dots"></span>'
+        '<button type="button" class="pbtn" data-nav="next" id="nav-next"'
+        ' aria-label="下一页">下一页 &#8250;</button>'
+        '<span class="hint">&#8592; &#8594; / PageUp PageDown 翻页 · 鼠标悬停看数值</span>'
+        "</nav>" % page_count
+    )
 
     data_json = json.dumps(
         {
@@ -1534,32 +1997,25 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
     # 避免数据里出现 </script> 提前闭合
     data_json = data_json.replace("</", "<\\/")
 
-    nav_html = (
-        '<div class="nav"><span class="navlabel">跳转</span>%s</div>' % payload["html"]["nav"]
-        if payload["html"]["nav"]
-        else ""
-    )
-
-    footer = (
-        '<footer>'
-        "比能量高度 <code>Es = alt_m + (tas_kmh/3.6)&sup2; / (2&times;9.80665)</code>（米）；"
-        "能量变化率 dEs/dt 为滑动窗口线性回归，正值表示获得能量。"
-        "<br>图表由 Python 内联 SVG 生成，悬停查看该时刻各项数值；本文件不依赖网络与任何外部资源。"
-        "</footer>"
-    )
-
     return (
         "<!DOCTYPE html>\n"
         '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>%s</title>\n<style>%s</style>\n</head>\n<body>\n"
-        '<div class="wrap">\n'
-        "<header>\n<h1>飞行日志分析</h1>\n"
+        '<div class="app">\n'
+        "<header>\n"
+        '<div class="hrow"><h1>飞行日志分析</h1>%s</div>\n'
         '<div class="subline">%s</div>\n'
-        '<div class="cards">%s</div>\n'
-        "%s\n%s\n"
-        "</header>\n<main>\n%s\n%s\n</main>\n"
-        "%s\n</div>\n"
+        "</header>\n"
+        "%s\n"
+        '<main id="pages">\n%s\n'
+        '<button type="button" class="side prev" data-nav="prev" aria-label="上一页" disabled>'
+        "&#8249;</button>"
+        '<button type="button" class="side next" data-nav="next" aria-label="下一页">'
+        "&#8250;</button>\n"
+        "</main>\n"
+        "%s\n"
+        "</div>\n"
         '<div id="tip" class="tip"></div>\n'
         "<script>window.__FLIGHTLOG__=%s;</script>\n"
         "<script>%s</script>\n"
@@ -1567,13 +2023,11 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         % (
             _html_escape(page_title),
             CSS,
+            payload["html"]["flight_selector"],
             subline,
-            cards_html,
-            warnings_html,
-            nav_html,
-            payload["html"]["overview"],
-            "\n".join(payload["html"]["sections"]),
-            footer,
+            NOSCRIPT,
+            pages_html,
+            pager,
             data_json,
             JS,
         )
