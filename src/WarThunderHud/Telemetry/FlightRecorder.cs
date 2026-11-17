@@ -144,7 +144,7 @@ public sealed class FlightRecorder : IDisposable
     {
         try
         {
-            using var w = new StreamWriter(_path, append: false, new UTF8Encoding(false)) { AutoFlush = false };
+            using var w = new StreamWriter(_path, append: false, new UTF8Encoding(false)) { AutoFlush = true };
             int lines = 0;
             long lastFlush = Environment.TickCount64;
             foreach (var line in _queue.GetConsumingEnumerable())
