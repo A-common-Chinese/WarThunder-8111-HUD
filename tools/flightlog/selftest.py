@@ -19,7 +19,9 @@
 8. 统计摘要可 JSON 序列化；
 9. 生成的 HTML 是**翻页结构**（概览 + 每个数据主题一页、页码/导航/圆点、架次选择器、
    每页都有事件时间线），且自包含（无外链脚本/样式/图片）；
-10. CLI ``--summary`` / ``--out`` 可用。
+10. 速度页的**平均速度 / 可手动设置计算范围**：平均函数（闭区间、边界、空区间、缺字段）、
+   控件条/数值容器/区间底纹/平均虚线的 HTML 结构；
+11. CLI ``--summary`` / ``--out`` 可用。
 """
 
 from __future__ import annotations
@@ -465,6 +467,113 @@ def test_report_html(tmp: Path) -> None:
     check("\ufffd" not in raw, "输出没有替换字符（编码正常）")
 
 
+def test_average_helpers() -> None:
+    print("\n[6] 平均速度纯函数：闭区间 / 边界 / 空区间 / 缺字段")
+    samples = [
+        {"t": 0.0, "ias": 100.0, "tas": 120.0, "mach": 0.30},
+        {"t": 1.0, "ias": 200.0, "tas": 240.0, "mach": 0.60},
+        {"t": 2.0, "ias": 300.0, "tas": 360.0, "mach": 0.90},
+    ]
+    full = P.average_speed(samples, 0.0, 2.0)
+    check(full is not None and full["samples"] == 3, "全程闭区间 [0,2] 命中 3 个样本")
+    check(close(full["ias"], 200.0, 1e-9), "平均 IAS = 200（闭区间含两端）")
+    check(close(full["tas"], 240.0, 1e-9), "平均 TAS = 240")
+    check(close(full["mach"], 0.6, 1e-9), "平均 Mach = 0.6")
+    check(close(full["duration_s"], 2.0, 1e-9), "返回区间时长 = 2.0 s")
+    check(full["first_t"] == 0.0 and full["last_t"] == 2.0, "返回命中样本的首末时间")
+
+    edge = P.average_speed(samples, 1.0, 2.0)
+    check(edge is not None and edge["samples"] == 2, "边界区间 [1,2] 恰好含 2 个样本（闭区间）")
+    check(close(edge["ias"], 250.0, 1e-9), "边界区间平均 IAS = (200+300)/2")
+
+    single = P.average_speed(samples, 0.5, 1.5)
+    check(single is not None and single["samples"] == 1, "区间内只有 1 个样本时也能算")
+    check(close(single["ias"], 200.0, 1e-9), "单样本平均 = 该样本值")
+
+    check(P.average_speed(samples, 5.0, 6.0) is None, "空区间返回 None")
+    check(P.average_speed(samples, 2.5, 3.5) is None, "完全在数据外的区间返回 None")
+    swapped = P.average_speed(samples, 2.0, 0.0)
+    check(swapped is not None and close(swapped["ias"], 200.0, 1e-9)
+          and swapped["range_start"] == 0.0 and swapped["range_end"] == 2.0,
+          "起止写反自动交换成升序")
+    check(P.average_speed(samples, None, 2.0) is None, "起点非数字返回 None")
+    check(P.average_speed(samples, "abc", 2.0) is None, "起点是坏字符串返回 None")
+
+    missing = [
+        {"t": 0.0, "ias": 100.0},              # 缺 tas / mach
+        {"t": 1.0, "ias": 300.0, "tas": 600.0},
+        {"t": 2.0, "tas": 800.0},              # 缺 ias / mach
+    ]
+    partial = P.average_speed(missing, 0.0, 2.0)
+    check(partial is not None and partial["samples"] == 3, "缺字段时仍统计命中的样本")
+    check(close(partial["ias"], 200.0, 1e-9), "缺 ias 的样本不参与 IAS 平均")
+    check(close(partial["tas"], 700.0, 1e-9), "缺 tas 的样本不参与 TAS 平均")
+    check(partial["mach"] is None, "全部缺 mach 时平均 Mach 为 None")
+    raw = [{"t": 0.0, "ias_kmh": 300, "tas_kmh": 360, "mach": 0.5},
+           {"t": 1.0, "ias_kmh": 500, "tas_kmh": 560, "mach": 0.7}]
+    raw_avg = P.average_speed(raw, 0.0, 1.0)
+    check(raw_avg is not None and close(raw_avg["ias"], 400.0, 1e-9)
+          and close(raw_avg["mach"], 0.6, 1e-9),
+          "兼容原始日志字段名 ias_kmh / tas_kmh")
+    check(P.average_speed([{"t": None, "ias": 1.0}], 0.0, 10.0) is None,
+          "样本 t 无效时跳过（不会崩）")
+
+
+def test_avg_report_html(tmp: Path) -> None:
+    print("\n[7] HTML 报告：速度页平均速度 / 可手动设置计算范围")
+    path = tmp / "full.jsonl"
+    if not path.exists():
+        build_full_log(path)
+    model = P.analyze(str(path))
+    html = render_report(model)
+    first = model.flights[0]
+    expected = P.average_speed(first.samples, first.start_t, first.end_t)
+
+    check('id="avgbar-speed"' in html, "速度页有平均速度控件条 #avgbar-speed")
+    check(html.count('id="avgbar-speed"') == 1, "控件条只在速度页出现一次")
+    check(html.count('class="avgbar"') == 1, "其它页没有平均速度控件条")
+    check('class="page-body speed-body"' in html, "速度页用 speed-body 布局（控件 + 图）")
+    check('data-avg-start' in html and 'data-avg-end' in html, "有起止时间输入框")
+    check('type="number"' in html and 'step="0.1"' in html, "输入框是数字框、步进 0.1 s")
+    check('data-avg-apply' in html and 'data-avg-reset' in html, "有「应用」和「重置」按钮")
+    check("平均 IAS" in html and "平均 TAS" in html and "平均 Mach" in html,
+          "三个平均数值都有中文标签（含单位）")
+    check('data-avg-val="ias"' in html and 'data-avg-val="tas"' in html
+          and 'data-avg-val="mach"' in html, "平均数值容器带 data-avg-val 标记")
+    check('id="avg-band-f1-speed"' in html, "速度图里有统计区间底纹元素")
+    check('id="avg-edge0-f1-speed"' in html and 'id="avg-edge1-f1-speed"' in html,
+          "统计区间有两条边界竖线")
+    check('id="avg-ias-f1-speed"' in html and 'id="avg-tas-f1-speed"' in html
+          and 'id="avg-mach-f1-speed"' in html,
+          "平均 IAS/TAS/Mach 都画了水平虚线（id 可被 JS 定位）")
+    check(html.count('id="avg-band-') == 3, "3 个架次各有一份区间底纹（共 %d）" % html.count('id="avg-band-'))
+    check(html.count('class="avg-line"') == 9, "3 架次 × 3 条平均虚线 = 9 条")
+
+    # 静态默认值 = 整个架次全程的平均
+    m = re.search(r'<b data-avg-val="ias">([^<]+)</b>', html)
+    check(m is not None and expected is not None
+          and close(float(m.group(1)), expected["ias"], 0.05),
+          "默认平均 IAS 静态值 = 全程平均值（%s）" % (m.group(1) if m else "?"))
+    check("范围" in html and "样本" in html and "回车 = 应用" in html,
+          "数值区注明范围 / 样本数 / 回车应用")
+    check("%s 样本" % expected["samples"] in html,
+          "注明默认范围样本数 = %d" % expected["samples"])
+
+    # 内联 JS：范围夹取 + 原地更新 + 切架次重算
+    check("function initAverage" in html, "内联 JS 含 initAverage（平均速度逻辑）")
+    check("clampRange" in html and "超出当前架次时间轴" in html, "JS 会把超范围输入夹到边界")
+    check("起止时间写反" in html, "JS 会处理结束<开始的非法输入")
+    check("AVG.onFlight" in html, "切换架次时会按新架次时间轴重算平均")
+    check("avg-band-" in html and "avg-edge" in html, "JS 会原地更新底纹/边界元素")
+    check("平均速度（水平虚线，数值见上方；底纹 = 统计区间）" in html,
+          "图例里说明虚线/底纹含义")
+    check('id="page-speed"' in html and "svg-f1-speed" in html,
+          "速度页与速度图仍然完好（没有破坏原结构）")
+    check(html.count('class="flight-view') == 24, "各页架次视图数量未受影响")
+    check('id="page-altitude"' in html and 'id="page-attitude"' in html,
+          "其它数据页仍正常生成")
+
+
 def test_cli(tmp: Path) -> None:
     print("\n[5] CLI：--summary / --out")
     path = tmp / "full.jsonl"
@@ -505,6 +614,8 @@ def main() -> int:
         test_parse_full(tmp)
         test_parse_old(tmp)
         test_report_html(tmp)
+        test_average_helpers()
+        test_avg_report_html(tmp)
         test_cli(tmp)
 
     print("\n" + "=" * 72)

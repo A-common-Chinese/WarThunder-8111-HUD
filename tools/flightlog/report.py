@@ -11,6 +11,8 @@
 * 翻页交互：底部 ``‹ 上一页`` / ``下一页 ›``、页码 ``第 3 / 8 页``、圆点导航、
   左右两侧大按钮，键盘 ←/→、PageUp/PageDown、Home/End 均可翻页；
 * 多架次：页眉的架次选择器切换后，**当前页**的曲线换成该架次（事件竖线/标签保留）；
+* 速度页顶部显示**平均 IAS / TAS / Mach**，起止时间可手动设置（默认整个架次），
+  所选区间在图上用浅色底纹 + 边界虚线标出、平均值画成对应颜色的水平虚线；
 * 图表全部用内联 SVG 在 Python 侧画好，**浏览器禁用脚本也能看到全部图**；
 * 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
 * 事件（死亡 / 复活 / 换机型）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
@@ -27,7 +29,7 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .parse import EVENT_LABELS, Flight, LogModel
+from .parse import EVENT_LABELS, Flight, LogModel, average_speed
 
 # ---------------------------------------------------------------------------
 # 版式与配色
@@ -78,6 +80,9 @@ COLORS = {
     "other": "#93a4b8",
     "grid": "#ffffff12",
     "axis": "#8fa1b3",
+    # 平均速度统计区间的底纹（中性浅蓝，避免和三条曲线颜色混淆）
+    "avg_band": "#6ea8ff",
+    "avg_edge": "#9dc4ff",
 }
 
 EVENT_COLORS = {
@@ -712,6 +717,87 @@ def _svg_vlines(
     return "".join(parts)
 
 
+def _svg_avg_overlay(
+    avg: Dict[str, Any],
+    chart_id: str,
+    xaxis: _XAxis,
+    left: Optional[_Axis],
+    right: Optional[_Axis],
+    y0: float,
+    y1: float,
+) -> str:
+    """速度页的"平均速度统计区间"图层：半透明竖条 + 两条边界线 + 平均速度虚线。
+
+    id 规则固定为 ``avg-<kind>-<chart_id>``（chart_id 形如 ``f1-speed``），
+    内联 JS 在用户改范围后按同样的 id 原地更新几何，不需要重画整张 SVG。
+    """
+    start = max(float(avg["range_start"]), xaxis.t0)
+    end = min(float(avg["range_end"]), xaxis.t1)
+    if end < start:
+        return ""
+    parts: List[str] = []
+    x1 = xaxis(start)
+    x2 = xaxis(end)
+    band_w = max(0.0, x2 - x1)
+    # 统计区间浅色底纹（在曲线之上、但只有 7% 不透明度，不影响看曲线）
+    parts.append(
+        '<rect id="avg-band-%s" class="avg-band" x="%s" y="%s" width="%s" height="%s"'
+        ' fill="%s" fill-opacity="0.09"/>'
+        % (
+            chart_id,
+            _fmt_coord(x1),
+            _fmt_coord(y0),
+            _fmt_coord(band_w),
+            _fmt_coord(y1 - y0),
+            COLORS["avg_band"],
+        )
+    )
+    # 区间两条边界：竖向细虚线
+    for slot, px in (("edge0", x1), ("edge1", x2)):
+        parts.append(
+            '<line id="avg-%s-%s" class="avg-edge" x1="%s" y1="%s" x2="%s" y2="%s"'
+            ' stroke="%s" stroke-width="1" stroke-dasharray="3 4" opacity="0.6"/>'
+            % (
+                slot,
+                chart_id,
+                _fmt_coord(px),
+                _fmt_coord(y0),
+                _fmt_coord(px),
+                _fmt_coord(y1),
+                COLORS["avg_edge"],
+            )
+        )
+    # 平均 IAS / 平均 TAS（左轴）与平均 Mach（右轴）的水平虚线
+    for key, axis, dash in (
+        ("ias", left, "8 5"),
+        ("tas", left, "8 5"),
+        ("mach", right, "2 5"),
+    ):
+        value = avg.get(key)
+        if value is None or axis is None:
+            continue
+        py = axis(value)
+        if py is None:
+            continue
+        parts.append(
+            '<line id="avg-%s-%s" class="avg-line" data-avg-line="%s" x1="%s" y1="%s"'
+            ' x2="%s" y2="%s" stroke="%s" stroke-width="1.5" stroke-dasharray="%s"'
+            ' opacity="0.85"/>'
+            % (
+                key,
+                chart_id,
+                key,
+                _fmt_coord(PLOT_LEFT),
+                _fmt_coord(py),
+                _fmt_coord(PLOT_RIGHT),
+                _fmt_coord(py),
+                COLORS[key],
+                dash,
+            )
+        )
+    return "".join(parts)
+
+
 def _render_chart(
     panel: Dict[str, Any],
     times: Sequence[float],
@@ -723,8 +809,13 @@ def _render_chart(
     events: Sequence[Dict[str, Any]] = (),
     regions: Sequence[Dict[str, Any]] = (),
     vlines: Sequence[Dict[str, Any]] = (),
+    avg: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """画一张图，返回 (svg, 图例, 悬停几何)。没有数据时返回 None。"""
+    """画一张图，返回 (svg, 图例, 悬停几何)。没有数据时返回 None。
+
+    ``avg`` 非空时（只有速度页用）额外画"平均速度统计区间"图层：半透明竖条 +
+    边界虚线 + 平均 IAS/TAS/Mach 的水平虚线；默认范围 = 整个架次。
+    """
     height = float(panel["height"])
     y0, y1 = PAD_TOP, height - PAD_BOTTOM
     xaxis = _XAxis(t0, t1, PLOT_LEFT, PLOT_RIGHT)
@@ -775,6 +866,8 @@ def _render_chart(
             continue
         hover_group.append(_svg_series(defn, times, values, xaxis, axis))
     parts.append("".join(hover_group))
+    if avg is not None:
+        parts.append(_svg_avg_overlay(avg, chart_id, xaxis, left_axis, right_axis, y0, y1))
     parts.append("</svg>")
 
     legend_parts: List[str] = []
@@ -783,6 +876,11 @@ def _render_chart(
         legend_parts.append(
             '<span class="lg"><i style="background:%s"%s></i>%s</span>'
             % (defn["color"], dash, html.escape(defn["label"]))
+        )
+    if avg is not None:
+        legend_parts.append(
+            '<span class="lg avg-legend"><i class="avgdash"></i>'
+            "平均速度（水平虚线，数值见上方；底纹 = 统计区间）</span>"
         )
 
     geometry = {
@@ -975,10 +1073,17 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
     # 每个数据主题渲染一张独立的 SVG（每页一张，都带时间刻度）
     blocks: Dict[str, Dict[str, Any]] = {}
     panels: List[Dict[str, Any]] = []
+    default_avg: Optional[Dict[str, Any]] = None
     for spec in _flight_panel_specs():
         chart_id = "f%d-%s" % (flight.index, spec["key"])
+        chart_avg: Optional[Dict[str, Any]] = None
+        if spec["key"] == "speed":
+            # 默认统计范围 = 整个当前架次（用户可在页面上手动改）
+            chart_avg = average_speed(flight.samples, t0, t1)
+            default_avg = chart_avg
         block = _render_chart(
-            spec, times, series, t0, t1, chart_id, True, events=events, regions=regions
+            spec, times, series, t0, t1, chart_id, True,
+            events=events, regions=regions, avg=chart_avg,
         )
         if block is None:
             continue
@@ -1018,6 +1123,7 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
         "panels": panels,
         "blocks": blocks,
         "thumb": thumb,
+        "avg_default": default_avg,
         "events": events,
         "badges": _flight_badges(flight),
     }
@@ -1253,6 +1359,91 @@ def _flight_view_html(
     return "".join(parts)
 
 
+def _fmt_fixed(value: Any, digits: int) -> str:
+    """固定小数位（不做去尾零），保证静态数值和 JS 更新后的格式一致。"""
+    if value is None:
+        return "—"
+    return ("%." + str(digits) + "f") % float(value)
+
+
+def _fmt_seconds_input(value: float) -> str:
+    """秒数输入框的值：最多 3 位小数、去掉尾零（0.342 / 30 / 293.58）。"""
+    text = "%.3f" % float(value)
+    text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _avg_bar_html(flight_payload: Dict[str, Any]) -> str:
+    """速度页顶部的"平均速度 + 可手动设置计算范围"控件条。
+
+    静态 HTML 里放的是**默认范围（整个当前架次）**的平均值；内联 JS 加载后
+    会用同样的数据重算一遍，并在用户点"应用"时原地更新数值和 SVG 图层。
+    """
+    avg = flight_payload.get("avg_default") or {}
+    t0 = float(flight_payload["t0"])
+    t1 = float(flight_payload["t1"])
+    flight_index = int(flight_payload["index"])
+    channels = (("ias", "IAS", "km/h", 1), ("tas", "TAS", "km/h", 1), ("mach", "Mach", "", 2))
+    value_parts: List[str] = []
+    for key, label, unit, digits in channels:
+        unit_text = (" · " + unit) if unit else ""
+        value_parts.append(
+            '<div class="avg-val"><span class="avg-k"><i class="avgdash"'
+            ' style="color:%s"></i>平均 %s%s</span>'
+            '<b data-avg-val="%s">%s</b></div>'
+            % (COLORS[key], label, unit_text, key, _fmt_fixed(avg.get(key), digits))
+        )
+    range_start = avg.get("range_start", t0) if avg else t0
+    range_end = avg.get("range_end", t1) if avg else t1
+    sample_count = avg.get("samples") if avg else None
+    if avg:
+        meta_text = "范围 %s–%s s · %s 样本 · 底纹 = 统计区间，虚线 = 平均值（回车 = 应用）" % (
+            _fmt_fixed(range_start, 1),
+            _fmt_fixed(range_end, 1),
+            sample_count,
+        )
+    else:
+        meta_text = "该架次没有速度数据"
+    disabled = "" if avg else " disabled"
+    return (
+        '<div class="avgbar" id="avgbar-speed" data-avg-flight="%d"'
+        ' data-avg-t0="%s" data-avg-t1="%s">'
+        '<div class="avg-title">平均速度<b>可手动设置计算范围</b></div>'
+        '<div class="avg-vals">%s</div>'
+        '<div class="avg-ctl">'
+        '<label class="avg-range">范围'
+        '<input id="avg-start-speed" class="avg-input" type="number" data-avg-start'
+        ' step="0.1" min="%s" max="%s" value="%s" inputmode="decimal"'
+        ' aria-label="平均速度统计开始时间（秒）"%s>'
+        '<span>s</span><span class="avg-dash">–</span>'
+        '<input id="avg-end-speed" class="avg-input" type="number" data-avg-end'
+        ' step="0.1" min="%s" max="%s" value="%s" inputmode="decimal"'
+        ' aria-label="平均速度统计结束时间（秒）"%s>'
+        "<span>s</span></label>"
+        '<button type="button" class="avg-btn" data-avg-apply>应用</button>'
+        '<button type="button" class="avg-btn ghost" data-avg-reset>重置</button>'
+        "</div>"
+        '<div class="avg-meta"><span data-avg-meta>%s</span>'
+        '<span class="avg-msg" data-avg-msg role="status" aria-live="polite"></span></div>'
+        "</div>"
+        % (
+            flight_index,
+            _fmt_seconds_input(t0),
+            _fmt_seconds_input(t1),
+            "".join(value_parts),
+            _fmt_seconds_input(t0),
+            _fmt_seconds_input(t1),
+            _fmt_seconds_input(range_start),
+            disabled,
+            _fmt_seconds_input(t0),
+            _fmt_seconds_input(t1),
+            _fmt_seconds_input(range_end),
+            disabled,
+            _html_escape(meta_text),
+        )
+    )
+
+
 def _overview_page_html(
     flight_payloads: Sequence[Dict[str, Any]],
     default_index: int,
@@ -1310,6 +1501,37 @@ def _data_page_html(spec: Dict[str, Any], views_html: str) -> str:
             _html_escape(spec["title"]),
             _html_escape(spec.get("subtitle") or ""),
             _html_escape(" · ".join(units)),
+            views_html,
+        )
+    )
+
+
+def _speed_page_html(
+    spec: Dict[str, Any], views_html: str, default_payload: Dict[str, Any]
+) -> str:
+    """速度页：顶部多一条"平均速度 / 手动范围"控件条，其余与普通数据页一致。"""
+    key = spec["key"]
+    units = []
+    if spec.get("left_unit"):
+        units.append("左轴 %s" % spec["left_unit"])
+    if spec.get("right_unit"):
+        units.append("右轴 %s" % spec["right_unit"])
+    units.append("时间轴 秒 (s)")
+    return (
+        '<section class="page" id="page-%s" data-page="%s">'
+        '<div class="page-head"><div class="page-title">%s</div>'
+        '<div class="page-sub">%s</div>'
+        '<div class="page-right">%s</div></div>'
+        '<div class="page-body speed-body">%s'
+        '<div class="speed-views">%s</div>'
+        "</div></section>"
+        % (
+            key,
+            key,
+            _html_escape(spec["title"]),
+            _html_escape(spec.get("subtitle") or ""),
+            _html_escape(" · ".join(units)),
+            _avg_bar_html(default_payload),
             views_html,
         )
     )
@@ -1430,7 +1652,10 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
             )
         if not any_data:
             continue
-        pages.append(_data_page_html(spec, "".join(views)))
+        if spec["key"] == "speed":
+            pages.append(_speed_page_html(spec, "".join(views), flight_payloads[0]))
+        else:
+            pages.append(_data_page_html(spec, "".join(views)))
 
     overview = _overview_payload(model)
     if overview is not None:
@@ -1540,6 +1765,52 @@ main{position:relative;flex:1 1 auto;min-height:0}
 .chart-svg{width:100%;height:100%;display:block;overflow:hidden}
 .chart-svg text{font-family:inherit}
 .empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+/* 速度页：平均速度 / 手动统计范围（只在第 2 页出现） */
+.speed-body{display:flex;flex-direction:column;min-height:0}
+.speed-views{position:relative;flex:1 1 auto;min-height:0}
+.speed-views>.flight-view{position:absolute;inset:0}
+.avgbar{
+  flex:0 0 auto;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:6px 13px;margin-bottom:5px;font-variant-numeric:tabular-nums;
+}
+.avgbar .avg-title{font-size:12px;color:var(--muted);line-height:1.35;white-space:nowrap}
+.avgbar .avg-title b{display:block;font-size:13px;color:var(--text);font-weight:600}
+.avg-vals{display:flex;gap:18px;flex-wrap:wrap}
+.avg-val{display:flex;flex-direction:column;line-height:1.15}
+.avg-val b{font-size:19px;font-weight:650;letter-spacing:.2px;white-space:nowrap}
+.avg-k{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);white-space:nowrap}
+.avgdash{
+  display:inline-block;width:13px;height:3px;border-radius:2px;
+  background-image:linear-gradient(90deg,currentColor 0 60%,transparent 60% 100%);
+  background-size:7px 3px;background-repeat:repeat-x;
+}
+.avg-ctl{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
+.avg-range{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
+.avg-dash{color:#6d7f92}
+.avg-input{
+  width:82px;font-family:inherit;font-size:12.5px;color:var(--text);background:var(--panel2);
+  border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-variant-numeric:tabular-nums;
+}
+.avg-input:focus{outline:none;border-color:var(--accent)}
+.avg-input:disabled{opacity:.45}
+.avg-btn{
+  font-family:inherit;font-size:12.5px;color:#fff;background:#16406b;border:1px solid #2b6aa8;
+  border-radius:7px;padding:4px 12px;cursor:pointer;transition:.15s;
+}
+.avg-btn:hover{background:#1b4f84;border-color:var(--accent)}
+.avg-btn.ghost{background:var(--panel2);border-color:var(--line);color:#c3d2e1}
+.avg-btn.ghost:hover{border-color:var(--accent);color:#fff}
+.avg-meta{
+  flex-basis:100%;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;
+  font-size:11.5px;color:var(--muted);margin-top:1px;min-height:14px;
+}
+.avg-msg{color:#ffd79b}
+.avg-msg.warn{color:#ffb4a8}
+/* SVG 里的平均速度图层不拦截悬停 */
+.avg-band,.avg-edge,.avg-line{pointer-events:none}
+.lg i.avgdash{background-image:linear-gradient(90deg,#cbd5e1 0 60%,transparent 60% 100%);
+  background-size:7px 3px;background-repeat:repeat-x}
 /* 概览页 */
 .ovwrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;min-height:0}
 .cards{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
@@ -1904,6 +2175,213 @@ JS = r"""
     }
   });
 
+  // ---------------- 平均速度 / 手动统计范围（速度页） ----------------
+  // 静态 HTML 里已经画好默认（全程）的平均值和 SVG 图层；这里加载后按同一份
+  // 数据重算一遍，用户改起止时间点"应用"时只原地更新数值和图层几何。
+  var AVG = null;
+
+  function initAverage(){
+    var bar = document.getElementById("avgbar-speed");
+    if (!bar) return null;
+    var startEl = bar.querySelector("[data-avg-start]");
+    var endEl = bar.querySelector("[data-avg-end]");
+    var applyEl = bar.querySelector("[data-avg-apply]");
+    var resetEl = bar.querySelector("[data-avg-reset]");
+    var metaEl = bar.querySelector("[data-avg-meta]");
+    var msgEl = bar.querySelector("[data-avg-msg]");
+    var viewEls = {
+      ias: bar.querySelector('[data-avg-val="ias"]'),
+      tas: bar.querySelector('[data-avg-val="tas"]'),
+      mach: bar.querySelector('[data-avg-val="mach"]')
+    };
+    var byIndex = {};
+    (DATA.flights || []).forEach(function(fl){ byIndex[fl.index] = fl; });
+    var state = {a: null, b: null};
+
+    function toNum(v, fallback){
+      var n = parseFloat(v);
+      return isFinite(n) ? n : fallback;
+    }
+    function f1(t){ return (Math.round(t * 10) / 10).toFixed(1); }
+    function fsec(t){
+      var s = t.toFixed(3);
+      s = s.replace(/0+$/, "").replace(/\.$/, "");
+      return s || "0";
+    }
+    function fixed(v, d){
+      if (v === null || v === undefined || !isFinite(v)) return "—";
+      return v.toFixed(d);
+    }
+    function setMsg(text, warn){
+      if (!msgEl) return;
+      msgEl.textContent = text || "";
+      msgEl.className = "avg-msg" + (warn ? " warn" : "");
+    }
+    function currentFlight(){
+      var el = document.querySelector(".flight-view.active[data-flight]");
+      if (!el) return null;
+      var idx = parseInt(el.getAttribute("data-flight"), 10);
+      return byIndex[idx] || null;
+    }
+    // 夹取到 [t0, t1]：写反交换、超界夹边界、完全不相交则退回全程
+    function clampRange(fl, rawA, rawB){
+      var t0 = fl.t0, t1 = fl.t1;
+      var a = toNum(rawA, t0);
+      var b = toNum(rawB, t1);
+      var notes = [];
+      if (a > b){ var tmp = a; a = b; b = tmp; notes.push("起止时间写反，已交换"); }
+      var ca = a, cb = b;
+      if (ca < t0) ca = t0;
+      if (cb > t1) cb = t1;
+      if (ca !== a || cb !== b) notes.push("超出当前架次时间轴，已夹到边界");
+      if (ca > cb){ ca = t0; cb = t1; notes.push("范围与当前架次不相交，已重置为全程"); }
+      return {a: ca, b: cb, notes: notes};
+    }
+    function slice(fl, a, b){
+      var times = fl.times, s = fl.series;
+      var n = 0, si = 0, st = 0, sm = 0, ci = 0, ct = 0, cm = 0, v;
+      for (var i = 0; i < times.length; i++){
+        var t = times[i];
+        if (t < a) continue;
+        if (t > b) break;
+        n++;
+        v = s.ias ? s.ias[i] : null;
+        if (v !== null && v !== undefined){ si += v; ci++; }
+        v = s.tas ? s.tas[i] : null;
+        if (v !== null && v !== undefined){ st += v; ct++; }
+        v = s.mach ? s.mach[i] : null;
+        if (v !== null && v !== undefined){ sm += v; cm++; }
+      }
+      return {
+        samples: n,
+        ias: ci ? si / ci : null,
+        tas: ct ? st / ct : null,
+        mach: cm ? sm / cm : null
+      };
+    }
+    function panelFor(fl){
+      var panels = fl.panels || [];
+      for (var i = 0; i < panels.length; i++){
+        if (panels[i].id === "f" + fl.index + "-speed") return panels[i];
+      }
+      return null;
+    }
+    function yFor(p, axis, v){
+      if (!axis) return null;
+      var span = axis.max - axis.min;
+      if (!isFinite(span) || span === 0) return null;
+      return p.y1 - (v - axis.min) / span * (p.y1 - p.y0);
+    }
+    function find(id){ return document.getElementById(id); }
+    function updateOverlay(fl, a, b, avg){
+      var p = panelFor(fl);
+      if (!p) return;
+      var suffix = "f" + fl.index + "-speed";
+      var span = (fl.t1 - fl.t0) || 1;
+      var xa = p.x0 + (a - fl.t0) / span * (p.x1 - p.x0);
+      var xb = p.x0 + (b - fl.t0) / span * (p.x1 - p.x0);
+      xa = Math.max(p.x0, Math.min(p.x1, xa));
+      xb = Math.max(p.x0, Math.min(p.x1, xb));
+      if (xb < xa){ var tmp = xa; xa = xb; xb = tmp; }
+      var band = find("avg-band-" + suffix);
+      if (band){
+        band.setAttribute("x", xa.toFixed(1));
+        band.setAttribute("width", (xb - xa).toFixed(1));
+      }
+      var edge0 = find("avg-edge0-" + suffix);
+      if (edge0){ edge0.setAttribute("x1", xa.toFixed(1)); edge0.setAttribute("x2", xa.toFixed(1)); }
+      var edge1 = find("avg-edge1-" + suffix);
+      if (edge1){ edge1.setAttribute("x1", xb.toFixed(1)); edge1.setAttribute("x2", xb.toFixed(1)); }
+      [["ias", p.left], ["tas", p.left], ["mach", p.right]].forEach(function(pair){
+        var line = find("avg-" + pair[0] + "-" + suffix);
+        if (!line) return;
+        var y = yFor(p, pair[1], avg[pair[0]]);
+        if (y === null){
+          line.setAttribute("opacity", "0");
+        } else {
+          line.setAttribute("y1", y.toFixed(1));
+          line.setAttribute("y2", y.toFixed(1));
+          line.setAttribute("opacity", "0.85");
+        }
+      });
+    }
+    function render(fl){
+      if (!fl) return;
+      var result = slice(fl, state.a, state.b);
+      if (viewEls.ias) viewEls.ias.textContent = fixed(result.ias, 1);
+      if (viewEls.tas) viewEls.tas.textContent = fixed(result.tas, 1);
+      if (viewEls.mach) viewEls.mach.textContent = fixed(result.mach, 2);
+      if (metaEl){
+        metaEl.textContent = "范围 " + f1(state.a) + "–" + f1(state.b) + " s · " +
+          result.samples + " 样本 · 底纹 = 统计区间，虚线 = 平均值（回车 = 应用）";
+      }
+      updateOverlay(fl, state.a, state.b, result);
+    }
+    function syncInputs(fl){
+      var lo = fsec(fl.t0), hi = fsec(fl.t1);
+      if (startEl){
+        startEl.min = lo; startEl.max = hi;
+        startEl.value = fsec(state.a);
+      }
+      if (endEl){
+        endEl.min = lo; endEl.max = hi;
+        endEl.value = fsec(state.b);
+      }
+    }
+    function apply(){
+      var fl = currentFlight();
+      if (!fl) return;
+      var out = clampRange(fl, startEl ? startEl.value : state.a,
+                           endEl ? endEl.value : state.b);
+      state.a = out.a;
+      state.b = out.b;
+      syncInputs(fl);
+      render(fl);
+      setMsg(out.notes.join("；"), out.notes.length > 0);
+    }
+    function reset(){
+      var fl = currentFlight();
+      if (!fl) return;
+      state.a = fl.t0;
+      state.b = fl.t1;
+      syncInputs(fl);
+      render(fl);
+      setMsg("已重置为当前架次全程", false);
+    }
+    function onFlight(value){
+      var fl = byIndex[parseInt(value, 10)];
+      if (!fl) return;
+      var out = clampRange(fl, state.a === null ? fl.t0 : state.a,
+                           state.b === null ? fl.t1 : state.b);
+      state.a = out.a;
+      state.b = out.b;
+      syncInputs(fl);
+      render(fl);
+      if (out.notes.length) setMsg("切换架次后：" + out.notes.join("；"), true);
+      else setMsg("", false);
+    }
+
+    if (applyEl) applyEl.addEventListener("click", apply);
+    if (resetEl) resetEl.addEventListener("click", reset);
+    if (startEl) startEl.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter"){ ev.preventDefault(); apply(); }
+    });
+    if (endEl) endEl.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter"){ ev.preventDefault(); apply(); }
+    });
+
+    var first = currentFlight();
+    if (first){
+      state.a = first.t0;
+      state.b = first.t1;
+      syncInputs(first);
+      render(first);
+    }
+    return {apply: apply, reset: reset, onFlight: onFlight};
+  }
+
+  AVG = initAverage();
+
   // ---------------- 架次切换（只换当前页的曲线） ----------------
   var flightBtns = qsa("[data-flight-btn]");
   var flightViews = qsa(".flight-view[data-flight]");
@@ -1916,6 +2394,7 @@ JS = r"""
       btn.classList.toggle("active", btn.getAttribute("data-flight-btn") === value);
     });
     if (flightSelect && flightSelect.value !== value) flightSelect.value = value;
+    if (AVG) AVG.onFlight(value);
     hideAll();
   }
   flightBtns.forEach(function(btn){

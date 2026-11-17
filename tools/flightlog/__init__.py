@@ -5,7 +5,7 @@
 
 模块结构：
 
-* :mod:`flightlog.parse`   —— JSONL 解析、架次切分、能量与统计
+* :mod:`flightlog.parse`   —— JSONL 解析、架次切分、能量、统计与平均速度
 * :mod:`flightlog.report`  —— 生成自包含单文件 HTML
 * :mod:`flightlog.preview_png` —— 可选：用 Pillow 出 PNG 预览
 * ``python -m flightlog``  —— 命令行入口（见 README.md）
@@ -25,6 +25,7 @@ from .parse import (  # noqa: F401  (对外导出)
     LogError,
     LogModel,
     analyze,
+    average_speed,
     build_flights,
     build_series,
     compute_flight_stats,
@@ -46,6 +47,7 @@ __all__ = [
     "LogError",
     "LogModel",
     "analyze",
+    "average_speed",
     "build_flights",
     "build_series",
     "compute_flight_stats",

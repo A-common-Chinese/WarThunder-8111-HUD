@@ -665,6 +665,87 @@ def build_series(flight: Flight) -> Dict[str, List[Optional[float]]]:
     return series
 
 
+#: 平均速度要统计的通道：(序列键, 原始日志字段名)
+_SPEED_CHANNELS = (("ias", "ias_kmh"), ("tas", "tas_kmh"), ("mach", "mach"))
+
+
+def average_speed(
+    samples: Sequence[Dict[str, Any]], t1: Any, t2: Any
+) -> Optional[Dict[str, Any]]:
+    """统计 ``t`` 落在**闭区间** ``[t1, t2]`` 内样本的平均速度（纯函数）。
+
+    参数
+    ----
+    samples:
+        样本序列（``Flight.samples`` 或任何 dict 列表）。每项至少要有 ``t``；
+        速度字段用序列键 ``ias`` / ``tas`` / ``mach``，也兼容原始日志字段名
+        ``ias_kmh`` / ``tas_kmh`` / ``mach``。
+    t1, t2:
+        统计区间的起止秒数（闭区间）。写反会自动交换；不是数字时返回 ``None``。
+
+    返回
+    ----
+    区间内没有可用样本时返回 ``None``，否则返回::
+
+        {
+          "range_start": 30.0, "range_end": 120.0,   # 实际使用的闭区间（已交换成升序）
+          "samples": 900, "duration_s": 90.0,        # 样本数 / 区间时长
+          "first_t": 30.0, "last_t": 120.0,          # 命中样本的首末时间
+          "ias": 887.2, "tas": 984.1, "mach": 0.82,  # 各字段算术平均（无数据为 None）
+        }
+
+    三个均值**各自**只统计"该字段有值"的样本：旧日志缺 Mach 时
+    ``mach`` 为 ``None``，不影响 IAS/TAS。注意 ``duration_s`` 是用户选区长度
+    （``t2 - t1``），不是首末命中样本的间隔。
+    """
+    start = _num(t1)
+    end = _num(t2)
+    if start is None or end is None:
+        return None
+    if start > end:
+        start, end = end, start
+
+    count = 0
+    first_t: Optional[float] = None
+    last_t: Optional[float] = None
+    sums: Dict[str, float] = {key: 0.0 for key, _raw in _SPEED_CHANNELS}
+    hits: Dict[str, int] = {key: 0 for key, _raw in _SPEED_CHANNELS}
+
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        t = _num(sample.get("t"))
+        if t is None or t < start or t > end:
+            continue
+        count += 1
+        if first_t is None:
+            first_t = t
+        last_t = t
+        for key, raw_key in _SPEED_CHANNELS:
+            value = _num(sample.get(key))
+            if value is None:
+                value = _num(sample.get(raw_key))
+            if value is None:
+                continue
+            sums[key] += value
+            hits[key] += 1
+
+    if not count:
+        return None
+
+    result: Dict[str, Any] = {
+        "range_start": start,
+        "range_end": end,
+        "samples": count,
+        "duration_s": end - start,
+        "first_t": first_t,
+        "last_t": last_t,
+    }
+    for key, _raw in _SPEED_CHANNELS:
+        result[key] = (sums[key] / hits[key]) if hits[key] else None
+    return result
+
+
 def _minmax(values: Sequence[Optional[float]]) -> Tuple[Optional[float], Optional[float]]:
     present = [v for v in values if v is not None]
     if not present:
