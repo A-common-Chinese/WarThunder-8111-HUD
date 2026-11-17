@@ -259,6 +259,7 @@ public static class L10n
         ["row.bankTrim"] = ("坡度修正", "BANK TRIM"),
         ["row.fpmTrim"] = ("矢量修正", "MARKER TRIM"),
         ["row.tapeRadar"] = ("高度带雷达", "RADAR ALTITUDE"),
+        ["row.radarAltUnit"] = ("雷达高度单位", "RADAR ALT UNIT"),
         ["row.aimRmb"] = ("右键瞄准", "AIM ON RMB"),
         ["row.source"] = ("当前符号源", "ACTIVE SIGN"),
         ["row.stallAoa"] = ("失速迎角", "STALL AOA"),

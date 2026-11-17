@@ -1,5 +1,5 @@
 {
-  "_version": 62,
+  "_version": 63,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -763,5 +763,9 @@
   "row.recKeep": {
     "zh": "最多保留多少个记录文件（默认 20）；超出时自动删除最老的，给新文件留位置。",
     "en": "How many recording files to keep (default 20); the oldest are deleted to make room."
+  },
+  "row.radarAltUnit": {
+    "zh": "雷达高度单位：8111 的 radio_altitude 用座舱单位，米/英尺随机型不同（如 JH-7A 米、A-10 英尺）。按当前机型设置，会记住。",
+    "en": "Radar altitude unit: the 8111 value uses cockpit units, which vary by aircraft (JH-7A metres, A-10 feet). Saved per aircraft."
   }
 }

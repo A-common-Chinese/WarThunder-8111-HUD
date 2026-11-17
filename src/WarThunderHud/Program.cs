@@ -1931,15 +1931,16 @@ public static partial class Program
             // Radar altitude only when the aircraft actually reports one: the API exposes no
             // terrain data, so an estimate was hopeless over hilly maps. Everything else shows
             // barometric altitude, exactly like before.
-            bool hasRadioAlt = snap.RadioAltM.HasValue;
+            double? radioAltM = EffectiveRadioAltM(snap, cfg);
+            bool hasRadioAlt = radioAltM.HasValue;
             if (hasRadioAlt && !radioAltLogged)
             {
                 radioAltLogged = true;
-                Console.WriteLine($"radio altimeter available on {snap.VehicleType}: {snap.RadioAltM:F0} m AGL (8111 feet -> m)");
+                Console.WriteLine($"radio altimeter available on {snap.VehicleType}: {radioAltM:F0} m AGL (cockpit unit -> m)");
             }
             bool showRadarAlt = cfg.TapeRadarAltitude && hasRadioAlt;
             opt.AltTapeIsRadar = showRadarAlt;
-            opt.AltTapeM = showRadarAlt ? snap.RadioAltM!.Value : snap.AltM;
+            opt.AltTapeM = showRadarAlt ? radioAltM!.Value : snap.AltM;
             // 自己的转向率每帧更新：有数据链要广播给僚机，没数据链时"反推长机转向率"也要用它。
             // 没有罗盘就用航迹角兜底，和 UpdateNavigation 里的 navHeading 同一套规则。
             double ownHdg = snap.HasHeading ? snap.HeadingDeg : 0;
@@ -2002,7 +2003,7 @@ public static partial class Program
 
             // PULL UP: only with a real radio altimeter, and the trigger altitude grows with the
             // sink rate - what matters is the time to impact, so a fast dive warns higher up.
-            double ralt = snap.RadioAltM ?? double.NaN;
+            double ralt = EffectiveRadioAltM(snap, cfg) ?? double.NaN;
             bool hasRalt = !double.IsNaN(ralt);
             double tti = hasRalt && snap.VyMs < -5 ? ralt / -snap.VyMs : double.MaxValue;
             double pullUpTti = WtHud.Hud.EffectiveSettings.PullUpTtiS(cfg, snap.VehicleType, alertProfile);
@@ -2022,7 +2023,7 @@ public static partial class Program
             bool sinkNow = sinkRateSince != 0 && alertTicks - sinkRateSince > 1000;
 
             if (pullUpNow != opt.PullUpAlert)
-                Console.WriteLine($"PULL UP {(pullUpNow ? "ON" : "off")}: ralt={snap.RadioAltM:F0} m vy={snap.VyMs:F0} m/s tti={tti:F1} s");
+                Console.WriteLine($"PULL UP {(pullUpNow ? "ON" : "off")}: ralt={EffectiveRadioAltM(snap, cfg):F0} m vy={snap.VyMs:F0} m/s tti={tti:F1} s");
             if (sinkNow != opt.SinkRateAlert)
                 Console.WriteLine($"SINK RATE {(sinkNow ? "ON" : "off")}: alt={snap.AltM:F0} m vy={snap.VyMs:F0} m/s thr={sinkThr:F0}");
 
@@ -3294,7 +3295,7 @@ public static partial class Program
             }
 
             if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
-            if (snap.Valid && inBattle) flightRecorder.Add(snap, lastAttitude);
+            if (snap.Valid && inBattle) flightRecorder.Add(snap, lastAttitude, EffectiveRadioAltM(snap, cfg));
         }
 
         // 对局结束 = 不再发包（5 秒无新快照）或 连续 60 秒不在对局（回大厅）。
@@ -3310,6 +3311,14 @@ public static partial class Program
                 ? "recording stopped (out of battle for 60 s)"
                 : "recording stopped (no telemetry)");
         }
+    }
+
+    /// <summary>雷达高度原始值按设置换算成米：0 = 米，1 = 英尺（座舱单位随机型）。</summary>
+    internal static double? EffectiveRadioAltM(TelemetrySnapshot s, HudConfig c)
+    {
+        if (s.RadioAltM is not double raw) return null;
+        int unit = Scoped.GetInt(c, "row.radarAltUnit", c.RadarAltitudeUnit);
+        return unit == 1 ? raw * 0.3048 : raw;
     }
 
     private static bool IsForegroundProcess(int pid)

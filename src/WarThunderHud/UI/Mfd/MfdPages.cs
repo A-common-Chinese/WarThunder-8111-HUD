@@ -489,6 +489,10 @@ internal static class MfdPages
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.fpmTrim", v, () => c.FpmTrimDeg = v),
                 0.5, -20, 20, "°"),
             Toggle("row.tapeRadar", c => c.TapeRadarAltitude, (c, v) => c.TapeRadarAltitude = v),
+            // 雷达高度单位：8111 给的是座舱单位，米/英尺随机型不同（JH-7A 米，A-10 英尺）
+            Enum("row.radarAltUnit", new[] { "unit.metric", "unit.imperial" },
+                 c => Scoped.GetInt(c, "row.radarAltUnit", c.RadarAltitudeUnit),
+                 (c, v) => Scoped.Set(c, "row.radarAltUnit", v, () => c.RadarAltitudeUnit = v)),
             Toggle("row.aimRmb", c => c.AimOnRightMouse, (c, v) => c.AimOnRightMouse = v),
             Info("row.source", c => c.PitchSign == 0 ? "AUTO" : (c.PitchSign > 0 ? "+1" : "-1")),
             // ---- 校准动作的触发键：校准时人就在这一页，键位跟着放这里比放「按键」页顺手 ----

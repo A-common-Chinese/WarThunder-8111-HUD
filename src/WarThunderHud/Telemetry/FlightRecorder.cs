@@ -62,7 +62,7 @@ public sealed class FlightRecorder : IDisposable
     }
 
     /// <summary>写一帧本机数据（在渲染循环里调用，只入队）。</summary>
-    public void Add(TelemetrySnapshot s, AttitudeSolution att)
+    public void Add(TelemetrySnapshot s, AttitudeSolution att, double? radioAltM = null)
     {
         if (_closed) return;
         var line = JsonSerializer.Serialize(new SampleLine
@@ -77,7 +77,7 @@ public sealed class FlightRecorder : IDisposable
             Tas = Math.Round(s.TasKmh, 1),
             Mach = Math.Round(s.Mach, 3),
             Alt = Math.Round(s.AltM, 1),
-            Ralt = s.RadioAltM is double ra ? Math.Round(ra, 1) : null,
+            Ralt = radioAltM is double ra ? Math.Round(ra, 1) : null,
             Vy = Math.Round(s.VyMs, 2),
             Aoa = Math.Round(s.AoaDeg, 2),
             Aos = Math.Round(s.AosDeg, 2),

@@ -32,6 +32,7 @@ public static class SettingScopes
         ["row.sinkRate"] = (SettingScope.Airframe, "进近/结构限制"),
         ["row.pullUp"] = (SettingScope.Airframe, "地形告警提前量"),
         ["row.pitchSign"] = (SettingScope.Airframe, "个别机型反向"),
+        ["row.radarAltUnit"] = (SettingScope.Airframe, "座舱雷达高度单位随机型"),
     };
 
     public static SettingScope Of(string key) =>

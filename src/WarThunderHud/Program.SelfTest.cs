@@ -52,13 +52,16 @@ public static partial class Program
         Check("ground not inflight", !g.InFlight);
         Check("ground aoa zeroed", Math.Abs(g.AoaDeg) < 0.001);
 
-        // 雷达高度：8111 的 radio_altitude 是英尺，解析时换算成米（1000 ft -> 304.8 m）
+        // 雷达高度：8111 原始值是座舱单位，解析层保留原值，按设置换算成米（默认米）。
         const string indRalt = """{"valid":true,"type":"f-4j","radio_altitude":1000,"compass":90}""";
         var ralt = TelemetryParser.Parse(state, indRalt, TimeSpan.Zero, DateTime.UtcNow);
-        Check("radio altitude ft->m", ralt.RadioAltM is double rm && Math.Abs(rm - 304.8) < 0.01);
-        const string indRaltZero = """{"valid":true,"type":"f-4j","radio_altitude":0,"compass":90}""";
-        var ralt0 = TelemetryParser.Parse(state, indRaltZero, TimeSpan.Zero, DateTime.UtcNow);
-        Check("radio altitude zero", ralt0.RadioAltM is double rz && Math.Abs(rz) < 0.001);
+        Check("radio altitude raw kept", ralt.RadioAltM is double rr && Math.Abs(rr - 1000) < 0.01);
+        var raltCfgM = new HudConfig();
+        var raltCfgFt = new HudConfig { RadarAltitudeUnit = 1 };
+        Check("radio altitude metric",
+            WtHud.Program.EffectiveRadioAltM(ralt, raltCfgM) is double rm && Math.Abs(rm - 1000) < 0.01);
+        Check("radio altitude feet->m",
+            WtHud.Program.EffectiveRadioAltM(ralt, raltCfgFt) is double rf && Math.Abs(rf - 304.8) < 0.01);
 
         // 战雷 controls .blk 导入：解析 + 组合键还原（减速板 H / 计分板 CTRL+N）
         const string blk = """

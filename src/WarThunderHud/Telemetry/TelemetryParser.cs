@@ -48,7 +48,7 @@ public static class TelemetryParser
             gearPct = GetDouble(r, "gear, %", -1);
             flapsPct = GetDouble(r, "flaps, %", -1);
             airbrakePct = GetDouble(r, "airbrake, %", -1);
-            if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude") * FeetToMetres;
+            if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
         }
 
         string vehicle = "";
@@ -82,7 +82,7 @@ public static class TelemetryParser
             if (r.TryGetProperty("aviahorizon_roll", out _)) bank = -GetDouble(r, "aviahorizon_roll");
             else if (r.TryGetProperty("bank", out _)) bank = GetDouble(r, "bank");
             if (r.TryGetProperty("turn", out _)) turn = GetDouble(r, "turn");
-            if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude") * FeetToMetres;
+            if (radioAlt is null && r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
             if (r.TryGetProperty("aoa_indexer1", out _)) aoaIndexer = GetDouble(r, "aoa_indexer1");
             if (r.TryGetProperty("vne", out _)) vne = GetDouble(r, "vne");   // cockpit Vne, m/s
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");

@@ -113,6 +113,10 @@ public sealed class HudConfig
     /// <summary>Height tape shows radar (above-ground) altitude instead of barometric.</summary>
     [JsonPropertyName("tapeRadarAltitude")] public bool TapeRadarAltitude { get; set; } = true;
 
+    /// <summary>雷达高度单位：0 = 米，1 = 英尺。8111 的 radio_altitude 用座舱单位，随机型不同；
+    /// 默认按米，美/英英制仪表机型可在面板里按机型切到英尺。</summary>
+    [JsonPropertyName("radarAltitudeUnit")] public int RadarAltitudeUnit { get; set; }
+
     /// <summary>Flip the map Y axis when converting to bearings/grid (depends on the map).</summary>
     [JsonPropertyName("mapYFlip")] public bool MapYFlip { get; set; } = true;   // map image Y grows southwards
 
