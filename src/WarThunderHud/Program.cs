@@ -3237,6 +3237,9 @@ public static partial class Program
         {
             recLastStampUtc = latest!.TimestampUtc;
             recLastPacketTicks = nowTicks;
+            // 大厅里 8111 仍在应答、但 valid=false：连续 60 秒无效也算这局结束。
+            if (snap.Valid) recInvalidSince = 0;
+            else if (recInvalidSince == 0) recInvalidSince = nowTicks;
         }
         bool packetsAlive = recLastPacketTicks != 0 && nowTicks - recLastPacketTicks < 5000;
 
@@ -3248,6 +3251,7 @@ public static partial class Program
                 flightRecorder = null;
                 recLastStampUtc = default;
                 recLastPacketTicks = 0;
+                recInvalidSince = 0;
                 Console.WriteLine("recording stopped (toggle off)");
             }
             return;
@@ -3261,6 +3265,7 @@ public static partial class Program
             recLastPacketTicks = nowTicks;
             recValidPrev = true;
             recVehiclePrev = snap.VehicleType;
+            recInvalidSince = 0;
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
@@ -3289,14 +3294,18 @@ public static partial class Program
             if (snap.Valid) flightRecorder.Add(snap, lastAttitude);
         }
 
-        // 对局结束 = 不再发包。
-        if (!packetsAlive)
+        // 对局结束 = 不再发包（5 秒无新快照）或 持续 60 秒 valid=false（回大厅/结算）。
+        bool idleInvalid = recInvalidSince != 0 && nowTicks - recInvalidSince > 60_000;
+        if (!packetsAlive || idleInvalid)
         {
             flightRecorder.Stop();
             flightRecorder = null;
             recLastStampUtc = default;
             recLastPacketTicks = 0;
-            Console.WriteLine("recording stopped (no telemetry)");
+            recInvalidSince = 0;
+            Console.WriteLine(idleInvalid
+                ? "recording stopped (out of battle for 60 s)"
+                : "recording stopped (no telemetry)");
         }
     }
 
@@ -3533,6 +3542,7 @@ public static partial class Program
     private static DateTime recLastStampUtc;
     private static bool recValidPrev = true;
     private static string recVehiclePrev = "";
+    private static long recInvalidSince;
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
