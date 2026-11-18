@@ -98,8 +98,18 @@ public static class HudKillFeed
     private static readonly string[] DeathVerbs = { "击落了", "shot down", "击毁了", "destroyed" };
 
     /// <summary>
-    /// 这条消息是不是「自己被别人击落/击毁」；是则给出对方名字（已清洗）。
-    /// 消息格式是「killer (机型) 击落了 victim (机型)」，victim 必须与我们配置的昵称一致。
+    /// 坠毁文案：8111 实测为「^DFCN^ 名字 (机型) 已坠毁。」，没有击杀者。
+    /// 英文客户端对应 "crashed"/"has crashed"。
+    /// </summary>
+    private static readonly string[] CrashPhrases = { "已坠毁", "坠毁了", "坠机", "crashed" };
+
+    /// <summary>
+    /// 这条消息是不是「自己被别人击落/击毁，或自己坠毁」；是则给出对方名字（坠毁时为空串）。
+    /// 消息格式两种：
+    /// <list type="bullet">
+    /// <item>「killer (机型) 击落了/击毁了 victim (机型)」 —— victim 与配置昵称一致；</item>
+    /// <item>「自己 (机型) 已坠毁。」 —— 昵称开头、后面只能接 "(机型)"，没有击杀者。</item>
+    /// </list>
     /// 玩家昵称为空时返回 false（调用方退回 valid 判断）。
     /// </summary>
     public static bool IsOwnDeath(string? raw, string? playerName, out string killer)
@@ -108,7 +118,29 @@ public static class HudKillFeed
         if (string.IsNullOrWhiteSpace(playerName)) return false;
         string s = Clean(raw);
         if (s.Length == 0) return false;
+        string name = playerName.Trim();
 
+        if (TryDeathByKill(s, name, out killer)) return true;
+
+        // 坠毁：没有动词切分，只能按「昵称 (机型) 已坠毁」
+        foreach (var phrase in CrashPhrases)
+        {
+            int i = s.IndexOf(phrase, StringComparison.OrdinalIgnoreCase);
+            if (i <= 0) continue;
+            string left = s[..i].Trim();
+            if (!left.StartsWith(name, StringComparison.OrdinalIgnoreCase)) continue;
+            string rest = left[name.Length..].Trim();
+            if (rest.Length > 0 && !rest.StartsWith("(", StringComparison.Ordinal)) continue;
+            killer = "";
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>「killer (机型) 击落了 victim (机型)」里 victim 是不是自己。</summary>
+    private static bool TryDeathByKill(string s, string name, out string killer)
+    {
+        killer = "";
         int vi = -1, vl = 0;
         foreach (var v in DeathVerbs)
         {
@@ -124,10 +156,9 @@ public static class HudKillFeed
         int sp = left.LastIndexOf(" (", StringComparison.Ordinal);
         string actor = sp > 0 && left.EndsWith(')') ? left[..sp].Trim() : left;
 
-        string name = playerName.Trim();
         if (!right.StartsWith(name, StringComparison.OrdinalIgnoreCase)) return false;
         string rest = right[name.Length..].Trim();
-        // 受害方可能带机型 "Name (Type)"；名字后面只能接机型括号，不能是另一个名字的前缀
+        // 受害方可能带机型 "Name (Type)"；名字后面只能接机型括号
         if (rest.Length > 0 && !rest.StartsWith("(", StringComparison.Ordinal)) return false;
 
         killer = actor;

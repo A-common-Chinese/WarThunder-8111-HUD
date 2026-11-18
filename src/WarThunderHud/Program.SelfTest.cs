@@ -149,6 +149,13 @@ public static partial class Program
         Check("killfeed own death needs the configured name",
             !HudKillFeed.IsOwnDeath(deathAir, "", out _)
             && !HudKillFeed.IsOwnDeath(deathAir, "someone_else", out _));
+        // 8111 实测坠毁文案：「^DFCN^ 名字 (机型) 已坠毁。」（没有击杀者）
+        const string crashLine = "^DFCN^ ACCvTARDISdevice (F-15A) 已\u200B坠\u200B毁。";
+        Check("killfeed own crash",
+            HudKillFeed.IsOwnDeath(crashLine, "ACCvTARDISdevice", out var cKiller) && cKiller == "");
+        Check("killfeed own crash is not own kill", !HudKillFeed.IsOwnKill(crashLine, "ACCvTARDISdevice", out _));
+        Check("killfeed own crash needs matching name",
+            !HudKillFeed.IsOwnDeath(crashLine, "someone_else", out _));
 
         // 中文昵称 / 中文战队标签 / 昵称带括号：这三类以前都会让 actor 对不上设置里的名字
         const string zhLine = "^雄鹰^张三 (J-7E) 击落了 李四 (F-16)";
