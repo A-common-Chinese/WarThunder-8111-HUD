@@ -291,7 +291,7 @@ internal static class MfdPages
     public static List<MfdPage> Build() => new()
     {
         HudDisplay(), Formation(), DataLink(), Attitude(), Alerts(), Keys(),
-        Panel(), Airframes(), Snapshots(), Diag(),
+        Panel(), Airframes(), Snapshots(), FlightLog(), Diag(),
     };
 
     private static MfdItem Toggle(string label, Func<HudConfig, bool> get, Action<HudConfig, bool> set,
@@ -1216,6 +1216,18 @@ internal static class MfdPages
         MenuKey = "page.snapshots",
         MenuHintKey = "menu.hint.snapshots",
         LiveCount = () => WtHud.Hud.ConfigSnapshots.ListRestorable().Count,
+    };
+
+    /// <summary>
+    /// 记录（MFD 内置飞行记录分析）：没有固定行，列表由 <c>FlightLogListPage</c> 直接绘制；
+    /// 首页数量显示 <c>recordings/</c> 里的文件数（最多扫 30 条，与列表页一致）。
+    /// </summary>
+    private static MfdPage FlightLog() => new()
+    {
+        TitleKey = "page.flightlog",
+        MenuKey = "page.flightlog",
+        MenuHintKey = "menu.hint.flightlog",
+        LiveCount = () => FlightLogBridge.ListRecordings(null, 30).Count,
     };
 
     private static MfdPage Diag() => new()

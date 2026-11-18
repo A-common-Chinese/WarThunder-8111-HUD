@@ -409,7 +409,7 @@ public static partial class Program
 
         // ---- 面板分页：键漏了不会报错，屏幕上会直接印出键名（曾经出现过 val.roleWing）----
         var modules = WtHud.UI.Mfd.MfdPages.Build();
-        Check("menu has 10 modules", modules.Count == 10);
+        Check("menu has 11 modules", modules.Count == 11);
         bool menuTitlesOk = true, rowLabelsOk = true;
         foreach (var pg in modules)
         {
@@ -1650,6 +1650,256 @@ public static partial class Program
         finally
         {
             if (recPath != null) { try { File.Delete(recPath); } catch { } }
+        }
+
+        // ================= MFD 内置飞行记录分析（0.4.41）=================
+        // 契约：FlightLog.exe --mfd-json <log> --out <tmp>，schema=1；数据画在左侧折线图，
+        // 右侧统计卡。这一组断言覆盖三层：JSON 解析/兼容性、像素映射、主题统计口径。
+
+        const string mfdJson = """
+        {"schema":1,"tool":"FlightLog","tool_version":"0.4.40","source":"selftest.jsonl",
+         "meta":{"vehicle":"jh_7a","duration_s":2,"rate_hz":2,"samples":3},
+         "flights":[{"index":1,"start_s":0,"end_s":2,"samples":3,"vehicle":"jh_7a",
+           "stats":{"max_ias_kmh":1000,"max_tas_kmh":1100,"max_mach":0.9,"max_g":6.5,
+             "max_alt_m":5000,"avg_ias_kmh":800,"avg_tas_kmh":880,"avg_mach":0.7,"avg_alt_m":4000,
+             "es_range_m":[3000,6000],"es_delta_m":1200,
+             "max_ias_filtered_kmh":950,"max_tas_filtered_kmh":1000,
+             "avg_filter":{"death_window_s":10,"spike_window_s":30,"spike_sigma":3,
+               "excluded_samples":1}},
+           "series":{"t":[0,1,2],"ias_kmh":[700,800,900],"tas_kmh":[770,880,990],
+             "mach":[0.6,0.7,0.8],"alt_m":[3500,4000,4500],"ralt_m":[null,null,4200],
+             "es_m":[3000,4000,5000],"des_dt_ms":[10,null,20],"vy_ms":[5,6,7],
+             "aoa_deg":[2,3,4],"ny_g":[1,2,3],"pitch_deg":[1,2,3],"bank_deg":[10,20,30]}}],
+         "events":[{"kind":"death","t":1.5,"vehicle":null},
+                   {"kind":"spawn","t":1.8,"vehicle":"jh_7a"}]}
+        """;
+
+        var mfd = WtHud.UI.Mfd.FlightLogBridge.Parse(mfdJson, out var mfdErr);
+        Check("flightlog parses schema 1", mfd is not null && mfdErr is null
+                                            && mfd.Flights is { Count: 1 }
+                                            && mfd.Flights![0].Samples == 3);
+        Check("flightlog keeps stats and null gaps",
+            mfd!.Flights![0].Stats!.MaxIasKmh == 1000
+            && mfd.Flights[0].Stats!.AvgIasKmh == 800
+            && mfd.Flights[0].Stats!.EsRangeM is { Length: 2 }
+            && mfd.Flights[0].Stats!.EsRangeM![1] == 6000
+            && mfd.Flights[0].Stats!.AvgFilter!.SpikeWindowS == 30
+            && mfd.Flights[0].Series!.RaltM![0] is null
+            && mfd.Flights[0].Series!.DesDtMs![1] is null
+            && mfd.Flights[0].Series!.T![2] == 2);
+        Check("flightlog reads events", mfd.Events is { Count: 2 }
+                                        && mfd.Events[0].Kind == "death"
+                                        && mfd.Events[0].T == 1.5);
+
+        // schema 版本不同 → 明确报「数据版本不兼容」，不能画出半残数据
+        Check("flightlog rejects schema 2",
+            WtHud.UI.Mfd.FlightLogBridge.Parse(mfdJson.Replace("\"schema\":1", "\"schema\":2"),
+                out var badSchema) is null && badSchema?.Key == "flylog.errSchema");
+        Check("flightlog rejects garbage json",
+            WtHud.UI.Mfd.FlightLogBridge.Parse("{not json", out var garbage) is null
+            && garbage?.Key == "flylog.errSchema");
+        // 缺 stats / 各列与 t 不等长（数据被截断）都属于不兼容
+        Check("flightlog rejects missing stats",
+            WtHud.UI.Mfd.FlightLogBridge.Parse("""{"schema":1,"flights":[{"series":{"t":[0,1],"ias_kmh":[1,2]}}]}""",
+                out var noStats) is null && noStats?.Key == "flylog.errSchema");
+        Check("flightlog rejects short series",
+            WtHud.UI.Mfd.FlightLogBridge.Parse(mfdJson.Replace("\"t\":[0,1,2]", "\"t\":[0,1]"),
+                out var shortSeries) is null && shortSeries?.Key == "flylog.errSchema");
+        // 错误文案要能查到 L10n（否则 toast 上会直接印出键名）
+        Check("flightlog error text is localised",
+            new WtHud.UI.Mfd.FlightLogBridge.FlightLogError("flylog.errTimeout").Text
+                != "flylog.errTimeout"
+            && new WtHud.UI.Mfd.FlightLogBridge.FlightLogError("flylog.errSchema").Text
+                != "flylog.errSchema");
+
+        // 进程参数：路径带空格必须原样成为一个参数（ArgumentList 负责转义，这里只锁顺序）
+        var mfdArgs = WtHud.UI.Mfd.FlightLogBridge.BuildArguments(@"C:\a b\wtlog.jsonl", @"C:\tmp\mfd out.json");
+        Check("flightlog argv keeps paths intact",
+            mfdArgs.SequenceEqual(new[]
+            {
+                "--mfd-json", @"C:\a b\wtlog.jsonl", "--out", @"C:\tmp\mfd out.json",
+            }));
+        Check("flightlog working dir is the exe folder",
+            WtHud.UI.Mfd.FlightLogBridge.WorkingDirectoryFor(@"C:\tools\FlightLog.exe") == @"C:\tools");
+        var longErr = WtHud.UI.Mfd.FlightLogBridge.Tail(
+            "line one\nline two " + new string('x', 400));
+        Check("flightlog stderr tail is one short line",
+            longErr.Length <= 184 && longErr.StartsWith("…") && !longErr.Contains('\n'));
+
+        // 记录列表：只认 *.jsonl、按修改时间倒序、超过上限截断
+        string? mfdDir = null;
+        try
+        {
+            mfdDir = Path.Combine(Path.GetTempPath(), "wthud-mfd-selftest-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(mfdDir);
+            for (var i = 0; i < 3; i++)
+            {
+                var f = Path.Combine(mfdDir, $"wtlog-2026010{i + 1}-00000{i}-a.jsonl");
+                File.WriteAllText(f, "{}\n");
+                File.SetLastWriteTimeUtc(f, new DateTime(2026, 1, i + 1, 0, 0, 0, DateTimeKind.Utc));
+            }
+            File.WriteAllText(Path.Combine(mfdDir, "notes.txt"), "not a log");
+            var recs = WtHud.UI.Mfd.FlightLogBridge.ListRecordings(mfdDir, 2);
+            Check("flightlog lists newest jsonl first",
+                recs.Count == 2
+                && recs[0].Name.StartsWith("wtlog-20260103", StringComparison.Ordinal)
+                && recs[1].Name.StartsWith("wtlog-20260102", StringComparison.Ordinal));
+            Check("flightlog recording row text",
+                recs[0].TimeText.Length == 16 && recs[0].TimeText[4] == '-'
+                && WtHud.UI.Mfd.FlightLogBridge.FormatSize(512) == "512 B"
+                && WtHud.UI.Mfd.FlightLogBridge.FormatSize(1536) == "1.5 KB"
+                && WtHud.UI.Mfd.FlightLogBridge.FormatSize(5L * 1024 * 1024) == "5.0 MB");
+            Check("flightlog missing folder lists empty",
+                WtHud.UI.Mfd.FlightLogBridge.ListRecordings(
+                    Path.Combine(mfdDir, "nope"), 30).Count == 0);
+        }
+        finally
+        {
+            if (mfdDir != null) { try { Directory.Delete(mfdDir, true); } catch { } }
+        }
+
+        // 像素映射：时间 → 横轴、数值 → 纵轴（值越大越靠上），退化区间落中线
+        var plotRect = new System.Drawing.RectangleF(100, 50, 400, 200);
+        Check("flightlog maps time to x",
+            Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapX(0, 0, 10, plotRect) - 100) < 1e-3
+            && Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapX(10, 0, 10, plotRect) - 500) < 1e-3
+            && Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapX(5, 0, 10, plotRect) - 300) < 1e-3);
+        Check("flightlog maps value to y inverted",
+            Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapY(0, 0, 100, plotRect) - 250) < 1e-3
+            && Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapY(100, 0, 100, plotRect) - 50) < 1e-3);
+        Check("flightlog degenerate spans sit on the centre line",
+            Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapX(3, 5, 5, plotRect) - 300) < 1e-3
+            && Math.Abs(WtHud.UI.Mfd.FlightLogPlot.MapY(3, 5, 5, plotRect) - 150) < 1e-3);
+        Check("flightlog padded range encloses the data",
+            WtHud.UI.Mfd.FlightLogPlot.PaddedRange(new double?[] { 10, 20 }) is var pr
+            && pr.Min < 10 && pr.Max > 20);
+        Check("flightlog range ignores nulls",
+            WtHud.UI.Mfd.FlightLogPlot.Range(new double?[] { null, 4, double.NaN, 9 }) is { } selRange
+            && selRange.Min == 4 && selRange.Max == 9
+            && WtHud.UI.Mfd.FlightLogPlot.MaxOf(new double?[] { null, -5, 3 }) == 3);
+        var ticks = WtHud.UI.Mfd.FlightLogPlot.NiceTicks(0, 100, 4, out var tickStep);
+        Check("flightlog nice ticks are ordered and inside range",
+            ticks.Count >= 2 && tickStep > 0
+            && ticks.Zip(ticks.Skip(1), (a1, b1) => b1 > a1).All(x => x)
+            && ticks[0] >= 0 && ticks[^1] <= 100);
+        // 平均过滤：死亡前 10 秒的样本不参与平均（与 FlightLog 的 avg_filter 同口径）
+        var deathEvents = mfd.Events!;
+        Check("flightlog average drops the death window",
+            WtHud.UI.Mfd.FlightLogPlot.MeanFiltered(
+                new double?[] { 1, 2, 3, 1000 },
+                new double[] { 0, 1, 2, 3 }, deathEvents, 10, 3) == 501.5
+            && WtHud.UI.Mfd.FlightLogPlot.MeanFiltered(
+                new double?[] { 1, 2, 3, 1000 },
+                new double[] { 0, 1, 2, 3 }, null, 10, 3) == 251.5);
+
+        // MAD 尖峰只在「死亡前 30 s 窗口」内生效：窗口内的孤立尖峰剔除，窗口外的机动峰值保留。
+        // 100 个样本（t=0..49.5，步长 0.5），death=49：
+        //   死亡窗口 [39,49] 去掉 21 个样本 → 79 个候选；
+        //   尖峰窗口 [19,49] ∩ 候选 = t=19..38.5 共 40 个，t=25 的 1000 被剔除；
+        //   t=5 的 500 在窗口外，必须保留 → 均值 = (77×1 + 500) / 78。
+        var spikeTimes = new double[100];
+        var spikeVals = new double?[100];
+        for (var i = 0; i < 100; i++) { spikeTimes[i] = i * 0.5; spikeVals[i] = 1; }
+        spikeVals[10] = 500;        // t = 5：窗口外
+        spikeVals[50] = 1000;       // t = 25：窗口内
+        var spikeEvents = new[]
+        {
+            new WtHud.UI.Mfd.FlightLogBridge.FlightLogEvent { Kind = "death", T = 49 },
+        };
+        Check("flightlog spike filter only runs inside the death window",
+            WtHud.UI.Mfd.FlightLogPlot.MeanFiltered(spikeVals, spikeTimes, spikeEvents, 10, 3, 30)
+                is double inside && Math.Abs(inside - 577.0 / 78.0) < 1e-9
+            && WtHud.UI.Mfd.FlightLogPlot.MeanFiltered(spikeVals, spikeTimes, spikeEvents, 10, 3, 0)
+                is double noSpike && Math.Abs(noSpike - 1577.0 / 79.0) < 1e-9
+            && WtHud.UI.Mfd.FlightLogPlot.MeanFiltered(spikeVals, spikeTimes, null, 10, 3, 30)
+                is double noDeath && Math.Abs(noDeath - 1598.0 / 100.0) < 1e-9);
+
+        // 主题表：7 页、标题/统计标签全部有中英文案，统计卡用 JSON 的 avg_* 与过滤器
+        var mfdCfg = new HudConfig();
+        Check("flightlog has 7 chart themes", WtHud.UI.Mfd.FlightLogChart.Themes.Count == 7);
+        bool mfdThemesOk = true, mfdStatsOk = true;
+        foreach (var theme in WtHud.UI.Mfd.FlightLogChart.Themes)
+        {
+            if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, theme.TitleKey) == theme.TitleKey)
+                mfdThemesOk = false;
+            if (theme.Curves().Length == 0) mfdThemesOk = false;
+            foreach (var curve in theme.Curves())
+                if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, curve.LabelKey) == curve.LabelKey)
+                    mfdThemesOk = false;
+            var rows = theme.Stats(mfdCfg, mfd.Flights![0], mfd.Events);
+            if (rows.Count == 0) mfdStatsOk = false;
+            foreach (var row in rows)
+                if (WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, row.LabelKey) == row.LabelKey)
+                    mfdStatsOk = false;
+        }
+        Check("every flightlog theme resolves", mfdThemesOk);
+        Check("every flightlog stat row resolves", mfdStatsOk);
+
+        var speedRows = WtHud.UI.Mfd.FlightLogChart.Themes[0].Stats(mfdCfg, mfd.Flights![0], mfd.Events);
+        Check("flightlog speed stats come from json avg_*",
+            speedRows.Count >= 5
+            && speedRows[0].LabelKey == "flylog.st.maxIas" && speedRows[0].Value == "1000 km/h"
+            && speedRows[1].LabelKey == "flylog.st.avgIas" && speedRows[1].Value == "800 km/h"
+            && speedRows[4].LabelKey == "flylog.st.maxMach" && speedRows[4].Value == "0.900");
+        var energyRows = WtHud.UI.Mfd.FlightLogChart.Themes[2].Stats(mfdCfg, mfd.Flights[0], mfd.Events);
+        Check("flightlog energy stats use es range and filtered dEs",
+            energyRows.Any(r => r.LabelKey == "flylog.st.esRange" && r.Value == "3000 m – 6000 m")
+            && energyRows.Any(r => r.LabelKey == "flylog.st.esDelta" && r.Value == "+1200 m")
+            // t=0/1 落在死亡前 10 s 内被剔除，只剩 des=20 的 t=2
+            && energyRows.Any(r => r.LabelKey == "flylog.st.avgDes" && r.Value == "20.0 m/s"));
+        // 单位跟随设置：英制/节只影响显示，不改变内部值
+        var imperialCfg = new HudConfig { SpeedUnit = 1, LengthUnit = 1 };
+        Check("flightlog stats follow the unit settings",
+            WtHud.UI.Mfd.FlightLogChart.FmtSpeed(1000, imperialCfg) == "540 kt"
+            && WtHud.UI.Mfd.FlightLogChart.FmtLength(1000, imperialCfg) == "3281 ft");
+
+        // 布局：左图约 62%、右侧统计卡约 38%；有右轴时绘图区右侧留刻度位
+        var content = new System.Drawing.RectangleF(0, 0, 1000, 500);
+        var (chartCol, statsCol) = WtHud.UI.Mfd.FlightLogChart.SplitColumns(content, 1f);
+        Check("flightlog layout is 62/38",
+            Math.Abs(chartCol.Width / content.Width - 0.62) < 0.02
+            && chartCol.Right < statsCol.Left
+            && Math.Abs((chartCol.Width + statsCol.Width) / content.Width - 0.98) < 0.02);
+        var noRight = WtHud.UI.Mfd.FlightLogChart.PlotRect(chartCol, 1f, false);
+        var withRight = WtHud.UI.Mfd.FlightLogChart.PlotRect(chartCol, 1f, true);
+        Check("flightlog plot leaves room for axes",
+            noRight.Left > chartCol.Left && noRight.Top > chartCol.Top
+            && withRight.Width < noRight.Width && noRight.Bottom < chartCol.Bottom);
+
+        // 模块注册：主菜单多一个「记录」，数量取 recordings/ 文件数
+        var mfdModule = modules.FirstOrDefault(p => p.TitleKey == "page.flightlog");
+        Check("menu has the flight log module",
+            mfdModule is not null && mfdModule.LiveCount is not null
+            && mfdModule.MenuKey == "page.flightlog"
+            && WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "page.flightlog") != "page.flightlog"
+            && WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "menu.hint.flightlog") != "menu.hint.flightlog");
+        Check("flightlog l10n keys resolve", new[]
+        {
+            "flylog.title", "flylog.hint.list", "flylog.hint.chart", "flylog.empty",
+            "flylog.analyzing", "flylog.theme.speed", "flylog.st.avgIas", "flylog.errSchema",
+            "flylog.event.death",
+        }.All(k => WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, k) != k));
+        Check("flightlog help text is shipped",
+            !string.IsNullOrWhiteSpace(WtHud.UI.Mfd.HelpDescriptions.Get("page.flightlog", true))
+            && !string.IsNullOrWhiteSpace(WtHud.UI.Mfd.HelpDescriptions.Get("page.flightlog", false)));
+
+        // ---- 端到端（默认跳过）：WT_FLIGHTLOG_E2E=1 时真跑一次 FlightLog.exe ----
+        // 自检默认不依赖外部工具；回归发布前用这个开关确认「找 exe → 跑进程 → 解析」整条链。
+        if (Environment.GetEnvironmentVariable("WT_FLIGHTLOG_E2E") == "1")
+        {
+            var e2eExe = WtHud.UI.Mfd.FlightLogBridge.FindExecutable();
+            Check("flightlog finds FlightLog.exe", e2eExe is not null && File.Exists(e2eExe));
+            var e2eLogs = WtHud.UI.Mfd.FlightLogBridge.ListRecordings(
+                WtHud.UI.Mfd.FlightLogBridge.PreviewRecordingsFolder(), 5);
+            Check("flightlog finds a real recording", e2eLogs.Count > 0);
+            if (e2eLogs.Count > 0)
+            {
+                var e2eResult = WtHud.UI.Mfd.FlightLogBridge.Analyze(e2eLogs[0].Path, out var e2eError);
+                Check("flightlog end-to-end analysis",
+                    e2eResult is not null && e2eError is null
+                    && e2eResult.Flights is { Count: > 0 }
+                    && e2eResult.Flights[0].Series?.T is { Length: > 0 });
+            }
         }
 
         Console.WriteLine("selftest done");

@@ -1,5 +1,5 @@
 {
-  "_version": 63,
+  "_version": 64,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -567,6 +567,10 @@
   "page.snapshots": {
     "zh": "回归快照：把当前配置存成一条带名字的记录，用来对比改动前后。选中一条按 CONFIRM 进入二次确认再恢复；列表由页面自己绘制，不走普通的两列设置布局。",
     "en": "Snapshots: saves the current config as a named record so changes can be compared before and after. Select one and CONFIRM to restore, with a second confirmation. The list is drawn by the page itself, not the usual two-column layout."
+  },
+  "page.flightlog": {
+    "zh": "记录：分析 HUD 自己录的飞行记录。列表列出 exe 同目录 recordings/ 下的 .jsonl（按修改时间倒序），UP/DOWN 选择、CONFIRM 调 FlightLog.exe 分析。图表页左侧折线图、右侧统计卡，UP/DOWN 换架次、左右（PAGE）换主题：速度 / 高度 / 比能量 Es / 能量变化率 dEs/dt / Vy / 迎角与过载 / 姿态。竖线标出死亡与复活事件；BACK 回列表。不做手动时间范围：平均值直接用 FlightLog 自动去噪（排除死亡前 10 秒样本，且只在死亡前 30 秒窗口内按 MAD 判尖峰）后的 avg_*。",
+    "en": "Recordings: analyses the HUD's own flight logs. The list shows .jsonl files in recordings/ next to the exe (newest first). UP/DOWN selects, CONFIRM runs FlightLog.exe. The chart page is a line chart on the left and a stats card on the right; UP/DOWN switches flight, LEFT/RIGHT (PAGE) switches theme: speed / altitude / specific energy Es / energy rate dEs/dt / Vy / AoA and load / attitude. Vertical lines mark death and spawn events; BACK returns to the list. There is no manual time range: averages come from FlightLog's auto-filtered avg_* (samples in the last 10 s before death are dropped, and MAD spike rejection only runs inside the 30 s window before death)."
   },
   "row.formationShapeMenu": {
     "zh": "队形：进下一级页选形状（自定义 / 梯队 / 纵队 / 菱形）、槽位与高度偏移。值列显示当前队形和位置，例如「梯队 · 2」。",

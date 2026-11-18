@@ -22,7 +22,7 @@ public sealed class MfdFrameForm : Form
     private static readonly string[] BottomKeys = { "reset", "pagePrev", "pageNext", "cancel", "save" };
 
     private enum ButtonKind { None, Top, Bottom, Side }
-    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, TextEdit, Preset, Help, Detail, PickVehicle, Snapshots }
+    private enum Mode { Menu, Items, Confirm, EditNumber, CaptureKey, TextEdit, Preset, Help, Detail, PickVehicle, Snapshots, FlightLog }
 
     private readonly MfdGeometry _geo;
     private readonly MfdLayout _layout;
@@ -42,6 +42,11 @@ public sealed class MfdFrameForm : Form
     private Pages.PresetPage? _presetPage;
     private Pages.PickVehiclePage? _pickPageUI;
     private Pages.SnapshotsPage? _snapPageUI;
+    // 记录（MFD 内置飞行记录分析）：列表页 + 图表页（非 null 时在列表之上）+ 分析中的互斥标志。
+    // ★ 这两页故意不放进 _nav：HELP 页退出时 _nav.Clear()，放进去的话帮助回来会得到空白页。
+    private Pages.FlightLogListPage? _flightLogListUI;
+    private Pages.FlightLogChartPage? _flightLogChartUI;
+    private bool _flightBusy;
     private int _page;
     // 三级页面：只在 _mode == Mode.Items 时有意义。_subPage 是定义，_subPageUI 是渲染实例
     // （按 Key 缓存 → 退出再进时选中位置还在）。
@@ -249,6 +254,7 @@ public sealed class MfdFrameForm : Form
         Mode.Detail => _detailPageUI,
         Mode.PickVehicle => _pickPageUI,
         Mode.Snapshots => _snapPageUI,
+        Mode.FlightLog => (Pages.MfdPageBase?)_flightLogChartUI ?? _flightLogListUI,
         _ => null,
     };
 
@@ -430,6 +436,10 @@ public sealed class MfdFrameForm : Form
         {
             Mode.Menu => (_menuPageIdx + 1, (_pages.Count + 9) / 10),
             Mode.Items when ItemsPage != null => (ItemsPage.PageIndex + 1, ItemsPage.PageCount),
+            Mode.FlightLog when ActivePage is Pages.FlightLogListPage list =>
+                (list.PageIndex + 1, list.PageCount),
+            Mode.FlightLog when ActivePage is Pages.FlightLogChartPage chart =>
+                (chart.ThemeIndex + 1, chart.ThemeCount),
             _ => (1, 1),
         };
         var ver = (pages > 1 ? pageNo + "/" + pages + "  " : "") + "v" + Program.ShortVersion;
@@ -449,6 +459,7 @@ public sealed class MfdFrameForm : Form
             case Mode.Detail: _detailPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.PickVehicle: _pickPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             case Mode.Snapshots: _snapPageUI?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
+            case Mode.FlightLog: ActivePage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
             default: ItemsPage?.Draw(new Pages.MfdRenderContext { G = g, Scale = s, Glass = glass, Pad = pad }); break;
         }
 
@@ -646,6 +657,19 @@ public sealed class MfdFrameForm : Form
             var againS = IsRepeatClick("snapshot", snapCell, 400);
             snapPage.SelectCell(snapCell);
             if (againS || e.Clicks >= 2) snapPage.Handle(MfdCommand.Of("confirm.ok"));
+            Invalidate();
+            return;
+        }
+
+        // 记录列表：单击选中，同一行 400ms 内再点 = 分析该记录（与快照列表一致）
+        if (!_work.Mfd.RealisticKeys && _mode == Mode.FlightLog
+            && ActivePage is Pages.FlightLogListPage logPage
+            && logPage.HitRow(new PointF(e.X, e.Y)) is int logCell && logCell >= 0)
+        {
+            var logIndex = logPage.PageIndex * 10 + logCell;
+            var againL = IsRepeatClick("flightlog", logIndex, 400);
+            logPage.SelectCell(logCell);
+            if (againL || e.Clicks >= 2) Confirm();
             Invalidate();
             return;
         }
@@ -945,6 +969,18 @@ public sealed class MfdFrameForm : Form
     /// <summary>Moves the selection inside the current page (UP/DOWN).</summary>
     private void MoveSelection(int delta)
     {
+        if (_mode == Mode.FlightLog)
+        {
+            // 列表页 = 选项；图表页 = 换架次（一对多的 flights[]）
+            switch (ActivePage)
+            {
+                case Pages.FlightLogListPage list: list.Move(delta); break;
+                case Pages.FlightLogChartPage chart: chart.Move(delta); break;
+            }
+            _toast = null;
+            return;
+        }
+
         if (_mode == Mode.Snapshots)
         {
             _snapPageUI?.Move(delta);
@@ -997,6 +1033,8 @@ public sealed class MfdFrameForm : Form
 
     private void Step(int direction)
     {
+        // 图表页的左右键与 PAGE 键同义：左右翻主题页
+        if (_mode == Mode.FlightLog) { CyclePage(direction); return; }
         if (_mode == Mode.Items) ItemsPage?.Step(direction);
     }
 
@@ -1039,6 +1077,15 @@ public sealed class MfdFrameForm : Form
                 break;
             case Mode.Snapshots:
                 _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+                break;
+            case Mode.FlightLog:
+                if (_flightBusy)
+                {
+                    _toast = L10n.Get(LangScope.Screen, "flylog.analyzing");
+                    break;
+                }
+                // 列表页 = 开始分析；图表页 = 下一个主题（图表上没有可执行动作）
+                ActivePage?.Handle(MfdCommand.Of("confirm.ok"));
                 break;
             default:
                 ItemsPage?.ActivateSelected();
@@ -1443,6 +1490,13 @@ public sealed class MfdFrameForm : Form
             return;
         }
 
+        // 记录模块同理：没有行列表，直接进入记录列表页
+        if (CurrentPage?.TitleKey == "page.flightlog")
+        {
+            EnterFlightLog();
+            return;
+        }
+
         _mode = Mode.Items;
         SyncDiagProbe();
     }
@@ -1514,6 +1568,104 @@ public sealed class MfdFrameForm : Form
         _toast = string.Format(L10n.Get(LangScope.Screen, "snap.toast.restored"), entry.TimeText);
     }
 
+    // ------------------------------------------------------------- 飞行记录（MFD 内置分析）
+
+    /// <summary>
+    /// 首页「记录」模块：列出 exe 同目录 <c>recordings/*.jsonl</c>。
+    /// <paramref name="folder"/> 只给预览/测试用（真实运行恒为 null → 默认 recordings 目录）。
+    /// </summary>
+    private void EnterFlightLog(string? folder = null)
+    {
+        _nav.Clear();                 // 丢掉别的模式可能留下的页面（HELP/确认页…）
+        _flightLogChartUI = null;
+        _flightLogListUI = new Pages.FlightLogListPage(
+            entries: () => FlightLogBridge.ListRecordings(folder),
+            onPicked: BeginFlightLogAnalysis,
+            onCancel: LeaveFlightLogToMenu,
+            layout: new MfdPageLayout(_layout, _layout.Width / 1330f),
+            folder: folder);
+        _mode = Mode.FlightLog;
+        _toast = null;
+        SyncDiagProbe();
+        Invalidate();
+    }
+
+    /// <summary>记录列表按返回 / 关闭：回主菜单（不碰配置，所以不需要确认页）。</summary>
+    private void LeaveFlightLogToMenu()
+    {
+        _nav.Clear();
+        _flightLogListUI = null;
+        _flightLogChartUI = null;
+        _menuSel = _page;
+        _mode = Mode.Menu;
+        EnsureMenuPage();
+        _toast = null;
+        SyncDiagProbe();
+        Invalidate();
+    }
+
+    /// <summary>
+    /// CONFIRM 一条记录：缓存命中直接开图；否则后台跑 <c>FlightLog.exe --mfd-json</c>（最长 15 秒）。
+    /// 进程一定不弹控制台窗口，失败只显示一条 toast。
+    /// <para>★ 分析放到线程池里：日志大/冷启动 PyInstaller 时界面不能整块冻住。</para>
+    /// </summary>
+    private void BeginFlightLogAnalysis(FlightLogBridge.FlightLogRecording recording)
+    {
+        if (_flightBusy)
+        {
+            _toast = L10n.Get(LangScope.Screen, "flylog.analyzing");
+            Invalidate();
+            return;
+        }
+        if (FlightLogBridge.Cached(recording.Path) is { } hit)
+        {
+            OpenFlightLogChart(hit);
+            return;
+        }
+
+        _flightBusy = true;
+        _toast = L10n.Get(LangScope.Screen, "flylog.analyzing");
+        Invalidate();
+
+        var path = recording.Path;
+        _ = Task.Run(() =>
+        {
+            var result = FlightLogBridge.Analyze(path, out var error);
+            try
+            {
+                BeginInvoke(new Action(() => FinishFlightLogAnalysis(result, error)));
+            }
+            catch (Exception)
+            {
+                // 面板在分析期间被关掉：结果无处可去，直接丢弃。
+            }
+        });
+    }
+
+    /// <summary>分析线程回到 UI 线程：失败给 toast，成功压入图表页。</summary>
+    private void FinishFlightLogAnalysis(FlightLogBridge.FlightLogResult? result,
+        FlightLogBridge.FlightLogError? error)
+    {
+        _flightBusy = false;
+        if (IsDisposed) return;
+        if (result is null)
+        {
+            _toast = error?.Text ?? L10n.Get(LangScope.Screen, "flylog.errTool");
+            Invalidate();
+            return;
+        }
+        OpenFlightLogChart(result);
+    }
+
+    /// <summary>分析结果回到列表页之上；已经离开记录模块（回菜单/关面板）就丢弃结果。</summary>
+    private void OpenFlightLogChart(FlightLogBridge.FlightLogResult result)
+    {
+        if (_mode != Mode.FlightLog || _flightLogListUI is null || _flightLogChartUI is not null) return;
+        _flightLogChartUI = new Pages.FlightLogChartPage(result, () => _work);
+        _toast = null;
+        Invalidate();
+    }
+
     private void Back()
     {
         switch (_mode)
@@ -1548,6 +1700,13 @@ public sealed class MfdFrameForm : Form
                 _snapPageUI?.Handle(MfdCommand.Of("nav.back"));
                 _toast = null;
                 break;
+            case Mode.FlightLog:
+                // 图表页 → 回列表；列表页 → 回主菜单。
+                // 分析还没回来时也允许返回：结果回来时会发现已经离开记录模块，直接丢弃。
+                if (_flightLogChartUI is not null) _flightLogChartUI = null;
+                else LeaveFlightLogToMenu();
+                _toast = null;
+                break;
             case Mode.EditNumber:
             case Mode.CaptureKey:
             case Mode.TextEdit:
@@ -1567,6 +1726,18 @@ public sealed class MfdFrameForm : Form
         {
             _helpPageUI?.CyclePage(delta);
             _toast = null;
+            return;
+        }
+
+        if (_mode == Mode.FlightLog)
+        {
+            var moved = ActivePage switch
+            {
+                Pages.FlightLogListPage list => list.CyclePage(delta),
+                Pages.FlightLogChartPage chart => chart.CyclePage(delta),
+                _ => false,
+            };
+            _toast = moved ? null : L10n.Get(LangScope.Screen, "page.single");
             return;
         }
 
@@ -1644,6 +1815,11 @@ public sealed class MfdFrameForm : Form
     {
         if (_mode == Mode.Confirm) { _confirmPage?.Handle(MfdCommand.Of("confirm.cancel")); return; }
         if (_mode == Mode.Menu) return;
+        if (_mode == Mode.FlightLog)                 // 飞行记录只读：RESET 不碰配置
+        {
+            _toast = L10n.Get(LangScope.Screen, "hint.readonly");
+            return;
+        }
         if (_mode == Mode.Snapshots)                 // 快照列表是只读的，RESET 不碰配置
         {
             _toast = L10n.Get(LangScope.Screen, "hint.readonly");
@@ -1760,6 +1936,8 @@ public sealed class MfdFrameForm : Form
         Pages.PresetPage p => p.Selected,
         Pages.PickVehiclePage p => p.Selected,
         Pages.SnapshotsPage p => p.Selected,
+        Pages.FlightLogListPage p => p.Selected,
+        Pages.FlightLogChartPage p => p.ThemeIndex,
         _ => -1,
     };
 
@@ -1851,6 +2029,45 @@ public sealed class MfdFrameForm : Form
     {
         PreviewSnapshots();
         _snapPageUI?.Handle(MfdCommand.Of("confirm.ok"));
+    }
+
+    /// <summary>
+    /// 预览用：打开「记录」列表页。folder 为空时用 <c>WT_FLIGHTLOG_DIR</c>（没有则 recordings/）——
+    /// 出图核对列表排版时可以直接指向一份真实记录目录。
+    /// </summary>
+    public void PreviewFlightLog(string? folder = null)
+    {
+        EnterFlightLog(string.IsNullOrWhiteSpace(folder) ? FlightLogBridge.PreviewRecordingsFolder() : folder);
+    }
+
+    /// <summary>
+    /// 预览用：用一份 <c>--mfd-json</c> 样例直接渲染图表页（不跑 FlightLog.exe）。
+    /// themeKey 见 <see cref="FlightLogChart.Themes"/> 的 <c>Key</c>（speed / energy / attitude …）。
+    /// </summary>
+    public void PreviewFlightLogChart(string themeKey, string? samplePath = null)
+    {
+        var path = string.IsNullOrWhiteSpace(samplePath) ? FlightLogBridge.FindSampleJson() : samplePath;
+        EnterFlightLog(FlightLogBridge.PreviewRecordingsFolder());
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _toast = L10n.Get(LangScope.Screen, "flylog.errNoFile");
+            return;
+        }
+        var result = FlightLogBridge.LoadResultFile(path!, out var error);
+        if (result is null)
+        {
+            _toast = error?.Text ?? L10n.Get(LangScope.Screen, "flylog.errRead");
+            return;
+        }
+        var chart = new Pages.FlightLogChartPage(result, () => _work);
+        chart.SetTheme(themeKey);
+        // 出图核对多架次切换：WT_FLIGHTLOG_FLIGHT=2 直接定位到第 2 架次（0 起）
+        if (int.TryParse(Environment.GetEnvironmentVariable("WT_FLIGHTLOG_FLIGHT"),
+                out var flightIndex) && flightIndex > 0)
+            chart.SetFlight(flightIndex);
+        _flightLogChartUI = chart;
+        _toast = null;
+        Invalidate();
     }
 
     /// <summary>Preview helper: runs the real restore path on the newest snapshot (writes audit, clears session).</summary>

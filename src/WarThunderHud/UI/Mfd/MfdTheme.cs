@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -19,6 +19,12 @@ internal static class MfdTheme
     public static readonly Color ScreenBg = Color.FromArgb(5, 12, 8);
     public static readonly Color Grid = Color.FromArgb(9, 20, 13);
     public static readonly Color Divider = Color.FromArgb(34, 70, 46);
+    /// <summary>
+    /// 琥珀色：图表第二曲线与事件竖线的固定语义色（警告/事件），不随配色预设变化。
+    /// 绿色系（<see cref="Green"/> / <see cref="GreenDim"/>）已经承担「主/次曲线」，再多一条
+    /// 绿色会在小屏上分不出哪条是哪条，所以单独留一个高对比的暖色。
+    /// </summary>
+    public static readonly Color Amber = Color.FromArgb(255, 194, 92);
     public static readonly Color Dark = Color.FromArgb(8, 26, 14);
     public static readonly Color Backdrop = Color.Black;
 
@@ -73,6 +79,7 @@ internal static class MfdTheme
     public static Font MonoAt(float px) => new("Consolas", px, FontStyle.Regular, GraphicsUnit.Pixel);
     public static Font MonoBoldAt(float px) => new("Consolas", px, FontStyle.Bold, GraphicsUnit.Pixel);
     public static Font CjkAt(float px) => new("Microsoft YaHei", px, FontStyle.Regular, GraphicsUnit.Pixel);
+    public static Font CjkBoldAt(float px) => new("Microsoft YaHei", px, FontStyle.Bold, GraphicsUnit.Pixel);
 
     public static void Smooth(System.Drawing.Graphics g)
     {
