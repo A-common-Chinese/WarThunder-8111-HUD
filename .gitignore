@@ -25,3 +25,8 @@ desktop.ini
 
 # local diagnostic renders
 .diag/
+
+# flight log reports / acmi cache (relative to exe)
+tools/reports/
+tools/cache/
+

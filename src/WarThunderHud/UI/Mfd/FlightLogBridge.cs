@@ -343,8 +343,19 @@ internal static class FlightLogBridge
                 return null;
             }
 
-            var tmp = Path.Combine(Path.GetTempPath(),
-                "wthud-mfd-" + Guid.NewGuid().ToString("N") + ".json");
+            // 中间 JSON 也放 exe 旁边的 cache/（便携，不依赖用户名/临时目录）；不可写时才退回 %TEMP%
+            string tmp;
+            try
+            {
+                var cacheDir = Path.Combine(AppContext.BaseDirectory, "cache");
+                Directory.CreateDirectory(cacheDir);
+                tmp = Path.Combine(cacheDir, "mfd-" + Guid.NewGuid().ToString("N") + ".json");
+            }
+            catch
+            {
+                tmp = Path.Combine(Path.GetTempPath(),
+                    "wthud-mfd-" + Guid.NewGuid().ToString("N") + ".json");
+            }
             try
             {
                 var psi = new ProcessStartInfo
