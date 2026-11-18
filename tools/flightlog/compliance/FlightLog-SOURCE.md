@@ -3,13 +3,13 @@
 `FlightLog.exe` / `wrpl-acmi.exe` 随包的飞行日志与回放分析工具，由本项目 WtHud 发布。
 
 - 项目：WtHud（War Thunder HUD）
-- 版本：0.4.46
+- 版本：0.4.47
 - 许可证：**GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）**
 - 许可证文本：`licenses/AGPL-3.0.txt`
 - 对应源码：与本发布包**并列放在同一发布目录**的
 
 ```
-FlightLog-src-0.4.46.zip
+FlightLog-src-0.4.47.zip
 ```
 
 源码包内容包括：`parse.py`、`report.py`、`acmi.py`、`replay.py`、`picker.py`、`launch.py`、
