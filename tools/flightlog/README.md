@@ -285,7 +285,7 @@ powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
 JSONL，一行一个 JSON 对象，共四类记录：
 
 ```jsonc
-{"type":"meta","schema":1,"app":"0.4.40","utc":"...","vehicle":"jh_7a","rate":"per-sample"}
+{"type":"meta","schema":1,"app":"0.5.0","utc":"...","vehicle":"jh_7a","rate":"per-sample"}
 {"type":"sample","t":0.342,"utc":"...","valid":true,"inflight":true,"vehicle":"jh_7a",
  "ias_kmh":887,"tas_kmh":984,"mach":0.82,"alt_m":2007,"ralt_m":579.3,"vy_ms":-11.9,
  "aoa_deg":5.1,"aos_deg":-1.7,"ny_g":2.99,"roll_rate_dps":9,"hdg_deg":163.3,"has_hdg":true,
@@ -363,7 +363,7 @@ Es = alt_m + (tas_kmh / 3.6)² / (2 × 9.80665)
   "file": "wtlog-20261117-131039-jh_7a.jsonl",
   "path": "C:\\...\\wtlog-20261117-131039-jh_7a.jsonl",
   "generated_utc": "2026-11-17T12:54:21Z",
-  "meta": {"schema": 1, "app": "0.4.40", "vehicle": "jh_7a", "rate": "per-sample", ...},
+  "meta": {"schema": 1, "app": "0.5.0", "vehicle": "jh_7a", "rate": "per-sample", ...},
   "counts": {"lines": 8360, "samples": 8356, "events": 2, "bad_json": 0, "flights": 2, ...},
   "time": {"t_min": 0.342, "t_max": 295.744, "span_s": 295.402},
   "totals": {
@@ -583,7 +583,7 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
 {
   "schema": 1,
   "tool": "FlightLog",
-  "tool_version": "0.4.40",
+  "tool_version": "0.5.0",
   "source": "wtlog-20261117-204002-jh_7a.jsonl",
   "generated_utc": "2026-11-18T12:33:57Z",
   "meta": {"vehicle": "jh_7a", "duration_s": 390.7, "rate_hz": 29.6, "samples": 11583},
@@ -625,7 +625,7 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
 | --- | --- | --- |
 | `schema` | int | 固定 `1`；HUD 用它判兼容 |
 | `tool` | string | 固定 `"FlightLog"` |
-| `tool_version` | string | 与 WtHud 发布版本对齐（当前 `0.4.40`） |
+| `tool_version` | string | 与 WtHud 发布版本对齐（当前 `0.5.0`） |
 | `source` | string | 输入文件名（不含目录） |
 | `generated_utc` | string | 生成时间，`YYYY-MM-DDTHH:MM:SSZ` |
 | `meta` | object | 整份记录概要（下表） |
