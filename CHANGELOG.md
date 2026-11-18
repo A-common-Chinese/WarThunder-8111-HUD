@@ -1,3 +1,13 @@
+﻿## 未发布（v0.4.46）— 修复 NVIDIA 覆盖层导致 HUD 启动即隐藏
+
+2026-11-18
+
+### 修复
+- **一启动 HUD 就消失**：Steam 覆盖层检测把 `NVIDIA Overlay`（窗口类 `CEF-OSC-WIDGET`）也当成 Steam，
+  于是启动后立刻判定“覆盖层打开”→隐藏 HUD 并停止光标控制，且不会恢复。
+  现在只认 `steam / gameoverlayui / steamwebhelper` 进程，并显式排除 `nvidia` 与 `CEF-OSC` 类窗口。
+- 日志里会出现 `steam overlay window: ...` 的误报已消失；selftest **472 PASS / 0 FAIL**。
+- 版本 0.4.46。
 ## 未发布（v0.4.45）— 识别坠毁
 
 2026-11-18

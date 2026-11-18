@@ -157,6 +157,14 @@ public static partial class Program
         Check("killfeed own crash needs matching name",
             !HudKillFeed.IsOwnDeath(crashLine, "someone_else", out _));
 
+        // Steam 覆盖层识别：不能把 NVIDIA Overlay 当成 Steam（否则 HUD 启动即隐藏）
+        Check("steam overlay detection",
+            WtHud.Program.LooksLikeSteamOverlay("steamwebhelper", "Chrome_WidgetWin_1")
+            && WtHud.Program.LooksLikeSteamOverlay("gameoverlayui", "SDL_app")
+            && !WtHud.Program.LooksLikeSteamOverlay("NVIDIA Overlay", "CEF-OSC-WIDGET")
+            && !WtHud.Program.LooksLikeSteamOverlay("nvcontainer", "CEF-OSC-WIDGET")
+            && !WtHud.Program.LooksLikeSteamOverlay("chrome", "Chrome_WidgetWin_1"));
+
         // 中文昵称 / 中文战队标签 / 昵称带括号：这三类以前都会让 actor 对不上设置里的名字
         const string zhLine = "^雄鹰^张三 (J-7E) 击落了 李四 (F-16)";
         Check("killfeed strips chinese squad tag",

@@ -3184,6 +3184,22 @@ public static partial class Program
 
     /// <summary>Steam 游戏内覆盖层是否打开：枚举可见顶层窗口，按「浏览器类名 + Steam 进程」判定。
     /// 覆盖层打开时 HUD 隐藏并停止抢光标；候选窗口首次出现会打进日志，便于后续适配。</summary>
+    /// <summary>
+    /// 判断一个浏览器类窗口是不是 Steam 游戏内覆盖层。
+    /// 不能只看「名字里带 overlay」：NVIDIA Overlay（CEF-OSC-WIDGET）会被误判，
+    /// 导致 HUD 一启动就被当成「Steam 覆盖层打开」而永久隐藏。
+    /// </summary>
+    internal static bool LooksLikeSteamOverlay(string? processName, string? className)
+    {
+        string name = processName ?? "";
+        string cls = className ?? "";
+        if (name.Contains("nvidia", StringComparison.OrdinalIgnoreCase)) return false;
+        if (cls.Contains("CEF-OSC", StringComparison.OrdinalIgnoreCase)) return false;
+        return name.Contains("steam", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("gameoverlayui", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("steamwebhelper", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool SteamOverlayActive(int gamePid)
     {
         long now = Environment.TickCount64;
@@ -3209,9 +3225,7 @@ public static partial class Program
             string key = pid + "|" + cls + "|" + (childOfGame ? "c" : "t");
             if (steamWindowsSeen.Add(key))
                 Console.WriteLine($"window candidate: pid={pid} name={name} class={cls} child={childOfGame}");
-            bool steamProc = name.Contains("steam", StringComparison.OrdinalIgnoreCase)
-                          || name.Contains("overlay", StringComparison.OrdinalIgnoreCase)
-                          || name.Contains("webhelper", StringComparison.OrdinalIgnoreCase);
+            bool steamProc = LooksLikeSteamOverlay(name, cls);
             if (steamProc || childOfGame)
             {
                 active = true;
