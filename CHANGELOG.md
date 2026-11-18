@@ -1,4 +1,17 @@
-﻿## 未发布（v0.4.46）— 修复 NVIDIA 覆盖层导致 HUD 启动即隐藏
+﻿## 未发布（v0.4.47）— 报告/缓存路径改为相对 exe
+
+2026-11-18
+
+### 变更
+- **FlightLog 不再把报告写到 `%LOCALAPPDATA%`，ACMI 缓存不再写到 `%TEMP%`**：
+  - 报告 → `FlightLog.exe` 旁边的 `reports\`（不可写时才退回用户目录）
+  - 回放 ACMI 缓存 → `FlightLog.exe` 旁边的 `cache\acmi\`（可用 `FLIGHTLOG_CACHE` 覆盖）
+  - MFD 调 FlightLog 的中间 JSON → `WtHud.exe` 旁边的 `cache\`
+- `launch.py` 去掉写死的 `D:/C:/Program Files` 与「桌面\WtHud-发布」路径：
+  - 记录目录只按 exe 旁边的 `recordings\` 查找
+  - 回放目录优先 exe 旁边 `Replays\`，其次注册表里的 War Thunder 安装路径、Steam libraryfolders.vdf、`Documents\My Games`
+- `selftest` FlightLog **338 PASS**、HUD **472 PASS**。
+## 未发布（v0.4.46）— 修复 NVIDIA 覆盖层导致 HUD 启动即隐藏
 
 2026-11-18
 

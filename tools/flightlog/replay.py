@@ -148,12 +148,30 @@ def validate_wrpl(path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _base_dir() -> Path:
+    """工具所在目录：打包成 exe 时是 exe 旁边，源码运行时是 flightlog/ 的上一级（tools/）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
 def cache_dir() -> Path:
-    """临时 ACMI 目录：``%TEMP%\\WtHud\\flightlog``（其它平台用系统临时目录）。"""
-    root = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
-    directory = Path(root) / "WtHud" / "flightlog"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory
+    """ACMI 缓存目录：优先 exe 旁边的 cache/acmi（便携）；不可写时才用系统临时目录。
+    环境变量 ``FLIGHTLOG_CACHE`` 可覆盖（自检/测试用）。"""
+    env = os.environ.get("FLIGHTLOG_CACHE")
+    if env:
+        directory = Path(env)
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+    directory = _base_dir() / "cache" / "acmi"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+    except OSError:
+        root = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
+        directory = Path(root) / "WtHud" / "flightlog"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
 
 def _cache_key(wrpl_path: str) -> str:

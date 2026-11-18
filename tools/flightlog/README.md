@@ -60,7 +60,7 @@ python -m flightlog "D:\...\Replays\#2026.11.15 15.24.09.wrpl" --player HCN_WT -
   - 取消则退出
 - 选文件后自动生成 HTML 并用默认浏览器打开；选到回放会再弹**玩家多选**对话框
 - 也可以把日志/回放文件**拖到 exe 图标上**（跳过选择小窗，按扩展名自动识别）
-- 报告写到 `%LOCALAPPDATA%\WtHud\flightlog\`，文件名带时间戳，不会覆盖旧报告
+- 报告写到 **FlightLog.exe 旁边的 `reports\`**（便携，不依赖用户名），文件名带时间戳，不会覆盖旧报告
 - 重新打包：双击 `build_exe.bat`（需要本机 Python + `pip install pyinstaller`），产物在
   `flightlog\dist\FlightLog.exe`；脚本会把 `wrpl-acmi.exe` 一起复制到 `dist\`
 - 自动化调用可加 `--mode jsonl|wrpl` 跳过启动选择窗（仍需给出文件路径）
@@ -93,7 +93,7 @@ python selftest.py
 | `--player NAME` | **（回放）** 选玩家，可重复 / 逗号分隔 / 也可用 1 起的序号 |
 | `--acmi PATH` | **（回放）** 跳过转换，直接解析已经转好的 ACMI |
 | `--wrpl-acmi PATH` | **（回放）** 指定 `wrpl-acmi.exe` 路径（默认自动找） |
-| `--keep-acmi N` | **（回放）** `%TEMP%\WtHud\flightlog` 保留最近几个 ACMI，默认 `3`，`0` = 用完即删 |
+| `--keep-acmi N` | **（回放）** `cache\acmi`（exe 旁边）保留最近几个 ACMI，默认 `3`，`0` = 用完即删 |
 | `--convert-timeout SEC` | **（回放）** 单次转换超时，默认 `900` |
 | `--mfd-json` | **开关**（不带值）：把位置参数的日志导出成 HUD MFD 面板用的 JSON（schema=1）；配合 `--out` 写文件，不给 `--out` 时 stdout 只有纯 JSON（见第 12 节） |
 
@@ -119,7 +119,7 @@ python -m flightlog "xxx.wrpl" --player HCN_WT --out out\replay.html
 python -m flightlog "xxx.wrpl" --player HCN_WT --player "送塟者"
 
 :: 4) 已经转好 ACMI：跳过转换直接解析（调试 / 复用，秒开）
-python -m flightlog "xxx.wrpl" --acmi "%TEMP%\WtHud\flightlog\xxx.acmi" --list
+python -m flightlog "xxx.wrpl" --acmi "cache\acmi\xxx.acmi" --list
 ```
 
 双击 `FlightLog.exe` 时：文件选择框同时接受 `.jsonl` / `.wrpl` / `.acmi`；选到回放会先转换，
@@ -149,7 +149,7 @@ powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
    -missile-seeker=false -bookmarks=false -airfields=false -estimate-bomb-trajectories=false`；
    **必须保留** `-estimate-telemetry`（默认开），否则没有 IAS/TAS/Mach/AOA/G。
    注意：**不能**加 `-ground-units=false`——实测某些回放会连飞机位置一起丢掉。
-2. **临时目录**：`%TEMP%\WtHud\flightlog\`，按「回放路径 + 大小 + mtime + 参数版本」缓存，
+2. **缓存目录**：`cache\acmi\`（FlightLog.exe 旁边；不可写时才退回 `%TEMP%\WtHud\flightlog`），按「回放路径 + 大小 + mtime + 参数版本」缓存，
    同一个回放换玩家看不必重复转换；默认**保留最近 3 个**（`--keep-acmi N`，`0` = 用完即删）。
    一个 18.7 MB 回放转出来约 **107 MB**，注意 tmp 磁盘占用。
 3. **扫描**：流式读 ACMI，收集头部、对象声明（`Name/CallSign/Pilot/Type/Coalition`）、

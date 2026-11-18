@@ -1357,8 +1357,11 @@ def test_replay_boundaries(tmp: Path) -> None:
     sandbox.mkdir()
     os.environ["TEMP"] = str(sandbox)
     os.environ["TMP"] = str(sandbox)
+    old_cache = os.environ.get("FLIGHTLOG_CACHE")
+    cache_sandbox = tmp / "cache-acmi"
+    os.environ["FLIGHTLOG_CACHE"] = str(cache_sandbox)
     try:
-        check(R.cache_dir() == sandbox / "WtHud" / "flightlog", "临时 ACMI 目录 = %TEMP%\\WtHud\\flightlog")
+        check(R.cache_dir() == cache_sandbox, "ACMI 缓存目录 = exe 旁边 cache/acmi（环境变量可覆盖）")
         p1 = R.temp_acmi_path(str(good))
         p2 = R.temp_acmi_path(str(good))
         check(p1 == p2 and p1.suffix == ".acmi", "同一回放的临时 ACMI 路径稳定（可复用缓存）")
@@ -1383,6 +1386,10 @@ def test_replay_boundaries(tmp: Path) -> None:
             os.environ.pop("TMP", None)
         else:
             os.environ["TMP"] = old_tmp
+        if old_cache is None:
+            os.environ.pop("FLIGHTLOG_CACHE", None)
+        else:
+            os.environ["FLIGHTLOG_CACHE"] = old_cache
 
 
 def test_replay_cli(tmp: Path) -> None:

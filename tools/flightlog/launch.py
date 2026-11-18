@@ -41,17 +41,19 @@ MODE_JSONL = "jsonl"
 
 
 def _exe_dir() -> Path:
-    try:
-        return Path(sys.executable).resolve().parent
-    except OSError:
-        return HERE
+    """工具所在目录：打包成 exe 时是 exe 旁边；源码运行时是 tools/（flightlog 的上一级）。"""
+    if getattr(sys, "frozen", False):
+        try:
+            return Path(sys.executable).resolve().parent
+        except OSError:
+            return HERE
+    return HERE.parent
 
 
 def _log_dir() -> Path:
-    """WtHud 记录目录：优先 exe 旁边的 recordings，其次桌面发布目录。"""
+    """WtHud 记录目录：只按「exe 所在位置」相对查找，不写死桌面/用户名。"""
     candidates = [
         _exe_dir() / "recordings",
-        Path(os.path.expanduser("~")) / "Desktop" / "WtHud-发布" / "recordings",
         Path.cwd() / "recordings",
     ]
     for c in candidates:
@@ -93,12 +95,31 @@ def _wt_replays_dir() -> Path:
     except Exception:
         pass
 
+    # 便携布局：Replays 直接放在 FlightLog.exe 旁边时优先用它
     candidates += [
-        Path("D:/Program Files (x86)/Steam/steamapps/common/War Thunder/Replays"),
-        Path("C:/Program Files (x86)/Steam/steamapps/common/War Thunder/Replays"),
-        Path("C:/Program Files/Steam/steamapps/common/War Thunder/Replays"),
-        Path.home() / "Documents" / "My Games" / "WarThunder" / "Replays",
+        _exe_dir() / "Replays",
+        _exe_dir() / "replays",
     ]
+    # Steam 安装路径从注册表读（SteamPath），不再写死 D:/C: 盘符
+    try:
+        import winreg  # type: ignore
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+            steam = str(winreg.QueryValueEx(k, "SteamPath")[0]).strip()
+        if steam:
+            library = Path(steam) / "steamapps" / "common" / "War Thunder" / "Replays"
+            candidates.append(library)
+            vdf = Path(steam) / "steamapps" / "libraryfolders.vdf"
+            if vdf.is_file():
+                text = vdf.read_text(encoding="utf-8", errors="ignore")
+                for line in text.splitlines():
+                    if '"path"' in line:
+                        parts = line.split('"')
+                        if len(parts) >= 4:
+                            candidates.append(Path(parts[3]) / "steamapps" / "common" / "War Thunder" / "Replays")
+    except Exception:
+        pass
+    candidates.append(Path.home() / "Documents" / "My Games" / "WarThunder" / "Replays")
     for c in candidates:
         try:
             if c.is_dir():
@@ -207,8 +228,13 @@ def _pick_log(kind: str) -> Path | None:
 
 
 def _out_path(source: Path, suffix: str = "") -> Path:
-    base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "WtHud" / "flightlog"
-    base.mkdir(parents=True, exist_ok=True)
+    """报告写到 exe 旁边的 reports/（便携）；不可写时才退回用户目录。"""
+    base = _exe_dir() / "reports"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "WtHud" / "flightlog"
+        base.mkdir(parents=True, exist_ok=True)
     stamp = __import__("datetime").datetime.now().strftime("%Y%m%d-%H%M%S")
     tail = ("-" + suffix) if suffix else ""
     stem = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._-]+", "-", source.stem or "").strip("-._") or "report"
