@@ -6,10 +6,10 @@
 - 版本：0.5.0
 - 许可证：**GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）**
 - 许可证文本：`licenses/AGPL-3.0.txt`
-- 对应源码：与本发布包**并列放在同一发布目录**的
+- 对应源码：**随本发布包一起提供**（同一个压缩包内）
 
 ```
-FlightLog-src-0.5.0.zip
+source/flightlog/        # FlightLog 全部 Python 源码与构建脚本
 ```
 
 源码包内容包括：`parse.py`、`report.py`、`acmi.py`、`replay.py`、`picker.py`、`launch.py`、

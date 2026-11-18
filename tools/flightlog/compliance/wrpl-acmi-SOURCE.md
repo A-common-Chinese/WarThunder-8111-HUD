@@ -15,10 +15,10 @@
 
 ## 对应源码（Corresponding Source）
 
-与本发布包**并列放在同一发布目录**：
+**随本发布包一起提供**（同一个压缩包内的 `source/wrpl-acmi/` 目录）：
 
 ```
-wrpl-acmi-src-acmi-2.60.0.21-2026.11.02.zip
+source/wrpl-acmi/        # 上游 tag acmi-2.60.0.21-2026.11.02 的完整源码树
 ```
 
 该文件即上述 tag 的完整源码快照（GitHub archive 解压后重新打包），包含 `build.ps1`、`go.mod`、`go.sum`、`wrpl/`、`cmd/acmi/`、`data/` 等构建所需的全部文件。
