@@ -1,3 +1,13 @@
+## 未发布（v0.4.42）— 修复「记录」列表空
+
+2026-11-18
+
+### 修复
+- **「记录」模块列表永远为空**：`EnterFlightLog` 创建 `FlightLogListPage` 后没有调用 `Build()`，
+  而列表只在 `Build()` 里扫描 `recordings/*.jsonl` → 目录里有记录也显示「recordings 目录里没有 .jsonl 记录」。
+  现在创建后立即 `Build()`；`mfdpreview flightlog` 已复核能列出 9 个真实记录。
+- 版本 0.4.42。
+
 ## 未发布（v0.4.41）— MFD 内置飞行记录分析
 
 2026-11-18

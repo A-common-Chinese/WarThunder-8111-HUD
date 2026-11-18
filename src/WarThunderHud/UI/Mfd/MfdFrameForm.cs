@@ -1584,6 +1584,9 @@ public sealed class MfdFrameForm : Form
             onCancel: LeaveFlightLogToMenu,
             layout: new MfdPageLayout(_layout, _layout.Width / 1330f),
             folder: folder);
+        // 列表页只在 Build() 里扫描目录；不走 _nav 时没有页面管理器帮它构建，
+        // 漏掉这一句就会永远显示「recordings 目录里没有 .jsonl 记录」。
+        _flightLogListUI.Build();
         _mode = Mode.FlightLog;
         _toast = null;
         SyncDiagProbe();
