@@ -1,5 +1,5 @@
 {
-  "_version": 64,
+  "_version": 65,
   "_default": {
     "zh": "暂无说明。可在 help-desc.json 中补充。",
     "en": "No description yet. Add one in help-desc.json."
@@ -425,8 +425,8 @@
     "en": "Kill feed: shows a line when the game reports \"A (type) shot down B\". The nickname below decides whether the kill is yours; leave it empty and every kill is shown without ownership."
   },
   "row.playerName": {
-    "zh": "你的游戏内昵称，用来从击落播报里认出自己。中文昵称、中文联队标签（^雄鹰^张三）、昵称里带括号（张三(老阳)）都能正确匹配，标签会先剥掉再比。留空 = 不判定归属。",
-    "en": "Your in-game nickname, used to recognise your own kills in the feed. Chinese names, Chinese squad tags (^X^Name) and brackets inside the name all match - tags are stripped before comparing. Empty means no ownership check."
+    "zh": "你的游戏内昵称：用来从击落播报里认出自己（击落播报/SPLASH），也用于飞行记录里的死亡事件识别。中文昵称、中文联队标签（^雄鹰^张三）、昵称里带括号（张三(老阳)）都能正确匹配，标签会先剥掉再比。留空 = 不判定归属，飞行记录的死亡回退到 valid 判断。",
+    "en": "Your in-game nickname: recognises your own kills in the feed (SPLASH) and your own death for flight recording. Chinese names, Chinese squad tags (^X^Name) and brackets inside the name all match - tags are stripped before comparing. Empty = no ownership check; flight-recording death falls back to valid."
   },
   "row.rollCoupleMode": {
     "zh": "坡度耦合三选一：开 = HUD 跟着座舱一起滚（1:1）；关 = 不跟着滚，第三人称视角用；自动 = 当前实现里等同「开」。★ 坡度滚反了要用下面的「坡度方向翻转」改符号，改这一项没用。",

@@ -1215,6 +1215,14 @@ public static partial class Program
         using var mapData = new WtHud.Telemetry.MapData();
         mapData.Start();
         hudMsgWatcher.OwnKill += t => splashQueue.Enqueue(t);
+    // 配了玩家昵称时，用 /hudmsg 的「被击落/击毁」作为飞行记录的死亡事件；
+    // 没配昵称就退回 valid 判断（记录器内部处理）。
+    hudMsgWatcher.OwnDeath += killer =>
+    {
+        if (flightRecorder is null || recHudmsgDeathUtc != default) return;
+        recHudmsgDeathUtc = DateTime.UtcNow;
+        Console.WriteLine($"record event: death detected via hudmsg (by {killer})");
+    };
 
         var opt = new HudOptions();
         var cfg = HudConfig.Load();
@@ -3258,6 +3266,8 @@ public static partial class Program
                 recOutSince = 0;
                 recInvalidTicks = 0;
                 recDeathLogged = false;
+                recHudmsgDeathUtc = default;
+                recDeathTicks = 0;
                 Console.WriteLine("recording stopped (toggle off)");
             }
             return;
@@ -3273,19 +3283,47 @@ public static partial class Program
             recOutSince = 0;
             recInvalidTicks = 0;
             recDeathLogged = false;
+                recHudmsgDeathUtc = default;
+                recDeathTicks = 0;
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
         if (newPacket)
         {
-            // 死亡只写事件、不停止；但 valid 在载入/切场景会闪断 0.1–0.5 s，
-            // 直接写会让死亡和复活两条竖线叠在一起。改成无效持续 >=1.5 s 才算死亡。
-            if (snap.Valid)
+            // 死亡只写事件、不停止。两种来源：
+            // 1) 配了玩家昵称：用 /hudmsg 的击落/击毁消息（精确，不受 valid 闪断影响）；
+            // 2) 没填昵称：退回 valid 判断，并要求无效持续 >=1.5 s 才算死亡。
+            if (!string.IsNullOrWhiteSpace(cfg.PlayerName))
+            {
+                if (recHudmsgDeathUtc != default && !recDeathLogged)
+                {
+                    flightRecorder.Event("death", null, recHudmsgDeathUtc);
+                    recDeathLogged = true;
+                    recDeathTicks = nowTicks;
+                    recHudmsgDeathUtc = default;
+                    Console.WriteLine("record event: death (hudmsg)");
+                }
+                if (recDeathLogged && snap.Valid && !string.IsNullOrEmpty(snap.VehicleType)
+                    && nowTicks - recDeathTicks >= 1500)
+                {
+                    flightRecorder.Event("spawn", snap.VehicleType);
+                    recDeathLogged = false;
+                recHudmsgDeathUtc = default;
+                recDeathTicks = 0;
+                    Console.WriteLine($"record event: spawn {snap.VehicleType}");
+                }
+                recInvalidTicks = 0;
+                if (snap.Valid && !string.IsNullOrEmpty(snap.VehicleType) && snap.VehicleType != recVehiclePrev)
+                    flightRecorder.Event("vehicle_change", snap.VehicleType);
+            }
+            else if (snap.Valid)
             {
                 if (recDeathLogged)
                 {
                     flightRecorder.Event("spawn", snap.VehicleType);
                     recDeathLogged = false;
+                recHudmsgDeathUtc = default;
+                recDeathTicks = 0;
                     Console.WriteLine($"record event: spawn {snap.VehicleType}");
                 }
                 recInvalidTicks = 0;
@@ -3569,7 +3607,9 @@ public static partial class Program
     private static long recOutSince;
     private static long recInvalidTicks;      // 本次 valid=false 的起点（0 = 当前有效）
     private static DateTime recInvalidUtc;    // 起点时间，用作 death 事件时间戳
-    private static bool recDeathLogged;       // 本次无效期是否已写 death
+    private static bool recDeathLogged;       // 本次死亡是否已写 death
+    private static DateTime recHudmsgDeathUtc; // /hudmsg 捕获到的死亡时间（默认值 = 没有）
+    private static long recDeathTicks;         // 写 death 的时刻，用于延迟写 spawn
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)

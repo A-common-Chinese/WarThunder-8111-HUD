@@ -28,6 +28,9 @@ public sealed class HudMsgWatcher
     /// <summary>发现自己的新击落；参数 = 被击落目标（已清洗）。</summary>
     public event Action<string>? OwnKill;
 
+    /// <summary>发现自己被击落/击毁；参数 = 对方名字（已清洗）。用于飞行记录的死亡事件。</summary>
+    public event Action<string>? OwnDeath;
+
     /// <summary>新对局 / 离开对局时调用：清空游标，下一轮只记录不播报。</summary>
     public void Reset()
     {
@@ -99,6 +102,8 @@ public sealed class HudMsgWatcher
             _lastDamageId = id;
             if (HudKillFeed.IsOwnKill(msg, playerName, out var target))
                 OwnKill?.Invoke(target);
+            if (HudKillFeed.IsOwnDeath(msg, playerName, out var killer))
+                OwnDeath?.Invoke(killer);
         }
     }
 }

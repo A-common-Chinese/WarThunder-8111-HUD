@@ -90,4 +90,47 @@ public static class HudKillFeed
         target = tgt;
         return true;
     }
+
+    /// <summary>
+    /// 空战 + 地面都算的「击落/击毁」动词：判断自己是不是**被击落的一方**时，
+    /// 两个动词都要认（开飞机被击落是「击落了」，开坦克被击毁是「击毁了」）。
+    /// </summary>
+    private static readonly string[] DeathVerbs = { "击落了", "shot down", "击毁了", "destroyed" };
+
+    /// <summary>
+    /// 这条消息是不是「自己被别人击落/击毁」；是则给出对方名字（已清洗）。
+    /// 消息格式是「killer (机型) 击落了 victim (机型)」，victim 必须与我们配置的昵称一致。
+    /// 玩家昵称为空时返回 false（调用方退回 valid 判断）。
+    /// </summary>
+    public static bool IsOwnDeath(string? raw, string? playerName, out string killer)
+    {
+        killer = "";
+        if (string.IsNullOrWhiteSpace(playerName)) return false;
+        string s = Clean(raw);
+        if (s.Length == 0) return false;
+
+        int vi = -1, vl = 0;
+        foreach (var v in DeathVerbs)
+        {
+            int i = s.LastIndexOf(v, StringComparison.OrdinalIgnoreCase);
+            if (i > vi) { vi = i; vl = v.Length; }
+        }
+        if (vi <= 0) return false;
+
+        string left = s[..vi].Trim();
+        string right = s[(vi + vl)..].Trim();
+        if (left.Length == 0 || right.Length == 0) return false;
+
+        int sp = left.LastIndexOf(" (", StringComparison.Ordinal);
+        string actor = sp > 0 && left.EndsWith(')') ? left[..sp].Trim() : left;
+
+        string name = playerName.Trim();
+        if (!right.StartsWith(name, StringComparison.OrdinalIgnoreCase)) return false;
+        string rest = right[name.Length..].Trim();
+        // 受害方可能带机型 "Name (Type)"；名字后面只能接机型括号，不能是另一个名字的前缀
+        if (rest.Length > 0 && !rest.StartsWith("(", StringComparison.Ordinal)) return false;
+
+        killer = actor;
+        return killer.Length > 0;
+    }
 }

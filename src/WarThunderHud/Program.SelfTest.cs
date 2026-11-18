@@ -136,6 +136,20 @@ public static partial class Program
             !HudKillFeed.TryParse("\u22C6 DFCN^ ACCvTARDISdevice (F/A-18A) \u83B7\u200B\u5F97\u200B\u5609\u200B\u5956", out _, out _, out _));
         Check("killfeed requires name", !HudKillFeed.IsOwnKill(killLine, "", out _));
 
+        // 自己被击落/击毁：从 /hudmsg 识别（飞行记录的死亡事件优先用这个，其次才退回 valid）
+        const string deathAir = "Malulu29 (\u82CF-25T) 击\u200B落\u200B了 ^DFCN^ ACCvTARDISdevice (F/A-18A)";
+        Check("killfeed own death (air)",
+            HudKillFeed.IsOwnDeath(deathAir, "ACCvTARDISdevice", out var dKiller) && dKiller == "Malulu29");
+        Check("killfeed own death is not own kill", !HudKillFeed.IsOwnKill(deathAir, "ACCvTARDISdevice", out _));
+        Check("killfeed own death ignores own kill line",
+            !HudKillFeed.IsOwnDeath(killLine, "ACCvTARDISdevice", out _));
+        Check("killfeed own death (ground destroy verb)",
+            HudKillFeed.IsOwnDeath("Malulu29 (\u82CF-25T) 击\u200B毁\u200B了 ACCvTARDISdevice (F/A-18A)",
+                "accvtardisdevice", out _));
+        Check("killfeed own death needs the configured name",
+            !HudKillFeed.IsOwnDeath(deathAir, "", out _)
+            && !HudKillFeed.IsOwnDeath(deathAir, "someone_else", out _));
+
         // 中文昵称 / 中文战队标签 / 昵称带括号：这三类以前都会让 actor 对不上设置里的名字
         const string zhLine = "^雄鹰^张三 (J-7E) 击落了 李四 (F-16)";
         Check("killfeed strips chinese squad tag",
