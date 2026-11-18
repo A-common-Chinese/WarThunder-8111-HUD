@@ -99,14 +99,14 @@ public sealed class FlightRecorder : IDisposable
     }
 
     /// <summary>在时间轴上记一个事件（死亡/重生/换机型）。</summary>
-    public void Event(string kind, string? vehicle = null)
+    public void Event(string kind, string? vehicle = null, DateTime? utc = null)
     {
         if (_closed) return;
         _queue.TryAdd(JsonSerializer.Serialize(new EventLine
         {
             Type = "event",
             Kind = kind,
-            Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            Utc = (utc ?? DateTime.UtcNow).ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             Vehicle = vehicle ?? "",
         }, JsonOpts));
     }

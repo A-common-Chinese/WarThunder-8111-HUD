@@ -282,6 +282,7 @@ internal sealed class FlightLogChartPage : MfdPageBase
         using var deathText = new SolidBrush(MfdTheme.Amber);
         using var spawnText = new SolidBrush(MfdTheme.GreenDim);
 
+        var marks = new List<(double T, bool Death)>();
         foreach (var ev in events)
         {
             if (ev.T is not double t) continue;
@@ -289,6 +290,15 @@ internal sealed class FlightLogChartPage : MfdPageBase
             var death = string.Equals(ev.Kind, "death", StringComparison.OrdinalIgnoreCase);
             var spawn = string.Equals(ev.Kind, "spawn", StringComparison.OrdinalIgnoreCase);
             if (!death && !spawn) continue;
+            marks.Add((t, death));
+        }
+        marks.Sort((a, b) => a.T.CompareTo(b.T));
+
+        foreach (var (t, death) in marks)
+        {
+            // 旧版记录器把载入时 valid 的短暂闪断也写成 death+spawn（0.1–0.5 s），
+            // 两条线会叠在一起；相距 <2 s 的死亡直接省略，只留复活线。
+            if (death && marks.Any(m => !m.Death && Math.Abs(m.T - t) <= 2.0)) continue;
 
             var x = FlightLogPlot.MapX(t, t0, t1 > t0 ? t1 : t0 + 1, plot);
             g.DrawLine(death ? deathPen : spawnPen, x, plot.Top, x, plot.Bottom);

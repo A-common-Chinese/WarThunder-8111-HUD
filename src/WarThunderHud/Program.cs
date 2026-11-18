@@ -3256,6 +3256,8 @@ public static partial class Program
                 recLastStampUtc = default;
                 recLastPacketTicks = 0;
                 recOutSince = 0;
+                recInvalidTicks = 0;
+                recDeathLogged = false;
                 Console.WriteLine("recording stopped (toggle off)");
             }
             return;
@@ -3267,31 +3269,42 @@ public static partial class Program
             if (!snap.Valid || !inBattle) return;
             flightRecorder = FlightRecorder.Start(cfg, snap);
             recLastPacketTicks = nowTicks;
-            recValidPrev = true;
             recVehiclePrev = snap.VehicleType;
             recOutSince = 0;
+            recInvalidTicks = 0;
+            recDeathLogged = false;
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
         if (newPacket)
         {
-            // 死亡只写事件、不停止：复活后继续写同一个文件。
-            if (recValidPrev && !snap.Valid)
+            // 死亡只写事件、不停止；但 valid 在载入/切场景会闪断 0.1–0.5 s，
+            // 直接写会让死亡和复活两条竖线叠在一起。改成无效持续 >=1.5 s 才算死亡。
+            if (snap.Valid)
             {
-                flightRecorder.Event("death");
-                recValidPrev = false;
-                Console.WriteLine("record event: death");
+                if (recDeathLogged)
+                {
+                    flightRecorder.Event("spawn", snap.VehicleType);
+                    recDeathLogged = false;
+                    Console.WriteLine($"record event: spawn {snap.VehicleType}");
+                }
+                recInvalidTicks = 0;
+                if (!string.IsNullOrEmpty(snap.VehicleType) && snap.VehicleType != recVehiclePrev)
+                    flightRecorder.Event("vehicle_change", snap.VehicleType);
             }
-            else if (!recValidPrev && snap.Valid)
+            else
             {
-                flightRecorder.Event("spawn", snap.VehicleType);
-                recValidPrev = true;
-                Console.WriteLine($"record event: spawn {snap.VehicleType}");
-            }
-            else if (snap.Valid && !string.IsNullOrEmpty(snap.VehicleType)
-                     && snap.VehicleType != recVehiclePrev)
-            {
-                flightRecorder.Event("vehicle_change", snap.VehicleType);
+                if (recInvalidTicks == 0)
+                {
+                    recInvalidTicks = nowTicks;
+                    recInvalidUtc = latest?.TimestampUtc ?? DateTime.UtcNow;
+                }
+                if (!recDeathLogged && nowTicks - recInvalidTicks >= 1500)
+                {
+                    flightRecorder.Event("death", null, recInvalidUtc);
+                    recDeathLogged = true;
+                    Console.WriteLine("record event: death");
+                }
             }
 
             if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
@@ -3552,9 +3565,11 @@ public static partial class Program
     private static FlightRecorder? flightRecorder;
     private static long recLastPacketTicks;
     private static DateTime recLastStampUtc;
-    private static bool recValidPrev = true;
     private static string recVehiclePrev = "";
     private static long recOutSince;
+    private static long recInvalidTicks;      // 本次 valid=false 的起点（0 = 当前有效）
+    private static DateTime recInvalidUtc;    // 起点时间，用作 death 事件时间戳
+    private static bool recDeathLogged;       // 本次无效期是否已写 death
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
