@@ -5316,8 +5316,8 @@ public static partial class Program
             else if (view == "dlstatus") { form.PreviewOpen(2, 5); form.PreviewSub(5); } // 数据链 → 链路状态
             else if (view == "cfg") { form.PreviewOpen(2, 6); form.PreviewSub(6); }       // 数据链 → 配置传递
             else if (view == "cfginbox") { form.PreviewOpen(2, 6); form.PreviewSub(6); form.PreviewSub(1); }
-            else if (view == "diag") { form.PreviewOpen(9, 0); }                        // 诊断（顶部数据链入口）
-            else if (view == "diagstatus") { form.PreviewOpen(9, 0); form.PreviewSub(0); }  // 诊断 → 链路状态（同一个页）
+            else if (view == "diag") { form.PreviewOpen(10, 0); }                       // 诊断（模块顺序见 MfdPages.Build，记录插在诊断之前）
+            else if (view == "diagstatus") { form.PreviewOpen(10, 0); form.PreviewSub(0); }  // 诊断 → 链路状态（同一个页）
             else if (view == "dlfromform") { form.PreviewOpen(1, 8); form.PreviewSub(8); }  // 编队 → 数据链（跳板）
             else if (view == "sidekey") { form.PreviewSideKey(Math.Clamp(item, 0, 9)); }   // 主菜单按第 N 个侧键
             else if (view == "preset") { form.PreviewOpen(4, 0); form.PreviewPreset(); }
@@ -5381,7 +5381,7 @@ public static partial class Program
                 form.PreviewBottomKey(2);
                 Console.WriteLine($"PAGE items p{p} after PAGE+ -> page{form.PreviewActivePageIndex} sel{form.PreviewActiveSelection}");
             }
-            else if (view == "diag") { form.PreviewOpen(8, 0); }   // 模块顺序：… Airframes(7) → Diag(8)，此前写的 7 出的是机型页
+            else if (view == "diag") { form.PreviewOpen(10, 0); }   // 模块顺序：… Snapshots(8) → FlightLog(9) → Diag(10)，此前写的 8/9 都会错位
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }
             else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）
@@ -5396,6 +5396,28 @@ public static partial class Program
             }
             else if (view == "snapshots") { form.PreviewSnapshots(); }
             else if (view == "snapconfirm") { form.PreviewSnapshotConfirm(); }
+            // 记录（MFD 内置飞行记录分析）：
+            //   flightlog                  记录列表（第 4 参数可给一个测试目录）
+            //   flightlog-speed/energy/... 用样例 JSON 直接出图表页（第 4 参数可给样例路径）
+            else if (view == "flightlog")
+            {
+                form.PreviewFlightLog(string.IsNullOrEmpty(extra) ? null : extra);
+            }
+            else if (view is "flightlog-speed" or "flightlog-energy" or "flightlog-alt"
+                     or "flightlog-des" or "flightlog-vy" or "flightlog-aoa" or "flightlog-attitude")
+            {
+                var theme = view switch
+                {
+                    "flightlog-speed" => "speed",
+                    "flightlog-energy" => "energy",
+                    "flightlog-alt" => "altitude",
+                    "flightlog-des" => "energyRate",
+                    "flightlog-vy" => "vy",
+                    "flightlog-aoa" => "aoa",
+                    _ => "attitude",
+                };
+                form.PreviewFlightLogChart(theme, string.IsNullOrEmpty(extra) ? null : extra);
+            }
             else if (view == "snaprestore") { form.PreviewRestoreNewest(); }
             else if (view == "snapback")
             {

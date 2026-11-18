@@ -44,6 +44,25 @@ WtHud 内置接口调用 `FlightLog.exe` 分析 **HUD 自己录的 `.jsonl`**（
    用 `python -m flightlog <log> --mfd-json out/mfd/x.json` 验证结构
 3. 再让 HUD 侧基于真实样例完成页面与预览图
 
+## 恢复结果（2026-11-18，分支 `wip/mfd-log`，未提交）
+
+HUD 侧已完成并验证：
+
+- 页面：`UI/Mfd/Pages/FlightLogListPage.cs`（记录列表）、`UI/Mfd/Pages/FlightLogChartPage.cs`
+  （左图右数图表）、`UI/Mfd/FlightLogChart.cs`（7 个主题、统计口径、62/38 布局）、
+  `UI/Mfd/FlightLogBridge.cs`（跑 FlightLog.exe + 解析/缓存）、`UI/Mfd/FlightLogPlot.cs`（刻度/像素映射/过滤）
+- 接线：`MfdPages` 新增「记录」模块（排在回归快照与诊断之间）、`MfdFrameForm` 新增 `Mode.FlightLog`：
+  UP/DOWN、PAGE/左右、CONFIRM、BACK、鼠标点选、HELP 往返全部接好；分析在后台线程跑，失败显示 toast。
+- 预览：`mfdpreview` 新增 `flightlog` / `flightlog-speed` / `flightlog-energy` / `flightlog-alt` /
+  `flightlog-des` / `flightlog-vy` / `flightlog-aoa` / `flightlog-attitude`。
+- 版本 0.4.41；`help-desc` 版本 64；`selftest` **463 PASS / 0 FAIL**
+  （`WT_FLIGHTLOG_E2E=1` 时 466 条，含真跑一次 FlightLog.exe）。
+- 出图：`tools/flightlog/out/mfd-preview-*.png`。
+
+FlightLog 侧由并行子代理完成：`--mfd-json` 是开关（输入仍是位置参数），
+MAD 尖峰只在死亡前 30 s 窗口内生效，`avg_filter` 含 `spike_window_s`；
+HUD 侧对 JSON 未导出的平均 G / 迎角 / dEs/dt 复刻了同一套过滤（`FlightLogPlot.MeanFiltered`）。
+
 ## 相关资源
 
 - 样例飞行记录：`C:\Users\noapi\Desktop\WtHud-发布\recordings\wtlog-20261117-204002-jh_7a.jsonl`

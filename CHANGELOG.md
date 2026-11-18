@@ -1,3 +1,44 @@
+## 未发布（v0.4.41）— MFD 内置飞行记录分析
+
+2026-11-18
+
+### 新增
+- **MFD 内置飞行记录分析（记录 / FLIGHTLOG）**：主菜单新增「记录」模块，直接在面板里看 HUD 自己录的飞行记录。
+  - **列表页**：扫 exe 同目录 `recordings/*.jsonl`，按修改时间倒序（最多 30 条，每页 10 条）；
+    UP/DOWN 选择（选中项跨页时页码跟随）、PAGE 翻页、CONFIRM 分析、BACK 回主菜单。
+  - **图表页**：**左侧约 62% 折线图 + 右侧约 38% 统计卡**，每页一个主题，左右（PAGE）翻页：
+    速度（IAS/TAS）、高度（气压/雷达）、比能量 Es、能量变化率 dEs/dt、垂直速度 Vy、
+    迎角与过载（AoA 左轴 + Ny 右轴）、姿态（俯仰左轴 + 坡度右轴）。
+  - **右侧统计**：速度页 → 最大/平均 IAS、最大/平均 TAS、最大 Mach（另加去尖峰最大 IAS）；
+    高度页 → 最大/平均高度、高度范围；能量页 → Es 范围、能量变化、平均/最大/最小 dEs/dt；
+    Vy 页 → 最大爬升/最大下降/平均；迎角页 → 最大/平均 G、最大/平均迎角；
+    姿态页 → 最大/平均 G、最大迎角、俯仰范围、最大坡度。
+  - **不做手动时间范围**：平均速度/高度直接用 FlightLog 写进 JSON 的 `avg_*`（工具侧已自动剔除
+    「死亡前 10 秒」样本，且只在死亡前 30 秒窗口内按 MAD 3σ 判尖峰；窗口外的机动峰值不受影响）；
+    JSON 里没有的平均 G / 平均迎角 / 平均 dEs/dt 用同一套规则从序列复算，口径与 JSON 的
+    `avg_filter`（含 `spike_window_s`）一致。
+  - **多架次**：UP/DOWN 切换 `flights[i]`；**事件竖线**标出 death（琥珀虚线）/ spawn（绿点线）。
+  - **桥接 FlightLog.exe**：先找 exe 同目录，再逐级向上找 `tools/flightlog/dist/`；
+    `--mfd-json <log> --out <temp>`，`CreateNoWindow`、15 s 超时、System.Text.Json 解析，
+    按「路径 + 大小 + mtime」缓存（记录还在增长时不会拿到旧结果）；失败显示 toast，
+    schema ≠ 1 一律提示「数据版本不兼容 / 请更新 FlightLog」。
+  - **单位跟随设置**：km/h ↔ kt、m ↔ ft、m/s ↔ ft/min 只影响显示，数据恒为公制。
+  - 图表配色沿用面板主题（主曲线绿、次曲线琥珀、事件竖线用同一语义色）；不新增任何可调设置。
+- `mfdpreview` 新增视图：`flightlog`（记录列表，第 4 参数可给测试目录）、
+  `flightlog-speed` / `flightlog-energy` / `flightlog-alt` / `flightlog-des` / `flightlog-vy` /
+  `flightlog-aoa` / `flightlog-attitude`（用 `tools/flightlog/out/mfd/*.json` 样例直接出图，
+  第 4 参数可给样例路径；`WT_FLIGHTLOG_FLIGHT=2` 可定位到第 3 架次）。
+- 面板帮助：`help-desc` 新增「记录」页说明（版本 63 → 64）；`L10n` 新增中英文案 62 条。
+- `selftest` 新增 33 条：JSON 解析/schema 兼容性、进程参数、记录列表排序与上限、错误文案、
+  像素映射（时间 → 横轴 / 数值 → 纵轴 / 退化区间）、平均过滤（死亡窗口）、
+  7 个主题的标题/统计标签、统计值来自 `avg_*`、单位换算、62/38 布局与轴留白，共 **463 PASS / 0 FAIL**。
+  - 另有一条默认跳过的端到端检查：`WT_FLIGHTLOG_E2E=1` 时真跑一次 FlightLog.exe（发布前用）。
+
+### 说明
+- 需要 `FlightLog.exe`（发布包与 WtHud.exe 同目录）。没有时面板提示「未找到 FlightLog.exe」，
+  不影响 HUD 其它功能。
+- 记录尾部的地面/机库样本可能单独成为一个很短架次；图表照实显示，不做过滤。
+
 ## 未发布（v0.4.40）— 飞行数据记录
 
 2026-11-17

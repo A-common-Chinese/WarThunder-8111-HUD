@@ -9,7 +9,8 @@
   字段只增不减；HUD 侧按 ``schema`` 判断兼容性；
 * **面向几百像素的小屏**：每个架次内嵌一条独立降采样序列（约 2 Hz、单架次 ≤ 900 点），
   多架次时 MFD 切架次直接换用 ``flights[i].series``，不用在一条曲线上做范围裁剪；
-* **平均值自动去噪**：不做手动范围，自动排除「死亡前 10 s 窗口」与 MAD 鲁棒尖峰；
+* **平均值自动去噪**：不做手动范围；只排除「死亡前 10 s 窗口」样本，并**只在死亡前 30 s
+  窗口内**用 MAD 剔除超大波动（窗口外不做过离群过滤，平均接近原始均值）；
 * **快**：只读 JSONL（或 ACMI），不生成 HTML/SVG，8k 样本 1 s 内完成；
 * **缺失值写 ``null``**（不是 0），数组长度与 ``series.t`` 严格一致。
 
@@ -41,6 +42,8 @@ MFD_TOOL_VERSION = "0.4.40"
 
 #: 平均值过滤：死亡事件前多少秒的样本不参与平均
 DEATH_WINDOW_S = 10.0
+#: MAD 尖峰过滤的生效窗口：``[death - SPIKE_WINDOW_S, death]``（窗口外一律不做过离群过滤）
+SPIKE_WINDOW_S = 30.0
 #: 平均值过滤：鲁棒尖峰阈值 = spike_sigma × 1.4826 × MAD
 SPIKE_SIGMA = 3.0
 #: MAD -> 标准差的换算系数（正态分布下）
@@ -193,27 +196,53 @@ def death_window_mask(
     return mask
 
 
+def spike_window_mask(
+    times: Sequence[float],
+    deaths: Sequence[float],
+    window_s: float = SPIKE_WINDOW_S,
+    base_mask: Optional[Sequence[bool]] = None,
+) -> List[bool]:
+    """``[death - window_s, death]`` 内、且 ``base_mask`` 为 True 的样本标记为 True。
+
+    这是 MAD 尖峰检测的**唯一**生效范围：只处理死亡前的窗口，窗口外（起飞/巡航/盘旋）
+    一律不做离群过滤。死亡窗口内已经排除的样本不再参与尖峰统计（``base_mask`` 交集）。
+
+    没有 death 事件时返回全 False —— 即「无死亡 = 不做 MAD 过滤」。
+    """
+    count = len(times)
+    mask = [False] * count
+    for death in deaths:
+        lo = bisect.bisect_left(times, death - window_s)
+        hi = bisect.bisect_right(times, death)
+        for index in range(lo, hi):
+            mask[index] = True
+    if base_mask is not None:
+        mask = [mask[index] and bool(base_mask[index]) for index in range(count)]
+    return mask
+
+
 def spike_mask(
     values: Sequence[Optional[float]],
-    base_mask: Sequence[bool],
+    window_mask: Sequence[bool],
     sigma: float = SPIKE_SIGMA,
     min_samples: int = MIN_FILTER_SAMPLES,
 ) -> Tuple[Optional[List[bool]], bool]:
-    """对 ``base_mask`` 内的样本做 MAD 尖峰检测。
+    """对 ``window_mask`` 内（死亡前窗口）的样本做 MAD 尖峰检测。
 
     返回 ``(mask, fell_back)``：
 
     * ``mask`` 与 ``values`` 等长的 True/False 掩码（True = 尖峰要排除）；
-      ``None`` 表示该通道**不做**尖峰过滤（有效值少于 3 个，MAD 无意义）；
-    * ``fell_back`` 只在「按公式过滤后剩余样本 < ``min_samples``」时为 True ——
+      ``None`` 表示该通道**不做**尖峰过滤（检测范围内有效值少于 3 个，MAD 无意义，
+      或没有死亡窗口 —— 窗口外的样本永远不标记）；
+    * ``fell_back`` 只在「按公式过滤后窗口内剩余样本 < ``min_samples``」时为 True ——
       此时该通道退回「只排除死亡窗口」，调用方应记录 ``avg_filter.fallback``。
 
     注：量化数据里 MAD 可能正好是 0（大部分样本同值），此时阈值 = 0，
-    ``|x - median| > 0`` 会把孤立尖峰排除，正常样本（同值）保留，符合预期。
+    ``|x - median| > 0`` 会把窗口内的孤立尖峰排除，正常样本（同值）保留，符合预期。
     """
     count = len(values)
-    base_indices = [index for index in range(count) if base_mask[index]]
-    present = [values[index] for index in base_indices if values[index] is not None]
+    window_indices = [index for index in range(count) if window_mask[index]]
+    present = [values[index] for index in window_indices if values[index] is not None]
     if len(present) < 3:
         return None, False
     median, mad = _median_mad(present)
@@ -222,15 +251,15 @@ def spike_mask(
     threshold = sigma * MAD_TO_SIGMA * mad
     mask = [False] * count
     excluded = 0
-    for index in base_indices:
+    for index in window_indices:
         value = values[index]
         if value is None:
             continue
         if abs(value - median) > threshold:
             mask[index] = True
             excluded += 1
-    if len(base_indices) - excluded < min_samples:
-        return None, True  # 样本太少 -> 退回只排除死亡窗口
+    if len(window_indices) - excluded < min_samples:
+        return None, True  # 窗口内样本太少 -> 退回只排除死亡窗口
     return mask, False
 
 
@@ -245,17 +274,21 @@ def flight_averages(
     flight,
     *,
     death_window_s: float = DEATH_WINDOW_S,
+    spike_window_s: float = SPIKE_WINDOW_S,
     spike_sigma: float = SPIKE_SIGMA,
     min_samples: int = MIN_FILTER_SAMPLES,
 ) -> Dict[str, Any]:
     """自动去噪后的架次平均值 + 过滤后的最大值（MFD 左侧统计区数据）。
 
-    规则：
+    规则（用户定稿：「只会去除死亡之前的超大波动来平均」）：
 
-    1. 先排除每个 ``death`` 事件前 ``death_window_s`` 秒窗口内的样本；
-    2. 再按 IAS / TAS **各自**用 MAD 判尖峰：``|x - median| > 3 × 1.4826 × MAD``；
-       Mach / 高度取两个通道排除集合的并集；
-    3. 某通道过滤后剩余 < ``min_samples`` 时该通道退回「只排除死亡窗口」。
+    1. 先排除每个 ``death`` 事件前 ``death_window_s`` 秒窗口内的样本（这部分不参与平均）；
+    2. **只在死亡前 ``spike_window_s`` 秒窗口内**（``[death-30, death]``，且去掉已经排除的
+       死亡窗口样本）按 IAS / TAS **各自**用 MAD 判尖峰：
+       ``|x - median| > 3 × 1.4826 × MAD``；窗口外（起飞/巡航/盘旋等）**不做任何**离群过滤；
+    3. 没有 ``death`` 事件时**不做** MAD 过滤，平均值就是原始样本均值（仍排除死亡窗口＝无）；
+    4. Mach / 高度取 IAS/TAS 两个通道尖峰集合的并集；
+    5. 某通道过滤后窗口内剩余 < ``min_samples`` 时该通道退回「只排除死亡窗口」。
 
     返回 dict（含 ``avg_filter`` 子字典，记录参数与排除样本数）。
     """
@@ -268,8 +301,11 @@ def flight_averages(
     base_mask = [not flagged for flagged in in_death]
     death_excluded = sum(1 for flagged in in_death if flagged)
 
-    ias_spike, ias_fallback = spike_mask(series["ias"], base_mask, spike_sigma, min_samples)
-    tas_spike, tas_fallback = spike_mask(series["tas"], base_mask, spike_sigma, min_samples)
+    # 尖峰检测范围 = 死亡前窗口 ∩ 未被死亡窗口排除的样本；没有 death 时全 False
+    spike_domain = spike_window_mask(times, deaths, spike_window_s, base_mask)
+
+    ias_spike, ias_fallback = spike_mask(series["ias"], spike_domain, spike_sigma, min_samples)
+    tas_spike, tas_fallback = spike_mask(series["tas"], spike_domain, spike_sigma, min_samples)
     fallback = ias_fallback or tas_fallback
 
     ias_mask = _apply_spike(base_mask, ias_spike)
@@ -297,6 +333,8 @@ def flight_averages(
         "max_tas_filtered_kmh": _max_on(series["tas"], tas_mask),
         "avg_filter": {
             "death_window_s": float(death_window_s),
+            # MAD 尖峰过滤只在这个窗口内生效（death - spike_window_s ～ death）
+            "spike_window_s": float(spike_window_s),
             "spike_sigma": float(spike_sigma),
             # 被排除样本总数 = 死亡窗口 + 尖峰（并集）
             "excluded_samples": excluded,
@@ -504,8 +542,12 @@ def build_mfd_payload(
 
 
 def dump_mfd_json(payload: Dict[str, Any]) -> str:
-    """紧凑 JSON 文本（UTF-8 中文不转义；无缩进以控制体积）。"""
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    """紧凑 JSON 文本（UTF-8 中文不转义；无缩进以控制体积；不允许 NaN/Infinity）。
+
+    ``allow_nan=False`` 是契约的一部分：缺失值必须写 ``null``，不能出现 ``NaN``
+    （C# ``System.Text.Json`` 默认不认这些字面量，会直接把整份结果判成坏 JSON）。
+    """
+    return json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
 def write_mfd_json(payload: Dict[str, Any], path: str) -> str:

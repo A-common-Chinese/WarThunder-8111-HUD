@@ -74,7 +74,8 @@ python selftest.py
 
 纯标准库合成样本自检（解析、坏行跳过、缺字段、事件切分、能量公式、**分页 HTML 结构**、
 **平均速度纯函数与速度页控件结构**、**ACMI 回放解析 / 玩家归组 / 回放模式标记 /
-回放边界情况**、自包含检查、CLI），当前 **266/266 项全部通过**（原 152 项 + 回放/ACMI 114 项）。
+回放边界情况**、自包含检查、CLI、**MFD 导出与平均值窗口规则**），
+当前 **338/338 项全部通过**（原 152 项 + 回放/ACMI 114 项 + MFD 72 项）。
 
 ---
 
@@ -94,6 +95,7 @@ python selftest.py
 | `--wrpl-acmi PATH` | **（回放）** 指定 `wrpl-acmi.exe` 路径（默认自动找） |
 | `--keep-acmi N` | **（回放）** `%TEMP%\WtHud\flightlog` 保留最近几个 ACMI，默认 `3`，`0` = 用完即删 |
 | `--convert-timeout SEC` | **（回放）** 单次转换超时，默认 `900` |
+| `--mfd-json` | **开关**（不带值）：把位置参数的日志导出成 HUD MFD 面板用的 JSON（schema=1）；配合 `--out` 写文件，不给 `--out` 时 stdout 只有纯 JSON（见第 12 节） |
 
 `python -m flightlog --help` 可查看完整帮助。
 
@@ -394,6 +396,7 @@ wt-hud/tools/flightlog/
 ├─ acmi.py            # ACMI（Tacview 文本）解析：对象/玩家归组/样本抽取/回放模型
 ├─ replay.py          # .wrpl 导入：找 wrpl-acmi.exe、转换、临时缓存、ReplaySession
 ├─ picker.py          # 玩家表格 / 命令行选择 / Tk 多选对话框
+├─ mfd.py             # MFD 面板 JSON 导出（--mfd-json，schema=1；降采样 + 自动去噪平均值）
 ├─ report.py          # 自包含翻页 HTML：每页一张内联 SVG + 内联 CSS/JS
 │                     # （翻页、架次、玩家切换、悬停、速度页平均速度与手动范围）
 ├─ preview_png.py     # 可选 Pillow PNG 预览（缺库优雅降级）
@@ -403,7 +406,8 @@ wt-hud/tools/flightlog/
 ├─ fetch_wrpl_acmi.ps1# 下载 wrpl-acmi.exe（GitHub 直连不通时走 gh-proxy 镜像）
 ├─ wrpl-acmi.exe      # 第三方转换器（AGPL-3.0，可用上面的 ps1 重新下载）
 ├─ README.md          # 本文件
-└─ out/               # 生成物（HTML / PNG / 截图），默认输出目录
+└─ out/               # 生成物（HTML / PNG / 截图 / mfd 样例），默认输出目录
+   └─ mfd/            # --mfd-json 真实日志样例（sample-*.json，每份 <= 300 KB）
 ```
 
 两条数据流：
@@ -470,7 +474,12 @@ wt-hud/tools/flightlog/
   → 全部给出明确提示、退出码 2、不崩；
 * `fetch_wrpl_acmi.ps1` 实跑：GitHub 直连超时 → 自动改走 gh-proxy 镜像下载成功，
   SHA256 与脚本内置期望值一致；
-* `python selftest.py`：**266/266 通过**（原 152 项 + 回放/ACMI 114 项）。
+* **MFD 导出（`--mfd-json`）**：204002 / 131039 / 211515（4 架次）三份真实日志实测
+  analyze+导出 **0.42–1.20 s**、JSON **39.5–121.8 KB**；输出样例放在 `out/mfd/`，
+  已逐份校验 schema/字段集合/序列等长/≤900 点/`null`/`spike_window_s`/每份 ≤ 300 KB；
+  重新打包的 `dist\FlightLog.exe --mfd-json <log> --out <tmp>` 实跑退出码 0、
+  文件与 Python 输出一致（stdout 为空，约 2–3 s 含 onefile 自解压）；
+* `python selftest.py`：**338/338 通过**（原 266 项 + MFD 导出 72 项）。
 
 预览图：
 
@@ -531,6 +540,213 @@ wt-hud/tools/flightlog/
 
 ---
 
-## 12. 许可
+## 12. MFD 数据导出（`--mfd-json`）
+
+WtHud 内置 MFD 面板要画"**左侧折线图 + 右侧统计值**"（最大速度、平均速度、最大 G 等）。
+数据由本工具离线算好：这个接口**不生成 HTML/SVG**，只把一份日志压成 `schema=1` 的 JSON，
+HUD 调一次 exe、读文件即可，不需要 Tk / 浏览器 / 联网。
+
+### 12.1 用法
+
+`--mfd-json` 是**开关**（不带路径值），输入仍然由**位置参数**给出：
+
+```bat
+:: 写文件：stdout 保持干净（提示只走 stderr）
+FlightLog.exe --mfd-json "wtlog-20261117-204002-jh_7a.jsonl" --out "%TEMP%\mfd.json"
+
+:: 不给 --out：stdout 只有纯 JSON（可以直接被父进程管道读走）
+FlightLog.exe --mfd-json "wtlog-20261117-204002-jh_7a.jsonl"
+```
+
+`python -m flightlog` 用法完全相同（在 `wt-hud\tools` 目录下运行）：
+
+```bat
+cd wt-hud\tools
+python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --out out\mfd\sample-131039.json
+```
+
+* 不带 `--mfd-json` 时**行为完全不变**（HTML 报告 / `--summary` / 回放流程都不受影响）；
+* `--out` 在 MFD 模式下**只写 JSON**，不会把日志混进文件；提示信息只走 stderr；
+* 支持 `.jsonl` 日志；`.acmi` 走同一套回放解析（需含飞机对象）；`.wrpl` 回放会明确报错
+  （提示先转 ACMI 或直接用 HUD 自己的日志）；
+* `--summary` / `--png` / `--list` 与 `--mfd-json` 互斥（明确报错，不猜用户意图）；
+* 缺位置参数、坏文件、写文件失败都返回**退出码 2**，不会崩栈。
+
+### 12.2 JSON 结构（schema = 1）
+
+字段只增不减；单位写进字段名；**缺失值一律 `null`**（不是 0，也不省略列）；同一架次的所有
+序列数组长度都等于 `series.t` 的长度。HUD 只认 `schema == 1`，不兼容时按"版本不符"报错。
+
+真实样例（`out/mfd/sample-204002.json` 裁剪）：
+
+```json
+{
+  "schema": 1,
+  "tool": "FlightLog",
+  "tool_version": "0.4.40",
+  "source": "wtlog-20261117-204002-jh_7a.jsonl",
+  "generated_utc": "2026-11-18T12:33:57Z",
+  "meta": {"vehicle": "jh_7a", "duration_s": 390.7, "rate_hz": 29.6, "samples": 11583},
+  "flights": [
+    {
+      "index": 1,
+      "start_s": 6.805,
+      "end_s": 395.752,
+      "samples": 11533,
+      "vehicle": "jh_7a",
+      "stats": {
+        "max_ias_kmh": 1215.0, "max_tas_kmh": 1280.0, "max_mach": 1.07,
+        "max_g": 13.79, "max_alt_m": 3968.0,
+        "avg_ias_kmh": 1007.8, "avg_tas_kmh": 1120.2, "avg_mach": 0.929, "avg_alt_m": 1987.1,
+        "es_range_m": [0.0, 9873.7], "es_delta_m": -5377.9,
+        "max_ias_filtered_kmh": 1215.0, "max_tas_filtered_kmh": 1280.0,
+        "avg_filter": {
+          "death_window_s": 10.0, "spike_window_s": 30.0, "spike_sigma": 3.0,
+          "excluded_samples": 215,
+          "death_excluded_samples": 215, "spike_excluded_samples": 0,
+          "kept_samples": 11318, "fallback": false
+        }
+      },
+      "series": {
+        "t": [6.805, 7.245, "..."], "ias_kmh": [742.0, "..."], "tas_kmh": ["..."],
+        "mach": ["..."], "alt_m": ["..."], "ralt_m": ["..."], "es_m": ["..."],
+        "des_dt_ms": ["..."], "vy_ms": ["..."], "aoa_deg": ["..."],
+        "ny_g": ["..."], "pitch_deg": ["..."], "bank_deg": ["..."]
+      }
+    }
+  ],
+  "events": [{"kind": "death", "t": 395.398, "vehicle": null}]
+}
+```
+
+顶层字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `schema` | int | 固定 `1`；HUD 用它判兼容 |
+| `tool` | string | 固定 `"FlightLog"` |
+| `tool_version` | string | 与 WtHud 发布版本对齐（当前 `0.4.40`） |
+| `source` | string | 输入文件名（不含目录） |
+| `generated_utc` | string | 生成时间，`YYYY-MM-DDTHH:MM:SSZ` |
+| `meta` | object | 整份记录概要（下表） |
+| `flights` | array | 架次数组，按时间顺序；每架次自带独立 `series` |
+| `events` | array | `[{kind, t, vehicle}]`，按 `t` 升序；`end` 事件不导出 |
+
+`meta`：`vehicle`（机型）、`duration_s`（整份日志首尾秒数）、`rate_hz`（平均采样率）、
+`samples`（有效样本总数）。
+
+`flights[i]`：`index`（**1 起**）、`start_s` / `end_s`（日志内绝对秒）、`samples`（原始样本数）、
+`vehicle`、`stats`、`series`。
+
+`series`（每架次独立降采样：约 2 Hz、单架次 **≤ 900 点**，多架次切换直接换 `flights[i].series`）：
+
+| 字段 | 单位 | 说明 |
+| --- | --- | --- |
+| `t` | s | 日志内绝对秒（降采样后） |
+| `ias_kmh` / `tas_kmh` | km/h | 指示空速 / 真空速 |
+| `mach` | — | 马赫数 |
+| `alt_m` / `ralt_m` | m | 气压高度 / 无线电高度 |
+| `es_m` | m | 比能量 `Es = alt + (TAS/3.6)²/(2g)` |
+| `des_dt_ms` | m/s | 比能量变化率 `dEs/dt`（±1.5 s 平滑，状态跳变处置 `null`） |
+| `vy_ms` | m/s | 垂直速度 |
+| `aoa_deg` | ° | 迎角 |
+| `ny_g` | g | 法向过载 |
+| `pitch_deg` / `bank_deg` | ° | 俯仰 / 滚转 |
+
+`stats`：
+
+| 字段 | 说明 |
+| --- | --- |
+| `max_ias_kmh` / `max_tas_kmh` / `max_mach` / `max_g` / `max_alt_m` | **原始最大值**（整架次，与 HTML 报告一致，不过滤） |
+| `avg_ias_kmh` / `avg_tas_kmh` / `avg_mach` / `avg_alt_m` | **自动去噪后**的平均值（规则见 12.3） |
+| `max_ias_filtered_kmh` / `max_tas_filtered_kmh` | 去噪后的最大值（"去掉死亡俯冲/尖峰"后的极值） |
+| `es_range_m` | `[min, max]` 比能量范围 |
+| `es_delta_m` | 空中样本首尾比能量差（没有空中样本时退回全样本首尾差） |
+| `avg_filter` | 过滤参数与排除样本数（下表） |
+
+`avg_filter`（HUD 至少读前 4 个字段，其余是给调试/自检的细分，可忽略）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `death_window_s` | 死亡排除窗口长度（固定 `10.0`） |
+| `spike_window_s` | MAD 尖峰过滤生效窗口（固定 `30.0`，即 `[death−30, death]`） |
+| `spike_sigma` | MAD 尖峰阈值倍数（固定 `3.0`） |
+| `excluded_samples` | 被排除样本总数 = 死亡窗口 ∪ 尖峰（并集，不重复计数） |
+| `death_excluded_samples` | 其中死亡窗口排除数 |
+| `spike_excluded_samples` | 其中 MAD 尖峰排除数（只可能来自死亡前窗口内） |
+| `kept_samples` | 参与平均的样本数 |
+| `fallback` | 是否因窗口内剩余 < 30 样本而退回"只排除死亡窗口" |
+
+`events` 每项：`kind`（`spawn` / `death` / `vehicle_change` / `match_start` …，与日志事件同名）、
+`t`（秒）、`vehicle`（可能为 `null`）。
+
+### 12.3 平均值规则（不可手动选范围）
+
+MFD 面板不给用户拖范围，平均值由 FlightLog 固定规则自动算。用户口径是「**只去除死亡之前的
+超大波动**来平均」，所以 MAD 只在死亡前窗口内生效，窗口外（起飞 / 巡航 / 盘旋）不做任何
+离群过滤 —— 平均值因此**接近原始算术均值**：
+
+1. **死亡窗口**：排除每次 `death` 事件前 **10 秒**内的样本（闭区间 `[death−10, death]`），
+   这部分不参与任何平均；
+2. **MAD 尖峰（只在死亡前窗口内）**：检测范围 = `[death−30, death]` 与"未被死亡窗口排除"的
+   交集（即 `[death−30, death−10)`）。在此范围内对 IAS / TAS **各自**过滤
+   `|x − median| > 3 × 1.4826 × MAD` 的样本（`median` / `MAD` 只用该范围内的样本算；
+   系数 1.4826 把 MAD 换算成正态 σ）。**窗口外一律不做过离群过滤**；
+3. **没有 `death` 事件 → 不做 MAD 过滤**：平均值就是原始样本的算术平均（没有死亡窗口可排除）；
+4. **样本太少退让**：某通道过滤后窗口内剩余 < **30** 个样本时，该通道退回"只排除死亡窗口"
+   （`avg_filter.fallback = true`，不会把架次平均变成一两个样本的噪声）；
+5. Mach / 高度等其它统计用 IAS/TAS 尖峰集合的**并集**掩码；
+6. `avg_filter.excluded_samples` 记录"死亡窗口 + 尖峰"的并集样本数，方便 HUD 显示口径。
+
+也就是说：**正常飞行段一个样本都不动，只有死亡前那 30 秒里的超大波动会被剔除**（其中死亡前
+10 秒本来就整段排除）。
+
+### 12.4 真实样例与性能
+
+三份真实日志（`C:\Users\noapi\Desktop\WtHud-发布\recordings\`）实测（analyze + 导出，不含
+Python/PyInstaller 启动）：
+
+| 日志 | 样本 | 架次 | 耗时 | JSON | 样例文件 |
+| --- | --- | --- | --- | --- | --- |
+| `wtlog-20261117-204002-jh_7a.jsonl` | 11583 | 2 | 0.56 s | 53.6 KB | `out/mfd/sample-204002.json` |
+| `wtlog-20261117-131039-jh_7a.jsonl` | 8356 | 2 | 0.42 s | 39.5 KB | `out/mfd/sample-131039.json` |
+| `wtlog-20261117-211515-jh_7a.jsonl`（多架次） | 25084 | 4 | 1.20 s | 121.8 KB | `out/mfd/sample-multiflight.json` |
+
+三份样例都 ≤ 300 KB，可直接给 HUD 侧做预览 / 自检。抽样数值（不含地面/机库短架次）：
+
+* 204002 架次 1：`avg_ias=1007.8`（**原始样本均值 994.0**，差异只来自排除死亡前 10 s 的
+  215 个低速样本；MAD 在死亡前窗口内没有检出尖峰）、`max_ias=1215.0`、`max_g=13.79`；
+* 131039 架次 1：`avg_ias=1051.7`（**原始均值 1051.5**，几乎一致）、`max_ias=1242.0`、`max_g=13.68`；
+* 211515 架次 1/3/4：`avg_ias=1059.6 / 1001.1 / 1009.7`，对应原始均值 `1058.4 / 999.7 / 1008.9`
+  （窗口外不过滤，所以平均基本等于原始均值）；
+* 每个记录末尾的地面/机库尾巴会单独成为很短的一架次（如 50 样本 → 4 个点），HUD 可按
+  `samples` / 点数决定是否跳过。
+
+### 12.5 已知限制（MFD 导出）
+
+1. **曲线是 2 Hz 降采样**：短于约 0.5 s 的尖峰不会出现在 `series` 里（`stats` 仍用全量样本算，
+   所以"最大 G"可能是曲线上看不到的瞬时值）。
+2. **900 点上限优先于 1–2 Hz**：超过约 450 s 的单架次会自动加粗步长（可能低于 1 Hz），
+   保证 MFD 小屏不卡；多架次日志每个架次单独降采样，互不影响。
+3. **MAD 只在死亡前 30 s 窗口内生效**：窗口内若正好有持续低速段（例如死亡前正在降落/盘旋），
+   它离中位数很远时仍可能被判成"超大波动"剔除；窗口外（起飞/巡航等）**完全不滤**，所以
+   `avg_ias` 接近原始算术均值，两者差异主要来自"排除死亡前 10 s 样本"
+   （例：204002 架次 1 原始均值 994.0 → 去噪后 1007.8，差 13.8 全部来自死亡窗口的 215 个低速样本）。
+4. **没有 `death` 事件就没有任何过滤**：窗口内检测范围为空 → 不做 MAD，平均值 = 原始样本均值
+   （例：131039 架次 1 原始 1051.5 → 1051.7，只因死亡窗口排除 212 个样本）。
+   另外事件时间本身有 1–2 s 延迟（见第 11 节），窗口位置会随之整体偏移。
+5. **`meta.rate_hz` / `duration_s` 用整份日志首尾算**：多架次之间的空档会被计入时长，
+   所以 `rate_hz` 是整场平均采样率（如 211515：26.8 Hz，单架次内约 27 Hz），不是"每架次采样率"。
+6. **`.wrpl` 不支持**：MFD 只吃 HUD 自己录的 `.jsonl`（或已转好的 `.acmi`），不直接开回放。
+7. **HUD 调的是 `dist\FlightLog.exe`**：本分支已重新打包 `dist\FlightLog.exe`（2026-11-18，
+   30.6 MB，PyInstaller onefile+noconsole）；改源码/换机器后要重新执行 `build_exe.bat`。
+   实测 `FlightLog.exe --mfd-json "<log>" --out "<tmp>"` 退出码 0、stdout 为空、耗时约 0.5–0.7 s
+   （另有约 2–3 s 的 onefile 自解压冷启动，仍远低于 HUD 的 15 s 超时）。
+   HUD 侧调用约定见 `src/WarThunderHud/UI/Mfd/FlightLogBridge.cs`
+   （`--mfd-json <log> --out <tmp>`，`schema != 1` 视为版本不兼容）。
+
+---
+
+## 13. 许可
 
 与 WtHud 仓库一致：AGPL-3.0-or-later。本工具为独立脚本，不修改产品代码。

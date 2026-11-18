@@ -170,69 +170,132 @@ internal static class FlightLogPlot
     }
 
     /// <summary>
-    /// 平均值（忽略 null），可选按 FlightLog 的口径过滤：死亡前 <paramref name="deathWindowS"/> 秒的
-    /// 样本 + 超过 <paramref name="sigma"/> 倍标准差的尖峰。
+    /// 平均值（忽略 null），复刻 FlightLog <c>avg_filter</c> 的口径：
+    /// <list type="number">
+    /// <item>先排除每个 <c>death</c> 事件前 <paramref name="deathWindowS"/> 秒（闭区间）内的样本；</item>
+    /// <item>**只在死亡前 <paramref name="spikeWindowS"/> 秒窗口内**做 MAD 尖峰剔除
+    /// （<c>|x - median| &gt; sigma × 1.4826 × MAD</c>）；窗口外一律不动 —— 起飞/巡航的
+    /// 机动峰值不是坏点；</item>
+    /// <item>没有 death 事件时完全不做 MAD 过滤（原始均值）；</item>
+    /// <item>窗口内过滤后剩余样本少于 <see cref="MinFilterSamples"/> 时退回「只排除死亡窗口」。</item>
+    /// </list>
     ///
-    /// <para>FlightLog 只在 <c>stats</c> 里给速度/高度的 <c>avg_*</c>；本页另外要显示平均 G / 平均迎角 /
-    /// 平均 dEs/dt，只能从序列自己算。这里复刻同一套过滤规则 —— 不是「手动范围选择」，
-    /// 不做这个过滤的话，坠机瞬间的 13 G 会把整页平均值拉偏。</para>
+    /// <para>FlightLog 只在 <c>stats</c> 里给速度/高度的 <c>avg_*</c>；本页另外要显示平均 G /
+    /// 平均迎角 / 平均 dEs/dt，只能从序列自己算。这里复刻同一套规则 —— 没
+    /// 有「手动范围选择」，但不做这个过滤的话，坠机瞬间的 13 G 会把整页平均值拉偏。</para>
     /// </summary>
     internal static double? MeanFiltered(double?[]? values, double[]? t,
         IReadOnlyList<FlightLogBridge.FlightLogEvent>? events,
-        double deathWindowS, double sigma)
+        double deathWindowS, double sigma, double spikeWindowS = DefaultSpikeWindowS)
     {
         if (values is null) return null;
 
-        // 1) 收集候选（跳过 null / NaN），并剔除死亡前的样本。
-        var candidates = new List<double>(values.Length);
-        for (var i = 0; i < values.Length; i++)
+        // 没有时间轴：死亡窗口与尖峰范围都无从定位，只能给算术平均。
+        if (t is null) return PlainMean(values);
+
+        // 1) 候选：非空 + 不在任何 death 前的 deathWindowS 秒内。
+        var candidates = new List<int>(values.Length);
+        for (var i = 0; i < values.Length && i < t.Length; i++)
         {
             if (values[i] is not double d || double.IsNaN(d) || double.IsInfinity(d)) continue;
-            if (t is not null && i < t.Length && NearDeath(t[i], events, deathWindowS)) continue;
-            candidates.Add(d);
+            if (NearDeath(t[i], events, deathWindowS)) continue;
+            candidates.Add(i);
         }
         if (candidates.Count == 0) return null;
 
-        // 2) 3σ 尖峰剔除（一趟足够：这一步只是别让单个坏点主导均值）。
-        var mean = Average(candidates);
-        if (sigma > 0 && candidates.Count >= 4)
+        // 2) MAD 尖峰：只在死亡前窗口 ∩ 候选里判，命中者从平均里剔除。
+        var excluded = new HashSet<int>();
+        if (sigma > 0 && spikeWindowS > 0 && HasDeath(events))
         {
-            double sq = 0;
-            foreach (var v in candidates) sq += (v - mean) * (v - mean);
-            var sd = Math.Sqrt(sq / candidates.Count);
-            if (sd > 1e-9)
+            var domain = new List<(int Index, double Value)>(candidates.Count);
+            foreach (var i in candidates)
+                if (InDeathWindow(t[i], events, spikeWindowS)) domain.Add((i, values[i]!.Value));
+
+            if (domain.Count >= 3)
             {
-                var limit = sigma * sd;
-                var kept = new List<double>(candidates.Count);
-                foreach (var v in candidates)
-                    if (Math.Abs(v - mean) <= limit) kept.Add(v);
-                if (kept.Count > 0) mean = Average(kept);
+                var median = Median(domain.Select(p => p.Value).ToList());
+                var mad = Median(domain.Select(p => Math.Abs(p.Value - median)).ToList());
+                var threshold = sigma * MadToSigma * mad;
+                foreach (var (index, value) in domain)
+                    if (Math.Abs(value - median) > threshold) excluded.Add(index);
+
+                // 窗口内剩太少 → 该通道退回「只排除死亡窗口」（与 FlightLog 的 fallback 一致）
+                if (domain.Count - excluded.Count < MinFilterSamples) excluded.Clear();
             }
         }
-        return mean;
+
+        double sum = 0;
+        var count = 0;
+        foreach (var i in candidates)
+        {
+            if (excluded.Contains(i)) continue;
+            sum += values[i]!.Value;
+            count++;
+        }
+        return count > 0 ? sum / count : null;
     }
 
-    private static bool NearDeath(double t, IReadOnlyList<FlightLogBridge.FlightLogEvent>? events, double window)
+    private static double? PlainMean(double?[] values)
+    {
+        double sum = 0;
+        var count = 0;
+        foreach (var v in values)
+        {
+            if (v is not double d || double.IsNaN(d) || double.IsInfinity(d)) continue;
+            sum += d;
+            count++;
+        }
+        return count > 0 ? sum / count : null;
+    }
+
+    /// <summary>是否存在任何带时间的 death 事件（没有就等于不做 MAD 过滤）。</summary>
+    private static bool HasDeath(IReadOnlyList<FlightLogBridge.FlightLogEvent>? events)
+    {
+        if (events is null) return false;
+        foreach (var e in events)
+        {
+            if (e.T is null) continue;
+            if (string.Equals(e.Kind, "death", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>t 是否落在某个 death 前 <paramref name="window"/> 秒的闭区间内。</summary>
+    private static bool InDeathWindow(double t, IReadOnlyList<FlightLogBridge.FlightLogEvent>? events, double window)
     {
         if (events is null || !(window > 0)) return false;
         foreach (var e in events)
         {
             if (e.T is not double et) continue;
             if (!string.Equals(e.Kind, "death", StringComparison.OrdinalIgnoreCase)) continue;
-            // 「死亡前 N 秒」：只剔除死亡之前的那一段（死亡之后已经换架次/复飞了）。
             if (t >= et - window && t <= et) return true;
         }
         return false;
     }
 
-    private static double Average(List<double> values)
+    /// <summary>
+    /// 「死亡前 N 秒」：只剔除死亡之前的那一段（死亡之后已经换架次/复飞了）。
+    /// 与 <see cref="InDeathWindow"/> 相同的判定，单独留一个名字让调用处语义清楚。
+    /// </summary>
+    private static bool NearDeath(double t, IReadOnlyList<FlightLogBridge.FlightLogEvent>? events, double window)
+        => InDeathWindow(t, events, window);
+
+    /// <summary>中位数（偶数个取中间两个的平均，与 Python statistics.median 一致）。</summary>
+    private static double Median(List<double> values)
     {
-        double sum = 0;
-        foreach (var v in values) sum += v;
-        return sum / values.Count;
+        values.Sort();
+        var mid = values.Count / 2;
+        return values.Count % 2 == 1 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
     }
 
-    /// <summary>死亡窗口/σ 的默认值：与 FlightLog 的 avg_filter 默认一致，缺 stats 时兜底。</summary>
+    /// <summary>死亡窗口/σ/尖峰窗口的默认值：与 FlightLog 的 avg_filter 默认一致，缺 stats 时兜底。</summary>
     internal const double DefaultDeathWindowS = 10.0;
     internal const double DefaultSpikeSigma = 3.0;
+    internal const double DefaultSpikeWindowS = 30.0;
+
+    /// <summary>MAD → 标准差的换算系数（正态分布下）。与 FlightLog 的 1.4826 一致。</summary>
+    internal const double MadToSigma = 1.4826;
+
+    /// <summary>窗口内过滤后至少要保留的样本数；不足则退回「只排除死亡窗口」。</summary>
+    internal const int MinFilterSamples = 30;
 }

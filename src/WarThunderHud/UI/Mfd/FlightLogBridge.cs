@@ -79,7 +79,9 @@ internal static class FlightLogBridge
         [JsonPropertyName("avg_tas_kmh")] public double? AvgTasKmh { get; set; }
         [JsonPropertyName("avg_mach")] public double? AvgMach { get; set; }
         [JsonPropertyName("avg_alt_m")] public double? AvgAltM { get; set; }
-        [JsonPropertyName("es_range_m")] public double[]? EsRangeM { get; set; }
+        // Es 的两端也可能是 null（整架次没有高度/速度数据时）：用可空数组接，
+        // 否则 JsonException 会被误报成「数据版本不兼容」。
+        [JsonPropertyName("es_range_m")] public double?[]? EsRangeM { get; set; }
         [JsonPropertyName("es_delta_m")] public double? EsDeltaM { get; set; }
         [JsonPropertyName("max_ias_filtered_kmh")] public double? MaxIasFilteredKmh { get; set; }
         [JsonPropertyName("max_tas_filtered_kmh")] public double? MaxTasFilteredKmh { get; set; }
@@ -89,6 +91,7 @@ internal static class FlightLogBridge
     internal sealed class FlightLogAvgFilter
     {
         [JsonPropertyName("death_window_s")] public double? DeathWindowS { get; set; }
+        [JsonPropertyName("spike_window_s")] public double? SpikeWindowS { get; set; }
         [JsonPropertyName("spike_sigma")] public double? SpikeSigma { get; set; }
         [JsonPropertyName("excluded_samples")] public int? ExcludedSamples { get; set; }
     }
@@ -490,5 +493,51 @@ internal static class FlightLogBridge
         if (bytes < 1024L * 1024L)
             return (bytes / 1024.0).ToString("F1", CultureInfo.InvariantCulture) + " KB";
         return (bytes / (1024.0 * 1024.0)).ToString("F1", CultureInfo.InvariantCulture) + " MB";
+    }
+
+    // ------------------------------------------------------------------ 预览/自检用的样例定位
+
+    /// <summary>预览/自检：直接指定一份 <c>--mfd-json</c> 输出（跳过跑进程）。</summary>
+    internal const string SampleEnv = "WT_FLIGHTLOG_SAMPLE";
+
+    /// <summary>预览：指定记录目录（默认用 exe 同目录 recordings/，出图时便于指向真实记录）。</summary>
+    internal const string PreviewFolderEnv = "WT_FLIGHTLOG_DIR";
+
+    /// <summary>
+    /// 找一份 MFD JSON 样例：环境变量 → 从 exe 目录逐级向上找 <c>tools/flightlog/out/mfd/*.json</c>
+    /// 里最新的一份。预览与自检用；找不到返回 null（调用方显示错误，不跑进程）。
+    /// </summary>
+    internal static string? FindSampleJson()
+    {
+        var env = Environment.GetEnvironmentVariable(SampleEnv);
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return Path.GetFullPath(env);
+
+        try
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            for (var i = 0; i < 8 && dir != null; i++)
+            {
+                var mfd = Path.Combine(dir.FullName, @"tools\flightlog\out\mfd");
+                if (Directory.Exists(mfd))
+                {
+                    var newest = Directory.EnumerateFiles(mfd, "*.json")
+                        .Select(f => new FileInfo(f))
+                        .OrderByDescending(f => f.LastWriteTimeUtc)
+                        .FirstOrDefault();
+                    if (newest != null) return newest.FullName;
+                }
+                dir = dir.Parent;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>预览用的记录目录：<see cref="PreviewFolderEnv"/> 有值时用它，否则与运行期一致。</summary>
+    internal static string PreviewRecordingsFolder()
+    {
+        var env = Environment.GetEnvironmentVariable(PreviewFolderEnv);
+        if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env)) return env;
+        return DefaultRecordingsFolder;
     }
 }

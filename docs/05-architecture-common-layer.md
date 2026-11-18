@@ -4,15 +4,15 @@
 以及扩展时必须遵守的边界。**它讲的是「框架怎么用」，不描述具体功能现状**——
 版本变更见 `CHANGELOG.md`，界面与操作说明见 `使用教程.md`。
 
-代码规模：63 个 `.cs`、22768 行。主要文件分工：
+代码规模：69 个 `.cs`、25788 行。主要文件分工：
 
 | 文件 | 行数 | 职责 |
 |---|---:|---|
-| `Program.cs` | 5238 | 主循环、命令行模式（selftest/preview/dumpgeo/…） |
+| `Program.cs` | 5491 | 主循环、命令行模式（selftest/preview/dumpgeo/…） |
 | `Hud/HudGeometry.cs` | 2233 | HUD 排版：数据 → 图元列表 |
-| `UI/Mfd/MfdFrameForm.cs` | 2140 | 面板窗体：绘制、命中、键位、手输、页面缓存 |
-| `Program.SelfTest.cs` | 1601 | 自检断言（`partial class Program`） |
-| `UI/Mfd/MfdPages.cs` | 1292 | 页面与行的声明 |
+| `UI/Mfd/MfdFrameForm.cs` | 2373 | 面板窗体：绘制、命中、键位、手输、页面缓存 |
+| `Program.SelfTest.cs` | 1884 | 自检断言（`partial class Program`） |
+| `UI/Mfd/MfdPages.cs` | 1313 | 页面与行的声明 |
 
 ---
 
@@ -49,7 +49,7 @@
 
 **职责边界（本项目最重要的结构性约定）**：排版层只产出 `HudPrim` 纯数据，不调用任何图形 API；
 绘制层只消费图元，不计算任何坐标。由此带来两个能力：同一套排版代码同时服务实时叠加与离屏出图；
-自检可以在无窗口、无游戏的前提下断言坐标与文本，这是全部 425 条断言能够成立的前提。
+自检可以在无窗口、无游戏的前提下断言坐标与文本，这是全部 463 条断言能够成立的前提。
 
 ---
 
@@ -118,8 +118,12 @@ Layout   = src.Layout.Clone();
 
 ### 3.1 页面模型
 
-全部页面集中于 `UI/Mfd/MfdPages.cs`，`MfdPages.Build()` 返回十个顶层模块：
-显示 / 编队 / 数据链 / 姿态与校准 / 告警 / 按键 / 面板·语言 / 机型 / 回归快照 / 诊断。
+全部页面集中于 `UI/Mfd/MfdPages.cs`，`MfdPages.Build()` 返回十一个顶层模块：
+显示 / 编队 / 数据链 / 姿态与校准 / 告警 / 按键 / 面板·语言 / 机型 / 回归快照 / 记录 / 诊断。
+
+> 需要自定义绘制或自定义输入的页面（回归快照、记录、帮助、确认…）不建 `MfdPage`，而是
+> `MfdPageBase` 子类，由 `MfdFrameForm` 的 `Mode` 分支直接驱动；列表行与命中矩形仍只从
+> `MfdPageLayout` 取，保证「画在哪里就能点在哪里」。
 
 一个页面是一份声明（`MfdPage`）：
 
@@ -354,10 +358,10 @@ double blend = SmoothStep(Math.Clamp(_opt.ZoomBlend, 0, 1));   // 瞄准布局�
 
 | 命令 | 用途 |
 |---|---|
-| `WtHud.exe selftest` | 425 条断言；失败置 `Environment.ExitCode = 1` |
+| `WtHud.exe selftest` | 463 条断言；失败置 `Environment.ExitCode = 1` |
 | `WtHud.exe preview <png> <w> <h> [variant]` | HUD 出图，`variant`：`level`/`est`/`zoom`/`dive` 等 |
 | `WtHud.exe dumpgeo <w> <h> <pitch> <bank>` | 打印每个图元的坐标、字号与文本，用于核对排版 |
-| `WtHud.exe mfdpreview <png> [view]` | 面板出图，`view`：`menu`/`display`/`panelset`/`shape`/`turn`/`diag` 等 |
+| `WtHud.exe mfdpreview <png> [view]` | 面板出图，`view`：`menu`/`display`/`panelset`/`shape`/`turn`/`diag`/`flightlog`/`flightlog-speed` 等 |
 | `WtHud.exe formationsim` | 编队仿真（默认含 250 ms 链路延迟模型） |
 | `WtHud.exe probe` / `mapprobe` | 连接真实游戏读取遥测 |
 
@@ -369,6 +373,11 @@ WT_PREVIEW_LADDEROFF="4"         俯仰梯偏移（度）
 WT_PREVIEW_LAYOUT="6,0,1.3,0,1"  speedX,speedY,speedScale,dataBlockY,dataBlockScale
 WT_MFD_FIT="2"                   强制面板缩放（仍会被夹进工作区）
 ```
+
+`mfdpreview` 的记录页出图另有两个环境变量：`WT_FLIGHTLOG_DIR`（记录目录；列表页与图表的
+“架次”页眉都从这里读）与 `WT_FLIGHTLOG_SAMPLE`（直接指定一份 `--mfd-json` 样例 JSON）；
+样例不指定时从仓库 `tools/flightlog/out/mfd/*.json` 取最新一份。`WT_FLIGHTLOG_E2E=1` 会让
+`selftest` 真跑一次 FlightLog.exe（默认跳过）。
 
 断言入口 `Check(name, ok)` 定义于 `Program.cs:5038`，失败即置退出码，可直接追加调用。
 

@@ -79,6 +79,7 @@ internal static class MfdTheme
     public static Font MonoAt(float px) => new("Consolas", px, FontStyle.Regular, GraphicsUnit.Pixel);
     public static Font MonoBoldAt(float px) => new("Consolas", px, FontStyle.Bold, GraphicsUnit.Pixel);
     public static Font CjkAt(float px) => new("Microsoft YaHei", px, FontStyle.Regular, GraphicsUnit.Pixel);
+    public static Font CjkBoldAt(float px) => new("Microsoft YaHei", px, FontStyle.Bold, GraphicsUnit.Pixel);
 
     public static void Smooth(System.Drawing.Graphics g)
     {

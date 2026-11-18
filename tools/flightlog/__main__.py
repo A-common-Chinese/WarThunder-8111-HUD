@@ -23,9 +23,9 @@
     # 只打印统计 JSON（不写 HTML）
     python -m flightlog wtlog-xxx.jsonl --summary
 
-    # 导出 HUD MFD 面板用的机器可读 JSON（schema=1）
+    # 导出 HUD MFD 面板用的机器可读 JSON（schema=1；--mfd-json 是开关，输入仍是位置参数）
     python -m flightlog --mfd-json wtlog-xxx.jsonl --out "%TEMP%\\mfd.json"
-    python -m flightlog --mfd-json wtlog-xxx.jsonl        # 不给 --out 时 stdout 输出纯 JSON
+    python -m flightlog wtlog-xxx.jsonl --mfd-json         # 不给 --out 时 stdout 输出纯 JSON
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -86,11 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mfd-json",
         dest="mfd_json",
-        default=None,
-        metavar="LOG",
+        action="store_true",
         help=(
-            "导出 WtHud MFD 面板用的机器可读 JSON（schema=1）；"
-            "不给 --out 时把纯 JSON 写到 stdout（不混日志）"
+            "开关：把位置参数指定的输入导出成 WtHud MFD 面板用的机器可读 JSON（schema=1）；"
+            "配合 --out 写文件，不给 --out 时把纯 JSON 写到 stdout（不混日志）"
         ),
     )
     parser.add_argument(
@@ -220,21 +220,28 @@ def _mfd_model(target: str, args):
 
 
 def _mfd_main(args) -> int:
-    """``--mfd-json``：导出 MFD JSON。有 ``--out`` 写文件（stdout 不输出），否则 stdout 只有 JSON。"""
+    """``--mfd-json``：导出 MFD JSON。
+
+    ``--mfd-json`` 只是开关，输入仍由位置参数 ``log`` 给出：
+
+    * 给了 ``--out`` → 写 JSON 文件，stdout 保持干净（提示只走 stderr）；
+    * 没给 ``--out`` → stdout 只有纯 JSON（HUD 侧走管道时才用，不混任何日志）。
+    """
     from .mfd import build_mfd_payload, dump_mfd_json, write_mfd_json
     from .parse import LogError
 
-    target = args.mfd_json
-    if args.log and os.path.abspath(args.log) != os.path.abspath(target):
+    target = args.log
+    if not target:
         _say(
-            "错误: 位置参数 %s 与 --mfd-json %s 指向不同文件"
-            % (args.log, target)
+            "错误: --mfd-json 是开关，需要位置参数指定输入日志，例如："
+            'FlightLog.exe --mfd-json "<log.jsonl>" --out "<out.json>"'
         )
         return 2
     if args.summary or args.png or args.list_players:
         _say("错误: --summary / --png / --list 不能和 --mfd-json 一起用")
         return 2
 
+    started = time.perf_counter()
     try:
         model = _mfd_model(target, args)
         payload = build_mfd_payload(model)
@@ -244,6 +251,7 @@ def _mfd_main(args) -> int:
     except Exception as exc:  # noqa: BLE001 - 自动化调用要拿到明确退出码而不是崩栈
         _say("错误: MFD 导出失败: %s" % exc)
         return 2
+    elapsed = time.perf_counter() - started
 
     if args.out:
         try:
@@ -253,7 +261,7 @@ def _mfd_main(args) -> int:
             _say("错误: 无法写入 %s (%s)" % (args.out, exc))
             return 2
         # 有 --out 时 stdout 保持干净（日志只走 stderr）
-        _say("MFD JSON: %s (%.1f KB)" % (written, size_kb))
+        _say("MFD JSON: %s (%.1f KB, %.2f s)" % (written, size_kb, elapsed))
         return 0
 
     text = dump_mfd_json(payload)
@@ -474,7 +482,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _mfd_main(args)
 
     if not args.log:
-        _say("错误: 缺少输入文件（给位置参数 log 或 --mfd-json LOG）")
+        _say('错误: 缺少输入文件（位置参数 log；MFD 导出用 --mfd-json "<log.jsonl>"）')
         return 2
 
     from .replay import describe_source

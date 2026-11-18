@@ -22,6 +22,9 @@
 10. 速度页的**平均速度 / 可手动设置计算范围**：平均函数（闭区间、边界、空区间、缺字段）、
    控件条/数值容器/区间底纹/平均虚线的 HTML 结构；
 11. CLI ``--summary`` / ``--out`` 可用。
+12. MFD 导出（``--mfd-json``）：开关语义（两种用法）、stdout 纯 JSON、schema/字段集合、
+    点数上限、缺失 ``null``，以及平均值的「死亡前 10 s 窗口排除 + 只在死亡前 30 s 窗口内
+    生效的 MAD 3σ 尖峰过滤」（合成数据核对：窗口内尖峰剔除、窗口外低速段保留、无死亡不过滤）。
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ from flightlog import parse as P  # noqa: E402
 from flightlog import picker as PK  # noqa: E402
 from flightlog import replay as R  # noqa: E402
 from flightlog import acmi as A  # noqa: E402
+from flightlog import mfd as MF  # noqa: E402
 from flightlog.__main__ import main as cli_main  # noqa: E402
 from flightlog.report import render_report  # noqa: E402
 
@@ -608,6 +612,412 @@ def test_cli(tmp: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# MFD JSON 导出（--mfd-json，schema=1）
+# ---------------------------------------------------------------------------
+
+#: 契约要求的字段集合（多一个少一个都算接口漂移）
+MFD_TOP_KEYS = {
+    "schema", "tool", "tool_version", "source", "generated_utc",
+    "meta", "flights", "events",
+}
+MFD_META_KEYS = {"vehicle", "duration_s", "rate_hz", "samples"}
+MFD_FLIGHT_KEYS = {"index", "start_s", "end_s", "samples", "vehicle", "stats", "series"}
+MFD_STATS_KEYS = {
+    "max_ias_kmh", "max_tas_kmh", "max_mach", "max_g", "max_alt_m",
+    "avg_ias_kmh", "avg_tas_kmh", "avg_mach", "avg_alt_m",
+    "es_range_m", "es_delta_m", "max_ias_filtered_kmh", "max_tas_filtered_kmh",
+    "avg_filter",
+}
+MFD_AVG_FILTER_KEYS = {"death_window_s", "spike_window_s", "spike_sigma", "excluded_samples"}
+MFD_SERIES_KEYS = {
+    "t", "ias_kmh", "tas_kmh", "mach", "alt_m", "ralt_m", "es_m",
+    "des_dt_ms", "vy_ms", "aoa_deg", "ny_g", "pitch_deg", "bank_deg",
+}
+MFD_EVENT_KEYS = {"kind", "t", "vehicle"}
+
+
+def build_mfd_log(path: Path) -> None:
+    """合成 MFD 专用日志：1 架次 / 300 样本（10 Hz）/ 死亡 t=25 / IAS 尖峰 t=10。
+
+    设计意图（对应定稿的平均值规则：「只去除死亡之前的超大波动」）：
+
+    * 前 5 s 的 ``ralt_m`` 缺失 → MFD JSON 序列里必须是 ``null``（不是 0 也不是丢列）；
+    * ``death`` 事件在 t=25 → 死亡前 10 s 窗口是 t=15.0–25.0（10 Hz 下 101 个样本，不参与平均）；
+    * MAD 尖峰过滤只在死亡前 30 s 窗口（t=−5..25）内生效：t=10 的孤立尖峰 2000（基线 300）
+      落在窗口内 → 必须从平均值/过滤后最大值里剔除；
+    * 基线恒定（MAD=0）→ 窗口内阈值 0 只剔除偏离中位数的尖峰，正常样本全部保留。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.0-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "jh_7a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    for i in range(300):
+        t = round(0.1 * (i + 1), 3)
+        extra = {
+            "ias_kmh": 300.0,
+            "tas_kmh": 320.0,
+            "mach": 0.25,
+            "alt_m": 3000.0,
+            "ralt_m": 1500.0,
+            "ny_g": 1.0,
+        }
+        if t <= 5.0:
+            extra["ralt_m"] = None  # 缺字段 -> null
+        if t == 10.0:
+            extra["ias_kmh"] = 2000.0  # 孤立尖峰
+        lines.append(json.dumps(_sample(t, EPOCH0, **extra), ensure_ascii=False))
+    lines.append(json.dumps({"type": "event", "kind": "death", "t": 25.0}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_mfd_long_log(path: Path, count: int = 12000, hz: float = 10.0) -> None:
+    """1200 s、10 Hz 的单架次日志：2 Hz 采样会超过 900 点，用来验证点数上限。"""
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.0-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "jh_7a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    for i in range(count):
+        t = round((i + 1) / hz, 3)
+        lines.append(
+            json.dumps(
+                _sample(t, EPOCH0, ias_kmh=400.0 + 0.01 * i, tas_kmh=420.0),
+                ensure_ascii=False,
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_mfd_window_log(path: Path) -> None:
+    """合成「死亡前窗口」日志：500 样本（10 Hz，50 s），验证只在死亡前过滤。
+
+    * 基线 IAS 300；t=2.0–4.0 有一段持续低速 100（**远离死亡**，属于起飞/盘旋段）；
+    * t=20 是孤立尖峰 2000（在死亡前 30 s 窗口内，应被剔除）；
+    * ``death`` 在 t=45 → 死亡窗口 t=35–45（101 样本）；尖峰窗口 t=15–45。
+    期望：低速段保留、尖峰剔除 → avg_ias 被低速段拉低到 ≈289.4（而不是被抬到 300 附近）。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.0-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "jh_7a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    for i in range(500):
+        t = round(0.1 * (i + 1), 3)
+        ias = 300.0
+        if 2.0 - 1e-9 <= t <= 4.0 + 1e-9:
+            ias = 100.0  # 持续低速段（不在死亡前窗口内，绝不能当尖峰剔除）
+        if t == 20.0:
+            ias = 2000.0  # 孤立尖峰（死亡前窗口内，应剔除）
+        lines.append(
+            json.dumps(
+                _sample(t, EPOCH0, ias_kmh=ias, tas_kmh=320.0, mach=0.25,
+                        alt_m=3000.0, ralt_m=1500.0, ny_g=1.0),
+                ensure_ascii=False,
+            )
+        )
+    lines.append(json.dumps({"type": "event", "kind": "death", "t": 45.0}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_mfd_nodeath_log(path: Path) -> None:
+    """合成「无死亡」日志：100 样本（10 Hz），t=5 一个尖峰 2000（基线 300）。
+
+    没有 ``death`` 事件 → 不做任何 MAD 过滤，平均值必须等于原始算术平均 317.0。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.0-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "jh_7a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    for i in range(100):
+        t = round(0.1 * (i + 1), 3)
+        ias = 2000.0 if t == 5.0 else 300.0
+        lines.append(
+            json.dumps(_sample(t, EPOCH0, ias_kmh=ias, tas_kmh=320.0), ensure_ascii=False)
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_mfd_helpers() -> None:
+    print("\n[12] MFD 辅助函数：死亡窗口 / 尖峰窗口 / MAD / 降采样点数上限")
+    times = [round(0.1 * i, 3) for i in range(1, 301)]  # 10 Hz，t=0.1..30.0
+    in_death = MF.death_window_mask(times, [25.0])
+    check(sum(in_death) == 101, "死亡前 10 s 窗口标记 101 个样本（t=15.0–25.0，10 Hz）")
+    check(in_death[times.index(15.0)] and not in_death[times.index(14.9)],
+          "窗口边界：t=15.0 排除、t=14.9 保留")
+    check(in_death[times.index(25.0)] and not in_death[times.index(25.1)],
+          "窗口上界到死亡时刻（含）、之后样本保留")
+
+    # 尖峰检测范围 = [death-30, death] ∩ 未被死亡窗口排除的样本
+    base_mask = [not flagged for flagged in in_death]
+    domain = MF.spike_window_mask(times, [25.0], 30.0, base_mask)
+    check([times[i] for i in range(len(times)) if domain[i]][:1] == [0.1]
+          and [times[i] for i in range(len(times)) if domain[i]][-1:] == [14.9],
+          "尖峰窗口 = t=0.1–14.9（death-30 起、去掉死亡窗口后到 14.9 止）")
+    check(not any(domain[i] for i in range(len(times)) if times[i] >= 15.0),
+          "死亡窗口内样本不参与尖峰检测")
+    check(not any(MF.spike_window_mask(times, [], 30.0)), "没有 death 时尖峰窗口全 False（不做 MAD）")
+
+    mask, fallback = MF.spike_mask([300.0] * 25 + [2000.0] * 10, [True] * 35)
+    check(mask is None and fallback,
+          "MAD 过滤后窗口内剩余 <30 样本 → 退回「只排除死亡窗口」（fallback=True）")
+
+    spike, spike_fallback = MF.spike_mask([300.0] * 299 + [2000.0], [True] * 300)
+    check(spike is not None and sum(spike) == 1 and not spike_fallback,
+          "MAD=0 时只剔除孤立尖峰、正常样本保留")
+
+    # 窗口外的值即使离中位数很远也不标记
+    outside = [100.0] * 10 + [300.0] * 49 + [2000.0]
+    outside_domain = [False] * 10 + [True] * 50
+    outside_mask, outside_fallback = MF.spike_mask(outside, outside_domain)
+    check(outside_mask is not None and sum(outside_mask) == 1
+          and not outside_mask[0] and outside_mask[-1] and not outside_fallback,
+          "窗口外的低速值不标记，只有窗口内尖峰被剔除")
+
+    indices = MF.downsample_indices(times)
+    check(len(indices) == 60 and indices[0] == 0 and indices[-1] == 299,
+          "300 样本 10 Hz 降到 60 点（约 2 Hz，保留首尾）")
+    check(close(times[indices[1]] - times[indices[0]], 0.5, 1e-9),
+          "降采样步长 0.5 s（2 Hz）")
+
+    long_times = [0.05 * i for i in range(20000)]  # 20 Hz × 1000 s
+    long_indices = MF.downsample_indices(long_times)
+    check(len(long_indices) <= MF.MAX_SERIES_POINTS,
+          "超过 2 Hz 点数预算时自动加粗步长，点数 <= 900（实际 %d）" % len(long_indices))
+    check(long_indices[0] == 0 and long_indices[-1] == len(long_times) - 1,
+          "加粗步长后仍保留首尾样本")
+
+
+def test_mfd_payload(tmp: Path) -> None:
+    print("\n[13] MFD payload：schema 字段 / 平均值过滤 / series 契约 / null")
+    path = tmp / "mfd.jsonl"
+    build_mfd_log(path)
+    model = P.analyze(str(path))
+    payload = MF.build_mfd_payload(model)
+
+    check(set(payload) == MFD_TOP_KEYS, "顶层字段与契约一致")
+    check(payload["schema"] == 1, "schema = 1")
+    check(payload["tool"] == "FlightLog" and isinstance(payload["tool_version"], str),
+          "tool = FlightLog 且带 tool_version")
+    check(payload["source"] == "mfd.jsonl", "source = 输入文件名")
+    check(isinstance(payload["generated_utc"], str) and payload["generated_utc"].endswith("Z"),
+          "generated_utc 是 UTC ISO 时间")
+
+    meta = payload["meta"]
+    check(set(meta) == MFD_META_KEYS, "meta 字段与契约一致")
+    check(meta["samples"] == 300, "meta.samples = 300")
+    check(close(meta["duration_s"], 29.9, 1e-9), "meta.duration_s = 29.9 s")
+    check(close(meta["rate_hz"], 10.0, 1e-9), "meta.rate_hz = 10 Hz（由样本数/时长推出）")
+
+    check(len(payload["flights"]) == 1, "death 事件只标记不切架次 → 仍为 1 个架次")
+    flight = payload["flights"][0]
+    check(set(flight) == MFD_FLIGHT_KEYS, "架次字段与契约一致")
+    check(flight["index"] == 1 and flight["samples"] == 300, "index=1 / samples=300")
+    check(close(flight["start_s"], 0.1, 1e-9) and close(flight["end_s"], 30.0, 1e-9),
+          "start_s=0.1 / end_s=30.0")
+
+    stats = flight["stats"]
+    check(set(stats) == MFD_STATS_KEYS, "stats 字段与契约一致")
+    check(close(stats["max_ias_kmh"], 2000.0, 1e-9), "max_ias_kmh 是原始最大值 2000")
+    check(close(stats["max_ias_filtered_kmh"], 300.0, 1e-9),
+          "max_ias_filtered_kmh 剔掉尖峰后 = 300")
+    check(close(stats["avg_ias_kmh"], 300.0, 1e-9), "avg_ias_kmh = 300（尖峰不进平均）")
+    check(close(stats["avg_tas_kmh"], 320.0, 1e-9), "avg_tas_kmh = 320")
+    check(close(stats["avg_mach"], 0.25, 1e-9), "avg_mach = 0.25")
+    check(close(stats["avg_alt_m"], 3000.0, 1e-9), "avg_alt_m = 3000")
+    check(close(stats["max_g"], 1.0, 1e-9), "max_g = 1.0")
+    check(isinstance(stats["es_range_m"], list) and len(stats["es_range_m"]) == 2,
+          "es_range_m = [min, max]")
+
+    avg_filter = stats["avg_filter"]
+    check(MFD_AVG_FILTER_KEYS <= set(avg_filter),
+          "avg_filter 含 death_window_s/spike_window_s/spike_sigma/excluded_samples")
+    check(close(avg_filter["death_window_s"], 10.0, 1e-9)
+          and close(avg_filter["spike_window_s"], 30.0, 1e-9)
+          and close(avg_filter["spike_sigma"], 3.0, 1e-9),
+          "过滤参数 10 s 死亡窗口 / 30 s 尖峰窗口 / 3σ")
+    check(avg_filter["death_excluded_samples"] == 101,
+          "死亡窗口排除 101 个样本")
+    check(avg_filter["spike_excluded_samples"] == 1, "MAD 只剔除窗口内 1 个尖峰样本")
+    check(avg_filter["excluded_samples"] == 102,
+          "excluded_samples = 死亡窗口 + 尖峰（不重复计）= 102")
+    check(avg_filter["kept_samples"] == 198 and avg_filter["fallback"] is False,
+          "保留 198 个样本、没有触发 fallback")
+
+    series = flight["series"]
+    check(set(series) == MFD_SERIES_KEYS, "series 字段与契约一致（12 条曲线 + t）")
+    lengths = {key: len(values) for key, values in series.items()}
+    check(len(set(lengths.values())) == 1, "所有序列长度一致（%s）" % sorted(set(lengths.values())))
+    check(len(series["t"]) == 60, "series 点数 = 60（300 样本 @2 Hz）")
+    check(series["t"][0] == 0.1 and series["t"][-1] == 30.0, "series.t 覆盖整架次（0.1–30.0）")
+    check(series["ralt_m"][0] is None, "缺失的 ralt_m 写成 null（不是 0）")
+    check(series["ralt_m"][-1] is not None and None in series["ralt_m"],
+          "null 只出现在缺失段，后段有真实值")
+
+    try:
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
+        no_nan = True
+    except (TypeError, ValueError):  # pragma: no cover
+        no_nan = False
+    check(no_nan, "payload 可严格 JSON 序列化（allow_nan=False，无 NaN/Infinity）")
+
+    check(len(payload["events"]) == 1 and set(payload["events"][0]) == MFD_EVENT_KEYS,
+          "events 每项字段 = kind/t/vehicle")
+    check(payload["events"][0]["kind"] == "death"
+          and close(payload["events"][0]["t"], 25.0, 1e-9), "death 事件 t=25 被导出")
+
+
+def test_mfd_spike_window(tmp: Path) -> None:
+    print("\n[14] MFD 尖峰范围：只在死亡前 30 s 窗口内过滤 / 窗口外低速段保留 / 无死亡不过滤")
+    # (a) 死亡前窗口内的尖峰剔除；窗口外的持续低速段保留
+    path = tmp / "mfd-window.jsonl"
+    build_mfd_window_log(path)
+    payload = MF.build_mfd_payload(P.analyze(str(path)))
+    stats = payload["flights"][0]["stats"]
+    avg_filter = stats["avg_filter"]
+    check(close(avg_filter["spike_window_s"], 30.0, 1e-9),
+          "avg_filter.spike_window_s = 30 s（新字段）")
+    check(avg_filter["death_excluded_samples"] == 101,
+          "死亡窗口排除 101 个样本（t=35–45）")
+    check(avg_filter["spike_excluded_samples"] == 1,
+          "只有死亡前窗口内的 1 个尖峰被剔除")
+    check(avg_filter["excluded_samples"] == 102,
+          "窗口外的 21 个低速样本没有被当成尖峰剔除")
+    check(avg_filter["kept_samples"] == 398, "保留 398 个样本参与平均")
+    # 期望 avg = (377×300 + 21×100) / 398 = 289.447…（低速段保留后均值被拉低）
+    check(close(stats["avg_ias_kmh"], 289.4, 0.05),
+          "avg_ias ≈ 289.4（窗口外低速段保留，而不是抬到 300）")
+    check(close(stats["max_ias_kmh"], 2000.0, 1e-9)
+          and close(stats["max_ias_filtered_kmh"], 300.0, 1e-9),
+          "原始最大 2000 / 过滤后最大 300（窗口内尖峰生效）")
+
+    # (b) 没有 death → 不做 MAD 过滤，尖峰计入原始平均
+    nodeath = tmp / "mfd-nodeath.jsonl"
+    build_mfd_nodeath_log(nodeath)
+    stats2 = MF.build_mfd_payload(P.analyze(str(nodeath)))["flights"][0]["stats"]
+    avg_filter2 = stats2["avg_filter"]
+    check(avg_filter2["excluded_samples"] == 0
+          and avg_filter2["spike_excluded_samples"] == 0,
+          "没有 death → 不排除任何样本（不做 MAD 尖峰过滤）")
+    check(close(stats2["avg_ias_kmh"], 317.0, 1e-9),
+          "无死亡时 avg = 原始算术平均 317.0（100 样本含 1 个尖峰）")
+
+
+def test_mfd_cli(tmp: Path) -> None:
+    print("\n[15] MFD CLI：--mfd-json 开关 / --out 写文件 / stdout 纯 JSON / 坏文件")
+    path = tmp / "mfd.jsonl"
+    if not path.exists():
+        build_mfd_log(path)
+
+    # 用法 1：--mfd-json + --out → 只写 JSON 文件，stdout 不混内容
+    out = tmp / "mfd-out.json"
+    buffer, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(err):
+        code = cli_main(["--mfd-json", str(path), "--out", str(out)])
+    check(code == 0, "--mfd-json + --out 退出码 0")
+    check(out.is_file() and out.stat().st_size > 1000, "--out 写出非空 JSON 文件")
+    check(buffer.getvalue() == "", "--out 模式 stdout 不混任何内容（日志只走 stderr）")
+    check("MFD JSON:" in err.getvalue(), "提示信息走 stderr")
+    try:
+        file_payload = json.loads(out.read_text(encoding="utf-8"))
+        file_ok = file_payload["schema"] == 1 and "flights" in file_payload
+    except ValueError:
+        file_ok = False
+    check(file_ok, "--out 文件是完整可解析的 schema=1 JSON")
+
+    # 用法 2：不给 --out → stdout 只有纯 JSON（可直接被 HUD 管道读取）
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli_main(["--mfd-json", str(path)])
+    text = buffer.getvalue()
+    check(code == 0, "--mfd-json 无 --out 退出码 0")
+    try:
+        stdout_payload = json.loads(text)
+        pure = True
+    except ValueError:
+        stdout_payload = None
+        pure = False
+    check(pure and stdout_payload.get("schema") == 1, "stdout 是可直接解析的纯 JSON（schema=1）")
+    check(text.lstrip().startswith("{") and text.strip().endswith("}"),
+          "stdout 没有日志前缀/后缀")
+
+    # 位置参数在前也接受（HUD 侧 BuildArguments 是 --mfd-json <log> --out ...）
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = cli_main([str(path), "--mfd-json"])
+    try:
+        reversed_ok = code == 0 and json.loads(buffer.getvalue())["schema"] == 1
+    except ValueError:
+        reversed_ok = False
+    check(reversed_ok, "--mfd-json 与位置参数的先后顺序不影响结果")
+
+    # 点数上限：1200 s / 10 Hz → 2 Hz 会超 900 点，自动加粗
+    long_path = tmp / "mfd-long.jsonl"
+    build_mfd_long_log(long_path)
+    long_out = tmp / "mfd-long.json"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        code = cli_main(["--mfd-json", str(long_path), "--out", str(long_out)])
+    long_payload = None
+    try:
+        long_payload = json.loads(long_out.read_text(encoding="utf-8"))
+        long_lengths = [len(flight["series"]["t"]) for flight in long_payload["flights"]]
+    except (ValueError, OSError, KeyError):
+        long_lengths = []
+    check(code == 0 and long_lengths and max(long_lengths) <= 900,
+          "长架次导出后每架次点数 <= 900（实际 %s）" % (max(long_lengths) if long_lengths else "--"))
+    check(long_payload is not None and all(
+        len(values) == len(flight["series"]["t"])
+        for flight in long_payload["flights"]
+        for values in flight["series"].values()
+    ), "长架次所有序列长度仍与 t 一致")
+
+    # 坏文件 / 缺位置参数 → 明确退出码 2，不崩
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = cli_main(["--mfd-json", str(tmp / "no-such-file.jsonl")])
+    check(code == 2 and "错误" in err.getvalue(), "不存在的日志 → 退出码 2 + 中文错误")
+
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = cli_main(["--mfd-json"])
+    check(code == 2 and "位置参数" in err.getvalue(),
+          "--mfd-json 缺位置参数 → 退出码 2 + 说明它是开关")
+
+
+# ---------------------------------------------------------------------------
 # 回放 / ACMI 测试
 # ---------------------------------------------------------------------------
 
@@ -1115,6 +1525,10 @@ def main() -> int:
         test_average_helpers()
         test_avg_report_html(tmp)
         test_cli(tmp)
+        test_mfd_helpers()
+        test_mfd_payload(tmp)
+        test_mfd_spike_window(tmp)
+        test_mfd_cli(tmp)
         test_acmi_scan(tmp)
         test_acmi_model(tmp)
         test_player_picker()
