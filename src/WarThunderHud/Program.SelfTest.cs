@@ -159,8 +159,9 @@ public static partial class Program
 
         // Steam 覆盖层识别：不能把 NVIDIA Overlay 当成 Steam（否则 HUD 启动即隐藏）
         Check("steam overlay detection",
-            WtHud.Program.LooksLikeSteamOverlay("steamwebhelper", "Chrome_WidgetWin_1")
-            && WtHud.Program.LooksLikeSteamOverlay("gameoverlayui", "SDL_app")
+            WtHud.Program.LooksLikeSteamOverlay("gameoverlayui", "SDL_app")
+            && !WtHud.Program.LooksLikeSteamOverlay("steamwebhelper", "Chrome_WidgetWin_1")
+            && !WtHud.Program.LooksLikeSteamOverlay("steam", "SDL_app")
             && !WtHud.Program.LooksLikeSteamOverlay("NVIDIA Overlay", "CEF-OSC-WIDGET")
             && !WtHud.Program.LooksLikeSteamOverlay("nvcontainer", "CEF-OSC-WIDGET")
             && !WtHud.Program.LooksLikeSteamOverlay("chrome", "Chrome_WidgetWin_1"));

@@ -38,7 +38,7 @@ MFD_SCHEMA = 1
 
 #: ``tool`` 固定为 FlightLog；``tool_version`` 与 WtHud 发布版本对齐
 MFD_TOOL = "FlightLog"
-MFD_TOOL_VERSION = "0.5.0"
+MFD_TOOL_VERSION = "0.5.1"
 
 #: 平均值过滤：死亡事件前多少秒的样本不参与平均
 DEATH_WINDOW_S = 10.0

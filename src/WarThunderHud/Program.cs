@@ -1514,6 +1514,12 @@ public static partial class Program
                     cursorOverlayMode = false;
                 }
                 bool cursorOverlay = steamOverlay || cursorOverlayMode;
+                // 紧急开关：覆盖层检测导致 HUD 不显示时，用环境变量彻底关掉它
+                if (Environment.GetEnvironmentVariable("WTHUD_NO_OVERLAY_DETECT") == "1")
+                {
+                    steamOverlay = false;
+                    cursorOverlay = false;
+                }
                 if (steamOverlay != steamOverlayPrev)
                 {
                     steamOverlayPrev = steamOverlay;
@@ -1540,7 +1546,7 @@ public static partial class Program
                 // HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏之后，
                 // 游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。现在隐藏是无条件的，
                 // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
-                bool wantVisible = (foreground || settingsOpen) && !cursorOverlay;
+                bool wantVisible = (foreground || settingsOpen) && !steamOverlay;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 // 面板打开时把覆盖层压到面板下面：HUD 仍可见（预览设置效果），
@@ -3195,9 +3201,9 @@ public static partial class Program
         string cls = className ?? "";
         if (name.Contains("nvidia", StringComparison.OrdinalIgnoreCase)) return false;
         if (cls.Contains("CEF-OSC", StringComparison.OrdinalIgnoreCase)) return false;
-        return name.Contains("steam", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("gameoverlayui", StringComparison.OrdinalIgnoreCase)
-            || name.Contains("steamwebhelper", StringComparison.OrdinalIgnoreCase);
+        // 只认 Steam 游戏内覆盖层的进程。Steam 客户端本体（steam / steamwebhelper）
+        // 也有 CEF 窗口，但那不是游戏内覆盖层；误判会让 HUD 在启动后永久隐藏。
+        return name.Contains("gameoverlayui", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool SteamOverlayActive(int gamePid)
