@@ -9,7 +9,7 @@
 - 对应源码：**随本发布包一起提供**（同一个压缩包内）
 
 ```
-source/flightlog/        # FlightLog 全部 Python 源码与构建脚本
+https://github.com/A-common-Chinese/WarThunder-8111-HUD/tree/flightlog-source/tools/flightlog
 ```
 
 源码包内容包括：`parse.py`、`report.py`、`acmi.py`、`replay.py`、`picker.py`、`launch.py`、

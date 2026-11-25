@@ -15,11 +15,16 @@
 
 ## 对应源码（Corresponding Source）
 
-**随本发布包一起提供**（同一个压缩包内的 `source/wrpl-acmi/` 目录）：
+本发布包**不内置源码压缩包**，对应源码通过**同一下载页/发布说明中的链接**提供（AGPL-3.0 §6）：
 
-```
-source/wrpl-acmi/        # 上游 tag acmi-2.60.0.21-2026.11.02 的完整源码树
-```
+- 上游仓库：https://github.com/3794432/wrpl-acmi
+- 对应 tag：`acmi-2.60.0.21-2026.11.02`
+- 对应提交：`9ed43b9f108b062b408b1d4d0c2a62d46b00bfe4`
+- 源码快照：https://github.com/3794432/wrpl-acmi/archive/refs/tags/acmi-2.60.0.21-2026.11.02.zip
+- 或从同一 Release 下载页的「Source code (zip)」获取
+
+本包内的 `wrpl-acmi.exe` 与上游该 tag 的官方构建**逐字节一致**（SHA-256 相同），未做任何修改；
+按 AGPL-3.0，任何人可依据上述源码重新构建。
 
 该文件即上述 tag 的完整源码快照（GitHub archive 解压后重新打包），包含 `build.ps1`、`go.mod`、`go.sum`、`wrpl/`、`cmd/acmi/`、`data/` 等构建所需的全部文件。
 
