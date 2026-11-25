@@ -1214,7 +1214,15 @@ public static partial class Program
         telemetry.Start();
         using var mapData = new WtHud.Telemetry.MapData();
         mapData.Start();
-        hudMsgWatcher.OwnKill += t => splashQueue.Enqueue(t);
+        hudMsgWatcher.OwnKill += t =>
+        {
+            splashQueue.Enqueue(t);
+            // 自己击落别人也写进飞行记录（target = 被击落目标），FlightLog 据此画「击落」事件线。
+            // 只写事件、不影响死亡/复活判定（OwnDeath 是另一条回调）。
+            if (flightRecorder is null) return;
+            flightRecorder.Event("kill", null, DateTime.UtcNow, t);
+            Console.WriteLine($"record event: kill {t}");
+        };
     // 配了玩家昵称时，用 /hudmsg 的「被击落/击毁」作为飞行记录的死亡事件；
     // 没配昵称就退回 valid 判断（记录器内部处理）。
     hudMsgWatcher.OwnDeath += killer =>

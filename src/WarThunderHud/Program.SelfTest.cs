@@ -1665,6 +1665,9 @@ public static partial class Program
             });
             rec.Marker("selftest");
             rec.Event("death");
+            // 击落事件：kind=kill + target（被击落目标名）
+            rec.Event("kill", null, null, "=FdX= Target");
+            rec.Event("spawn", "selftest");
             rec.Stop();
             var lines = File.ReadAllLines(recPath);
             Check("recorder round-trips JSONL",
@@ -1676,6 +1679,16 @@ public static partial class Program
                 && lines.Any(l => l.Contains("\"type\":\"marker\""))
                 && lines.Any(l => l.Contains("\"type\":\"event\"") && l.Contains("\"kind\":\"death\""))
                 && lines[^1].Contains("\"type\":\"end\""));
+            // ★ 0.5.2 击落事件：事件行带 kind=kill + target；target 为空的旧事件不写该字段。
+            Check("recorder writes kill events with the shot-down target",
+                lines.Any(l => l.Contains("\"type\":\"event\"")
+                              && l.Contains("\"kind\":\"kill\"")
+                              && l.Contains("\"target\":\"=FdX= Target\"")));
+            Check("recorder keeps old event lines unchanged (no target field)",
+                lines.Any(l => l.Contains("\"kind\":\"death\"") && !l.Contains("\"target\""))
+                && lines.Any(l => l.Contains("\"kind\":\"spawn\"")
+                                  && l.Contains("\"vehicle\":\"selftest\"")
+                                  && !l.Contains("\"target\"")));
         }
         finally
         {
@@ -1720,6 +1733,12 @@ public static partial class Program
         Check("flightlog reads events", mfd.Events is { Count: 2 }
                                         && mfd.Events[0].Kind == "death"
                                         && mfd.Events[0].T == 1.5);
+        // --mfd-json 的击落事件多一个可选 target 字段：MFD 解析忽略未知字段（schema 仍 1）。
+        var mfdKill = WtHud.UI.Mfd.FlightLogBridge.Parse(
+            mfdJson.Replace("\"kind\":\"death\",\"t\":1.5",
+                "\"kind\":\"kill\",\"t\":1.5,\"target\":\"=FdX= Target\""), out _);
+        Check("flightlog tolerates the optional event target field",
+            mfdKill?.Events is { Count: 2 } && mfdKill.Events[0].Kind == "kill");
 
         // schema 版本不同 → 明确报「数据版本不兼容」，不能画出半残数据
         Check("flightlog rejects schema 2",

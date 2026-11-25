@@ -98,8 +98,12 @@ public sealed class FlightRecorder : IDisposable
         _queue.TryAdd(line);
     }
 
-    /// <summary>在时间轴上记一个事件（死亡/重生/换机型）。</summary>
-    public void Event(string kind, string? vehicle = null, DateTime? utc = null)
+    /// <summary>在时间轴上记一个事件（死亡/重生/换机型/击落）。</summary>
+    /// <param name="kind">事件种类：death / spawn / vehicle_change / kill。</param>
+    /// <param name="vehicle">事件机型（spawn / vehicle_change 用）。</param>
+    /// <param name="utc">事件 UTC 时间；不传则用当前时间。</param>
+    /// <param name="target">击落事件的目标（被击落的玩家名）；其它事件留空，空值不写进 JSONL。</param>
+    public void Event(string kind, string? vehicle = null, DateTime? utc = null, string? target = null)
     {
         if (_closed) return;
         _queue.TryAdd(JsonSerializer.Serialize(new EventLine
@@ -108,6 +112,8 @@ public sealed class FlightRecorder : IDisposable
             Kind = kind,
             Utc = (utc ?? DateTime.UtcNow).ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             Vehicle = vehicle ?? "",
+            // 空 target 走 JsonIgnoreCondition.WhenWritingNull：旧解析器看到的还是四条字段
+            Target = string.IsNullOrWhiteSpace(target) ? null : target.Trim(),
         }, JsonOpts));
     }
 
@@ -248,6 +254,10 @@ public sealed class FlightRecorder : IDisposable
         [JsonPropertyName("kind")] public string Kind { get; set; } = "";
         [JsonPropertyName("utc")] public string Utc { get; set; } = "";
         [JsonPropertyName("vehicle")] public string Vehicle { get; set; } = "";
+
+        // 击落事件的目标（被击落玩家名）。只有 kill 事件写这个字段：
+        // null 时 JsonIgnoreCondition.WhenWritingNull 直接省略，旧工具无需兼容新字段。
+        [JsonPropertyName("target")] public string? Target { get; set; }
     }
 
     private sealed class EndLine

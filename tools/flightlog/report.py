@@ -15,7 +15,8 @@
   所选区间在图上用浅色底纹 + 边界虚线标出、平均值画成对应颜色的水平虚线；
 * 图表全部用内联 SVG 在 Python 侧画好，**浏览器禁用脚本也能看到全部图**；
 * 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
-* 事件（死亡 / 复活 / 换机型）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
+* 事件（死亡 / 复活 / 换机型 / 击落）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
+  击落（``kill``，0.5.2 起）用青绿/蓝竖线，图下 legend 补一行 ``KILL 击落 <target> · T+mm:ss``；
 * **6 套美术主题**（``--theme blueprint|glass|manual|tactical|clean|mfd``，
   默认 ``blueprint`` = A 工程蓝图：深蓝图纸底 + 坐标纸网格 + 每页图框/图号
   （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9`` + 右下角标题栏）；
@@ -23,7 +24,8 @@
   全部取自同一份主题配置；
 * **审阅批注**：按日志自动计算每页最多 2 条（速度页 = 最大 IAS + 限速预警；高度页 =
   最低气压高度；Es 页 = Es 最低点 + 2 s 滑动平均 dEs/dt 最负的断崖起点；迎角/过载页 =
-  最大过载；姿态页不批注；死亡/坠毁竖线每页保留，只在概览/能量页加圈）。
+  最大过载；姿态页不批注；死亡/坠毁竖线每页保留，只在概览/能量页加圈；
+  击落竖线每页保留、legend 每页补 KILL 行，不进数据批注）。
   屏幕 = 红色十字/方框 + 浅色标注条；打印/PDF = 手绘双圈 + 打字机短注；
   时间相近（<10 s）的批注自动合并；
 * **保存二级页**：页眉「保存」→「保存设置」模态：PDF 完整版 / PNG 单张复盘卡、
@@ -354,6 +356,7 @@ THEMES: Dict[str, Theme] = {
             "death": "#ff5c5c",
             "spawn": "#4ade80",
             "vehicle_change": "#60a5fa",
+            "kill": "#2fd4c0",
             "other": "#93a4b8",
             "grid": "#ffffff12",
             "grid_zero": "#ffffff2a",
@@ -469,6 +472,7 @@ THEMES: Dict[str, Theme] = {
             "death": "#ef476f",
             "spawn": "#70e4a0",
             "vehicle_change": "#4cc9f0",
+            "kill": "#22d3ee",
             "other": "#8aa4b2",
             "grid": "#4cc9f01a",
             "grid_zero": "#4cc9f040",
@@ -589,6 +593,7 @@ header h1,.page-title{letter-spacing:1.2px;font-weight:600}
             "death": "#a31d1d",
             "spawn": "#2f6b3a",
             "vehicle_change": "#2b4e66",
+            "kill": "#1f6f7a",
             "other": "#5c574b",
             "grid": "#1c1c1c1f",
             "grid_zero": "#1c1c1c33",
@@ -736,6 +741,7 @@ header{background:#fff!important;border-bottom:2px solid #111!important}
             "death": "#e06a5a",
             "spawn": "#d98f7a",
             "vehicle_change": "#d9a441",
+            "kill": "#63b7a6",
             "other": "#c9bc9a",
             "grid": "#c9bc9a1f",
             "grid_zero": "#c9bc9a3d",
@@ -862,6 +868,7 @@ header{background:#2f3a2a!important}
             "death": "#dc2626",
             "spawn": "#16a34a",
             "vehicle_change": "#3b82f6",
+            "kill": "#0d9488",
             "other": "#6b7280",
             "grid": "#1f293714",
             "grid_zero": "#1f293733",
@@ -990,6 +997,7 @@ header{background:#fff!important}
             "death": "#FF5A3C",
             "spawn": "#7EE0B8",
             "vehicle_change": "#8FD3FF",
+            "kill": "#38D9C9",
             "other": "#9CC8E6",
             "grid": "#8FC6E81A",
             "grid_zero": "#8FC6E840",
@@ -1094,6 +1102,7 @@ header{background:#fff!important}
             "death": "#A8322B",
             "spawn": "#2F6B3A",
             "vehicle_change": "#2B4E66",
+            "kill": "#1F6F7A",
             "other": "#6B5B41",
             "grid": "#DCD0B6",
             "grid_zero": "#C3B294",
@@ -1123,6 +1132,7 @@ EVENT_COLORS: Dict[str, str] = {
     "death": COLORS["death"],
     "spawn": COLORS["spawn"],
     "vehicle_change": COLORS["vehicle_change"],
+    "kill": COLORS["kill"],
     "end": COLORS["other"],
 }
 
@@ -1154,6 +1164,7 @@ def _apply_theme(theme: Theme) -> Theme:
             "death": COLORS["death"],
             "spawn": COLORS["spawn"],
             "vehicle_change": COLORS["vehicle_change"],
+            "kill": COLORS["kill"],
             "end": COLORS["other"],
         }
     )
@@ -1463,6 +1474,7 @@ ANNOTATION_CODES: Dict[str, str] = {
     "max_g": "G_MAX",
     "max_ny": "G_MAX",
     "death": "DEATH",
+    "kill": "KILL",
 }
 
 #: code → 完整中文名（legend 每行「缩写 + 全称」用）
@@ -1474,6 +1486,7 @@ ANNOTATION_NAMES: Dict[str, str] = {
     "ES_DROP": "Es 断崖",
     "G_MAX": "最大过载",
     "DEATH": "死亡",
+    "KILL": "击落",
 }
 
 #: 图上编号：①…⑩，第 11 条起退化成 ``(11)``。
@@ -1660,6 +1673,42 @@ def _death_card_line(mark: Dict[str, Any], index: int) -> str:
         _tc_text(moment, tenths=False),
         note,
     )
+
+
+def _kill_target(mark: Dict[str, Any]) -> str:
+    """击落事件的目标名；缺目标时用占位，保证 legend 一行永远能读。"""
+    return str(mark.get("target") or "").strip() or "未知目标"
+
+
+def _kill_legend_line(mark: Dict[str, Any], index: int) -> str:
+    """屏幕 / PDF 的 KILL legend 行：``④ KILL 击落 =FdX= Target · T+05:12``。
+
+    编号沿用事件编号规则（排在数据批注 / DEATH 之后，不和数据批注冲突）；
+    竖线本身每页都画，这一行只是图下 legend 的说明。
+    """
+    moment = float(mark["t"])
+    return "%s KILL 击落 %s · %s" % (
+        _annotation_number(index),
+        _kill_target(mark),
+        _tc_text(moment, tenths=False),
+    )
+
+
+def _kill_card_line(mark: Dict[str, Any], index: int) -> str:
+    """PNG 复盘卡的 KILL legend 行：``④ KILL — 击落 =FdX= Target · T+05:12``。"""
+    moment = float(mark["t"])
+    return "%s KILL — 击落 %s · %s" % (
+        _annotation_number(index),
+        _kill_target(mark),
+        _tc_text(moment, tenths=False),
+    )
+
+
+def _event_legend_line(mark: Dict[str, Any], index: int) -> str:
+    """事件 legend 行分发：``kill`` → KILL 行，其余沿用 DEATH 行（向后兼容）。"""
+    if str(mark.get("kind") or "") == "kill":
+        return _kill_legend_line(mark, index)
+    return _death_legend_line(mark, index)
 
 
 def _annotation_text(annotation: Dict[str, Any]) -> str:
@@ -2845,6 +2894,7 @@ def _render_chart(
     avg: Optional[Dict[str, Any]] = None,
     annotations: Sequence[Dict[str, Any]] = (),
     event_marks: Sequence[Dict[str, Any]] = (),
+    event_legend: Sequence[Dict[str, Any]] = (),
 ) -> Optional[Dict[str, Any]]:
     """画一张图，返回 (svg, 图例, 悬停几何)。没有数据时返回 None。
 
@@ -2853,6 +2903,10 @@ def _render_chart(
 
     ``annotations`` / ``event_marks`` 是审阅批注（屏幕十字/方框 + 打印手绘双圈）
     与事件圈（死亡/坠毁只在概览、能量页传）。批注按“值 → 轴”解析到左/右轴。
+
+    ``event_legend`` 是"只进图下 legend、不在图面加圈"的事件（0.5.2 的 KILL）：
+    竖线由 ``events`` 统一画，这里只补一行 ``④ KILL 击落 <target> · T+mm:ss``，
+    编号顺延在数据批注 / 事件圈之后，不和数据批注编号冲突。
     """
     height = float(panel["height"])
     y0, y1 = PAD_TOP, height - PAD_BOTTOM
@@ -2946,6 +3000,20 @@ def _render_chart(
         item["num"] = _annotation_number(len(ann_items) + len(mark_items))
         mark_items.append(item)
 
+    # 只进 legend 的事件（KILL）：竖线已在 events 层画好，这里按事件编号顺延。
+    legend_items: List[Dict[str, Any]] = []
+    legend_base = len(ann_items) + len(mark_items)
+    for event in event_legend:
+        try:
+            t = float(event["t"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t < t0 - 0.05 or t > t1 + 0.05:
+            continue
+        item = dict(event)
+        item["index"] = legend_base + len(legend_items)
+        legend_items.append(item)
+
     if ann_items:
         parts.append(_svg_annotations(ann_items, y0, y1))
     if mark_items:
@@ -2981,6 +3049,12 @@ def _render_chart(
         ann_legend_parts.append(
             '<span class="ai">%s</span>'
             % html.escape(_death_legend_line(item, len(ann_items) + index))
+        )
+    # 击落（KILL）legend：每页都出（竖线每页都画），关闭「保留批注」时随整块隐藏。
+    for item in legend_items:
+        ann_legend_parts.append(
+            '<span class="ai">%s</span>'
+            % html.escape(_event_legend_line(item, int(item["index"])))
         )
 
     geometry = {
@@ -3043,6 +3117,9 @@ def _render_event_strip(
         color = EVENT_COLORS.get(kind, COLORS["other"])
         label = event.get("label") or EVENT_LABELS.get(kind, kind)
         text = "%s %s" % (label, _fmt_number(t, 1) + "s")
+        # 击落事件顺带标出目标：色条上直接写「击落 =FdX= Target 312.4s」。
+        if kind == "kill" and event.get("target"):
+            text = "%s %s %s" % (label, event["target"], _fmt_number(t, 1) + "s")
         parts.append(
             '<line x1="%s" y1="10" x2="%s" y2="%.0f" stroke="%s" stroke-width="1.4"'
             ' opacity="0.9"/>'
@@ -3089,6 +3166,7 @@ def _events_dicts(flight: Flight) -> List[Dict[str, Any]]:
             "kind": event.kind,
             "label": EVENT_LABELS.get(event.kind, event.kind),
             "t": event.t,
+            "target": event.target,
         }
         for event in flight.events
         if event.t is not None
@@ -3137,13 +3215,15 @@ def _render_all_panels(
     events: Sequence[Dict[str, Any]] = (),
     regions: Sequence[Dict[str, Any]] = (),
     vlines: Sequence[Dict[str, Any]] = (),
+    event_legend: Sequence[Dict[str, Any]] = (),
 ) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """渲染一组面板；丢弃没有数据的面板，并让最后一个面板显示时间刻度。"""
     rendered: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     for spec in specs:
         chart_id = "%s-%s" % (id_prefix, spec["key"])
         block = _render_chart(
-            spec, times, series, t0, t1, chart_id, False, events, regions, vlines
+            spec, times, series, t0, t1, chart_id, False, events, regions, vlines,
+            event_legend=event_legend,
         )
         if block is not None:
             rendered.append((spec, block))
@@ -3151,7 +3231,10 @@ def _render_all_panels(
         return []
     spec, _block = rendered[-1]
     chart_id = "%s-%s" % (id_prefix, spec["key"])
-    last = _render_chart(spec, times, series, t0, t1, chart_id, True, events, regions, vlines)
+    last = _render_chart(
+        spec, times, series, t0, t1, chart_id, True, events, regions, vlines,
+        event_legend=event_legend,
+    )
     if last is not None:
         rendered[-1] = (spec, last)
     return rendered
@@ -3181,6 +3264,12 @@ def _build_flight_payload(
         event_marks = [
             {"kind": "death", "t": flight.death_t, "label": "DEATH", "note": "数据终止"}
         ]
+    # 击落事件（0.5.2）：竖线每页都画（已经在 events 里），图下 legend 每页补一行。
+    kill_events: List[Dict[str, Any]] = [
+        {"kind": "kill", "t": event.t, "label": "KILL", "target": event.target}
+        for event in flight.events
+        if event.kind == "kill" and event.t is not None
+    ]
 
     # 每个数据主题渲染一张独立的 SVG（每页一张，都带时间刻度）
     blocks: Dict[str, Dict[str, Any]] = {}
@@ -3199,6 +3288,7 @@ def _build_flight_payload(
             events=events, regions=regions, avg=chart_avg,
             annotations=annotations.get(spec["key"], ()),
             event_marks=chart_marks,
+            event_legend=kill_events,
         )
         if block is None:
             continue
@@ -3217,6 +3307,7 @@ def _build_flight_payload(
         events=events,
         regions=regions,
         event_marks=event_marks,
+        event_legend=kill_events,
     )
     if thumb is not None:
         panels.append(thumb["geometry"])
@@ -3254,6 +3345,7 @@ def _build_flight_payload(
         "badges": _flight_badges(flight),
         "annotations": annotations,
         "event_marks": event_marks,
+        "kill_events": kill_events,
         "vne_kmh": vne_kmh,
         "vne_source": vne_source,
         "death_t": flight.death_t,
@@ -3300,7 +3392,12 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
     if t1 - t0 < 0.5:
         t1 = t0 + 0.5
     events = [
-        {"kind": e.kind, "label": EVENT_LABELS.get(e.kind, e.kind), "t": e.t}
+        {
+            "kind": e.kind,
+            "label": EVENT_LABELS.get(e.kind, e.kind),
+            "t": e.t,
+            "target": e.target,
+        }
         for e in model.events
         if e.t is not None and t0 - 0.05 <= e.t <= t1 + 0.05
     ]
@@ -3317,6 +3414,7 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
     for flight in flights:
         regions.extend(_post_death_regions(flight))
 
+    kill_events = [event for event in events if event["kind"] == "kill"]
     kept = _render_all_panels(
         _overview_panel_specs(),
         times_f,
@@ -3327,6 +3425,7 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
         events=events,
         regions=regions,
         vlines=vlines,
+        event_legend=kill_events,
     )
     if not kept:
         return None
@@ -3360,7 +3459,12 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
 
     event_counts = model.summary.get("event_counts") or {}
     ev_bits = []
-    for kind, label in (("death", "死亡"), ("spawn", "复活"), ("vehicle_change", "换机型")):
+    for kind, label in (
+        ("death", "死亡"),
+        ("kill", "击落"),
+        ("spawn", "复活"),
+        ("vehicle_change", "换机型"),
+    ):
         if event_counts.get(kind):
             ev_bits.append("%s %d" % (label, event_counts[kind]))
 
@@ -4435,6 +4539,35 @@ def _debrief_card_svg(
                 % (dl_x, PA["top"] - 5.0, dl_anchor, _html_escape(death_label))
             )
 
+    # 击落线（0.5.2）：青绿虚线，每卡保留；带批注时在线上方标「编号 KILL」。
+    kills_visible = [
+        kill
+        for kill in (flight_payload.get("kill_events") or [])
+        if t0 <= float(kill["t"]) <= t1
+    ]
+    kill_index_base = len(flat) + (1 if death_t is not None else 0)
+    for offset, kill in enumerate(kills_visible):
+        kx = xf(float(kill["t"]))
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#1F6F7A"'
+            ' stroke-width="1.1" stroke-dasharray="6 5" opacity="0.85"/>'
+            % (kx, PA["top"], kx, PC["bot"])
+        )
+        if not clean:
+            kill_label = "%s KILL" % _annotation_number(kill_index_base + offset)
+            kl_w = _text_width(kill_label, 10.5)
+            kl_x = kx + 6.0
+            kl_anchor = "start"
+            if kl_x + kl_w > X1 - 4:
+                kl_x = kx - 6.0
+                kl_anchor = "end"
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s"'
+                ' font-family="Courier New,monospace" font-size="10.5" fill="#1F6F7A"'
+                ' letter-spacing="0.3">%s</text>'
+                % (kl_x, PA["bot"] + 13.0, kl_anchor, _html_escape(kill_label))
+            )
+
     # ---------- 批注：手绘圈 + 编号缩写（完整说明进下方 legend） ----------
     if not clean:
         panel_for = {
@@ -4499,6 +4632,9 @@ def _debrief_card_svg(
         ]
         if death_t is not None:
             legend_lines.append(_death_card_line({"t": death_t}, death_index))
+        # 击落（KILL）legend：编号顺延在 DEATH 之后，不进数据批注的 5 条上限。
+        for offset, kill in enumerate(kills_visible):
+            legend_lines.append(_kill_card_line(kill, kill_index_base + offset))
         parts.append(
             '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="10"'
             ' fill="#6B5B41" letter-spacing="2">ANALYST REMARKS · 分析员注记 — '

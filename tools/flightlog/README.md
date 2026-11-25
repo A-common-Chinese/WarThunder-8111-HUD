@@ -1,7 +1,7 @@
 # WtHud 飞行日志解析 / 可视化工具（flightlog）
 
 独立的小工具：读取 WtHud 录制的 `wtlog-*.jsonl`（或 **War Thunder `.wrpl` 回放**），把
-**能量、速度、高度、过载、姿态** 等随时间（以及死亡 / 复活 / 换机型事件）的变化画成图，
+**能量、速度、高度、过载、姿态** 等随时间（以及死亡 / 复活 / 换机型 / 击落事件）的变化画成图，
 生成**一个自包含的 HTML 文件**（内联 CSS/JS/SVG，无 External 依赖，离线双击即看）。
 
 报告是**翻页式**的：第 1 页是概览（汇总卡片 + 比能量缩略图），之后**每个数据主题一页**
@@ -239,9 +239,13 @@ powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
 
 ### 事件
 
-`death` / `spawn` / `vehicle_change` 以彩色竖虚线 + 标签画在每条时间轴上方
+`death` / `spawn` / `vehicle_change` / `kill`（击落）以彩色竖虚线 + 标签画在每条时间轴上方
 （事件时间线色条），并**贯穿该页图表**；死亡后的地面段用浅红色底纹标出；
 `valid=false` 的帧用浅灰底纹标出。**每一页都保留事件条与标签。**
+
+击落（`kill`，0.5.2 起由 HUD 记录）用**青绿/蓝**竖线（各主题独立取色，与死亡红区分），
+事件条标签与图下 legend 都带被击落目标名，例如 `KILL 击落 =FdX= Target · T+05:12`。
+`kill` 只做标记、不切架次，也不参与 5 条数据批注与死亡窗口统计。
 
 ### 悬停
 
@@ -310,7 +314,9 @@ powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
   - PNG 复盘卡的 `ANALYST REMARKS · 分析员注记` 就是 legend：每行
     `① IAS_MAX — 最大指示空速 1215 km/h · T+04:32`，两列排布、不压曲线；
   - 事件 `DEATH` 也进 legend（能量页排在批注之后、概览缩略图单独 ①）；
-  - 关闭「保留批注」时图上标记与 legend 一起隐藏。
+  - 击落 `KILL` 进 legend（竖线每页都画，legend 每页都补一行
+    `④ KILL 击落 =FdX= Target · T+05:12`，编号顺延在数据批注 / DEATH 之后）；
+  - 关闭「保留批注」时图上标记与 legend 一起隐藏（事件竖线本身保留）。
 * 死亡/坠毁竖线每页保留，只在概览页与比能量页加圈。
 * 页眉「保存」打开**保存设置**二级页：`PDF 完整版`（9 页、逐页分页、档案纸）
   / `PNG 单张复盘卡`（1600×1000，档案袋风格），`保留批注` 默认开。
@@ -344,7 +350,7 @@ JSONL，一行一个 JSON 对象，共四类记录：
  "aoa_deg":5.1,"aos_deg":-1.7,"ny_g":2.99,"roll_rate_dps":9,"hdg_deg":163.3,"has_hdg":true,
  "pitch_deg":3.12,"bank_deg":-77.91,"att_src":"Game","att_conf":1,
  "gear_pct":0,"flaps_pct":0,"airbrake_pct":0,"fuel_kg":3115,"fuel0_kg":9912}
-{"type":"event","kind":"death|spawn|vehicle_change","utc":"...","vehicle":"..."}
+{"type":"event","kind":"death|spawn|vehicle_change|kill","utc":"...","vehicle":"...","target":"..."}
 {"type":"end","utc":"..."}
 ```
 
@@ -360,6 +366,7 @@ JSONL，一行一个 JSON 对象，共四类记录：
 | 缺少 `ralt_m` | 该点 `None`，雷达高度曲线断开 |
 | 旧日志没有 `vehicle` / `pitch_deg` / `bank_deg` | 机型回退到 `meta.vehicle`；姿态图自动不画 |
 | 事件只有 `utc` 没有 `t` | 用样本 `utc - t` 的中位数偏移换算成秒 |
+| 事件没有 `target`（非击落 / 旧日志） | `target` 为空串，报告不显示目标（击落时 legend 写「未知目标」） |
 | 没有 `spawn/death` 事件（旧日志） | 按样本 `vehicle` 字段变化或时间跳变切架次 |
 | 未知 `type` / 未知 `kind` | 忽略未知 type；未知 kind 只画竖线不切分 |
 | 文件里没有 `sample` | 抛出 `LogError`，CLI 退出码 2 |
@@ -553,8 +560,9 @@ wt-hud/tools/flightlog/
 2. **dEs/dt 是平滑值**：±1.5 s 窗口会钝化瞬时机动，短于窗口的高频能量尖峰看不出来；
    需要更灵敏可调 `parse.ENERGY_RATE_WINDOW_S`（图与统计会同步变化）。
 3. **比能量只算了平动动能 + 位能**，不含燃油/武器质量变化；`tas_kmh` 缺失时退化为位能高度。
-4. **事件时间来自 HUD 事件记录**，与游戏内真实死亡时刻可能有 1–2 s 延迟；死亡后的
-   样本仍归入该架次（报告里用浅红底纹标出）。
+4. **事件时间来自 HUD 事件记录**，与游戏内真实死亡/击落时刻可能有 1–2 s 延迟；死亡后的
+   样本仍归入该架次（报告里用浅红底纹标出）。击落事件需要 HUD 里配置「玩家昵称」才会被
+   `/hudmsg` 识别并写入日志（昵称留空时只记死亡，不记击落）。
 5. **多架次按顺序拼在全局总览里**，架次之间有断档时不画时间间隔（横轴仍按真实 `t`，会留空白）。
 6. **姿态角在 `att_conf=0`（Unavailable）时仍可能上报 0**，会被当成真实 0 画出来；
    需要更严格可过滤 `att_conf`。
@@ -636,7 +644,7 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
 {
   "schema": 1,
   "tool": "FlightLog",
-  "tool_version": "0.5.0",
+  "tool_version": "0.5.2",
   "source": "wtlog-20261117-204002-jh_7a.jsonl",
   "generated_utc": "2026-11-18T12:33:57Z",
   "meta": {"vehicle": "jh_7a", "duration_s": 390.7, "rate_hz": 29.6, "samples": 11583},
@@ -668,7 +676,8 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
       }
     }
   ],
-  "events": [{"kind": "death", "t": 395.398, "vehicle": null}]
+  "events": [{"kind": "death", "t": 395.398, "vehicle": null},
+             {"kind": "kill", "t": 312.4, "vehicle": null, "target": "=FdX= Target"}]
 }
 ```
 
@@ -678,12 +687,12 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
 | --- | --- | --- |
 | `schema` | int | 固定 `1`；HUD 用它判兼容 |
 | `tool` | string | 固定 `"FlightLog"` |
-| `tool_version` | string | 与 WtHud 发布版本对齐（当前 `0.5.0`） |
+| `tool_version` | string | 与 WtHud 发布版本对齐（当前 `0.5.2`） |
 | `source` | string | 输入文件名（不含目录） |
 | `generated_utc` | string | 生成时间，`YYYY-MM-DDTHH:MM:SSZ` |
 | `meta` | object | 整份记录概要（下表） |
 | `flights` | array | 架次数组，按时间顺序；每架次自带独立 `series` |
-| `events` | array | `[{kind, t, vehicle}]`，按 `t` 升序；`end` 事件不导出 |
+| `events` | array | `[{kind, t, vehicle}]`，按 `t` 升序；`end` 事件不导出。击落事件多一个可选 `target`（被击落目标名），其余事件没有该字段 |
 
 `meta`：`vehicle`（机型）、`duration_s`（整份日志首尾秒数）、`rate_hz`（平均采样率）、
 `samples`（有效样本总数）。
@@ -730,8 +739,9 @@ python -m flightlog --mfd-json "recordings\wtlog-20261117-131039-jh_7a.jsonl" --
 | `kept_samples` | 参与平均的样本数 |
 | `fallback` | 是否因窗口内剩余 < 30 样本而退回"只排除死亡窗口" |
 
-`events` 每项：`kind`（`spawn` / `death` / `vehicle_change` / `match_start` …，与日志事件同名）、
-`t`（秒）、`vehicle`（可能为 `null`）。
+`events` 每项：`kind`（`spawn` / `death` / `vehicle_change` / `kill` / `match_start` …，与日志事件同名）、
+`t`（秒）、`vehicle`（可能为 `null`）；击落事件额外带 `target`（被击落目标名，仅 `kill` 有，
+其它事件不写该字段 —— HUD 侧忽略未知字段，图表渲染不变）。
 
 ### 12.3 平均值规则（不可手动选范围）
 

@@ -38,7 +38,7 @@ MFD_SCHEMA = 1
 
 #: ``tool`` 固定为 FlightLog；``tool_version`` 与 WtHud 发布版本对齐
 MFD_TOOL = "FlightLog"
-MFD_TOOL_VERSION = "0.5.1"
+MFD_TOOL_VERSION = "0.5.2"
 
 #: 平均值过滤：死亡事件前多少秒的样本不参与平均
 DEATH_WINDOW_S = 10.0
@@ -509,7 +509,14 @@ def _events_payload(model: LogModel) -> List[Dict[str, Any]]:
         if event.t < lo or event.t > hi:
             continue  # 记录结束后才发生的事件没有时间轴可放
         events.append(
-            {"kind": event.kind, "t": _round(event.t, 3), "vehicle": event.vehicle}
+            {
+                "kind": event.kind,
+                "t": _round(event.t, 3),
+                "vehicle": event.vehicle,
+                # 0.5.2 击落事件带被击落目标；其它事件不写这个可选字段（schema 仍为 1，
+                # HUD 的 MFD 解析忽略未知字段，图表渲染也不改）。
+                **({"target": event.target} if event.target else {}),
+            }
         )
     events.sort(key=lambda item: (item["t"], item["kind"]))
     return events

@@ -35,6 +35,8 @@
 16. 限速读取：与 FlightLog.exe 同目录的 hud-config.json / airframes.json
     （perVehicleOverrides → airframes → 全局 overspeedKmh），缺文件/坏 JSON 不报错，
     ``--vne-kmh`` 手动覆盖。
+17. 击落事件（0.5.2）：kill 事件带 target、只有 utc 也能换算、KILL 竖线每页都有、
+    legend / 复盘卡 / MFD 事件 JSON 的 target 与缺省占位。
 """
 
 from __future__ import annotations
@@ -75,6 +77,8 @@ from flightlog.report import (  # noqa: E402
     _annotation_text,
     _death_legend_line,
     _es_cliff,
+    _kill_card_line,
+    _kill_legend_line,
     _moving_average,
     _tc_text,
     annotation_code,
@@ -1968,6 +1972,134 @@ def test_annotations() -> None:
     check(len(merged[0]["members"]) == 2, "合并批注数据模型保留 2 个成员（供 legend 用）")
 
 
+def build_kill_log(path: Path) -> None:
+    """单架次日志：2 条击落（带 target / 只有 utc 且缺 target）+ 死亡。"""
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.2-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "f_15ex",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    lines.append(json.dumps({"type": "event", "kind": "spawn", "t": 0.9}))
+    for i in range(23):
+        t = 1.0 + 0.5 * i
+        extra = {}
+        if abs(t - 5.0) < 1e-9:
+            extra["ny_g"] = 7.5
+        lines.append(json.dumps(_sample(t, EPOCH0, **extra), ensure_ascii=False))
+    lines.append(
+        json.dumps(
+            {"type": "event", "kind": "kill", "t": 5.0, "target": "=FdX= Target"},
+            ensure_ascii=False,
+        )
+    )
+    # 只有 utc、没有 target：验证时间换算 + 旧格式（缺字段）兼容
+    lines.append(json.dumps({"type": "event", "kind": "kill", "utc": _iso(EPOCH0 + 8.0)}))
+    lines.append(json.dumps({"type": "event", "kind": "death", "t": 11.0}))
+    lines.append(json.dumps({"type": "end", "utc": _iso(EPOCH0 + 13.0)}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_kill_events(tmp: Path) -> None:
+    """击落事件（0.5.2）：解析 / KILL 竖线 / legend / 复盘卡 / MFD target。"""
+    print("\n[17] 击落事件（0.5.2）：解析 / KILL 竖线 / legend / 复盘卡 / MFD")
+    path = tmp / "kill.jsonl"
+    build_kill_log(path)
+    model = P.analyze(str(path))
+
+    # ---- 解析：kind / target / 缺字段兼容 ----
+    check(P.EVENT_LABELS.get("kill") == "击落", "事件中文名：kill = 击落")
+    kills = [event for event in model.events if event.kind == "kill"]
+    check(len(kills) == 2, "解析出 2 条击落事件")
+    named = next(event for event in kills if event.target)
+    check(named.target == "=FdX= Target", "击落事件保留被击落目标名")
+    check(close(named.t, 5.0, 1e-9), "带 t 的击落事件时间不变")
+    utc_only = next(event for event in kills if not event.target)
+    check(close(utc_only.t, 8.0, 0.02),
+          "只有 utc 的击落事件换算成 t≈8（得到 %s）" % utc_only.t)
+    check(utc_only.target == "" and "target" not in utc_only.as_dict(),
+          "缺 target 的击落事件模型为空串、序列化不写字段（旧格式兼容）")
+    check(named.as_dict().get("target") == "=FdX= Target",
+          "summary 事件 dict 带 target")
+    check(any(event.kind == "kill" for event in model.flights[0].events),
+          "击落事件归到当前架次（不切分架次）")
+
+    # ---- 旧日志（没有 kill / target）不受影响 ----
+    full = tmp / "full.jsonl"
+    if not full.exists():
+        build_full_log(full)
+    old_model = P.analyze(str(full))
+    check(all("target" not in event.as_dict() for event in old_model.events),
+          "旧日志事件不输出 target 字段")
+    old_html = render_report(old_model)
+    check("KILL" not in old_html, "旧日志（无击落）报告不出现 KILL")
+
+    # ---- legend 行格式（编号沿用 ①②③…，不和数据批注冲突） ----
+    check(_kill_legend_line({"t": 312.4, "target": "=FdX= Target"}, 3)
+          == "④ KILL 击落 =FdX= Target · T+05:12",
+          "屏幕/PDF KILL legend 行：%s"
+          % _kill_legend_line({"t": 312.4, "target": "=FdX= Target"}, 3))
+    check(_kill_card_line({"t": 312.4, "target": "=FdX= Target"}, 3)
+          == "④ KILL — 击落 =FdX= Target · T+05:12",
+          "复盘卡 KILL legend 行：%s"
+          % _kill_card_line({"t": 312.4, "target": "=FdX= Target"}, 3))
+    check(_kill_legend_line({"t": 5.0}, 1) == "② KILL 击落 未知目标 · T+00:05",
+          "缺目标时 legend 用「未知目标」占位")
+
+    # ---- HTML 报告：每页都有 KILL 竖线；图下 legend 每页都有 ----
+    html = render_report(model)
+    speed = _blueprint_svg_block(html, "svg-f1-speed")
+    energy = _blueprint_svg_block(html, "svg-f1-energy")
+    attitude = _blueprint_svg_block(html, "svg-f1-attitude")
+    thumb = _blueprint_svg_block(html, "svg-ovf1-es")
+    check('stroke="#38D9C9"' in speed and 'stroke="#38D9C9"' in energy,
+          "击落竖线画在速度页 / 能量页（青绿 KILL 色）")
+    check('stroke="#38D9C9"' in attitude and 'stroke="#38D9C9"' in thumb,
+          "击落竖线每页都画（姿态页 / 概览缩略图）")
+    check("击落 =FdX= Target" in html, "事件时间线标签带击落目标")
+    speed_page = re.search(r'<section class="page[^"]*" id="page-speed".*?</section>',
+                           html, re.S)
+    speed_page = speed_page.group(0) if speed_page else ""
+    attitude_page = re.search(r'<section class="page[^"]*" id="page-attitude".*?</section>',
+                              html, re.S)
+    attitude_page = attitude_page.group(0) if attitude_page else ""
+    kill_lines = re.findall(r'<span class="ai">([^<]*KILL[^<]*)</span>', speed_page)
+    check(kill_lines == [
+        "② KILL 击落 =FdX= Target · T+00:05",
+        "③ KILL 击落 未知目标 · T+00:08",
+    ], "速度页 legend 里 KILL 行编号顺延（%s）" % " | ".join(kill_lines))
+    check('class="ann-legend"' in attitude_page and "KILL 击落" in attitude_page,
+          "只有事件、没有数据批注的页也输出 KILL legend")
+    check("击落 2" in html, "概览卡片事件数统计包含击落")
+
+    # ---- 复盘卡：竖线（带/无批注都保留）+ ANALYST REMARKS ----
+    annotated = _blueprint_svg_block(html, "debrief-svg-annotated")
+    clean = _blueprint_svg_block(html, "debrief-svg-clean")
+    check("KILL — 击落 =FdX= Target" in annotated,
+          "复盘卡 ANALYST REMARKS 有 KILL 行")
+    check('stroke="#1F6F7A"' in annotated and 'stroke="#1F6F7A"' in clean,
+          "复盘卡击落竖线带批注 / 无批注都保留")
+    check("KILL" not in clean, "无批注卡不写 KILL 编号 / legend（只留竖线）")
+
+    # ---- MFD JSON：只增 target 字段，schema 仍 1 ----
+    payload = MF.build_mfd_payload(model)
+    check(payload["schema"] == 1 and payload["tool_version"] == "0.5.2",
+          "MFD schema 仍 1，tool_version = 0.5.2")
+    mfd_kills = [event for event in payload["events"] if event["kind"] == "kill"]
+    spawn_event = next(event for event in payload["events"] if event["kind"] == "spawn")
+    check(len(mfd_kills) == 2 and mfd_kills[0].get("target") == "=FdX= Target",
+          "MFD 事件 JSON 的击落带 target")
+    check(set(spawn_event) == MFD_EVENT_KEYS and "target" not in mfd_kills[1],
+          "MFD 非击落事件字段不变（缺 target 的击落不写该字段）")
+
+
 def test_speed_limits(tmp: Path) -> None:
     """限速读取：hud-config perVehicleOverrides → airframes → 全局 overspeedKmh。"""
     print("\n[10] 限速读取（hud-config.json / airframes.json / --vne-kmh）")
@@ -2078,6 +2210,7 @@ def main() -> int:
         test_report_themes(tmp)
         test_blueprint_report(tmp)
         test_annotations()
+        test_kill_events(tmp)
         test_speed_limits(tmp)
         test_cli(tmp)
         test_mfd_helpers()

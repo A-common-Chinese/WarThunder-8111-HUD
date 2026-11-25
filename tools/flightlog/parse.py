@@ -6,7 +6,8 @@
 读取 ``wtlog-*.jsonl``（一行一个 JSON 记录），产出结构化模型：
 
 * ``meta``      —— 文件头信息（schema / app / vehicle / rate）
-* ``events``    —— death / spawn / vehicle_change / end 等事件，统一换算成秒
+* ``events``    —— death / spawn / vehicle_change / kill / end 等事件，统一换算成秒
+                   （``kill`` 带 ``target`` = 被击落目标名，旧日志没有该字段）
 * ``flights``   —— 按 spawn / death / vehicle_change / 机型字段变化 / 时间跳变
                    切出来的"架次"，每个架次带逐样本序列与统计摘要
 * ``summary``   —— 可直接 ``json.dumps`` 的统计摘要（供 ``--summary`` 使用）
@@ -94,6 +95,7 @@ EVENT_LABELS = {
     "death": "死亡",
     "spawn": "复活/生成",
     "vehicle_change": "换机型",
+    "kill": "击落",
     "end": "记录结束",
 }
 
@@ -122,21 +124,29 @@ class LogError(Exception):
 
 @dataclass
 class Event:
-    """一条事件记录。``t`` 为日志内秒数，可能为 None（无法换算）。"""
+    """一条事件记录。``t`` 为日志内秒数，可能为 None（无法换算）。
+
+    ``target`` 只对击落（``kill``）事件有意义 = 被击落的目标名；旧日志没有该字段，
+    统一留空串，序列化时也不写空字段（保持旧摘要格式不变）。
+    """
 
     kind: str
     t: Optional[float]
     vehicle: Optional[str] = None
     t_source: Optional[str] = None  # "t" / "utc" / None
     utc_epoch: Optional[float] = None
+    target: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "kind": self.kind,
             "label": EVENT_LABELS.get(self.kind, self.kind),
             "t": None if self.t is None else round(self.t, 3),
             "vehicle": self.vehicle,
         }
+        if self.target:
+            data["target"] = self.target
+        return data
 
 
 @dataclass
@@ -284,6 +294,7 @@ def _coerce_event(obj: Dict[str, Any]) -> Optional[Event]:
         vehicle=_text(obj.get("vehicle")),
         t_source=source,
         utc_epoch=parse_utc(obj.get("utc")),
+        target=_text(obj.get("target")) or "",
     )
 
 
@@ -860,7 +871,12 @@ def compute_flight_stats(flight: Flight) -> Dict[str, Any]:
         "death_t": _round(flight.death_t, 3),
         "ended": bool(flight.ended),
         "events": [
-            {"kind": e.kind, "label": EVENT_LABELS.get(e.kind, e.kind), "t": _round(e.t, 3)}
+            {
+                "kind": e.kind,
+                "label": EVENT_LABELS.get(e.kind, e.kind),
+                "t": _round(e.t, 3),
+                **({"target": e.target} if e.target else {}),
+            }
             for e in flight.events
         ],
     }
