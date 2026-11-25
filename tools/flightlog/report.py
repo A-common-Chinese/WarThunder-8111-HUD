@@ -42,9 +42,11 @@
   打印深红、复盘卡蜡笔红），标注条放区间上方；时间相近（<10 s）的批注自动合并；
 * **保存二级页**：页眉「保存」→「保存设置」模态：PDF 完整版 / PNG 单张复盘卡、
   保留批注开关。PNG 复盘卡 = 生成报告时 Python 画好的内嵌 SVG（档案袋风格），
-  JS 序列化 SVG → canvas → PNG 下载；PDF 完整版在 ``file://`` 下用内联
+  JS 序列化 SVG → canvas → PNG 下载；PDF 完整版 = **封面（第 1 页，直接复用 PNG
+  复盘卡 SVG，与「保留批注」开关联动）+ 9 页内容**，``file://`` 下用内联
   jsPDF + html2canvas 逐页渲染后真下载（Chromium 会拦 ``<a download>``），
-  http(s) 下优先下载 headless 预生成的同名 PDF；
+  http(s) 下优先下载 headless 预生成的同名 PDF；封面只在打印/PDF 里出现，
+  屏幕不显示、不进翻页 pager、不影响 localStorage 页号；
 * 不依赖任何外部资源（无 CDN / 图片 / 外链脚本），离线双击即看。
 
 坐标/面板配置集中在文件开头的常量里；配色与字体栈见 ``THEMES``。
@@ -173,8 +175,8 @@ ES_HIGHLIGHT_DOT_R = 2.0
 # B（file:// 场景必须）：Chromium 在 ``file://`` 页面里会拦截 ``<a download>``
 # （没有常规 origin，等于跨源），只能打开 PDF 查看器、不能真下载。所以报告**始终**
 # 内联 jsPDF + html2canvas（见 ``vendor/``）：按钮在 ``location.protocol === "file:"``
-# 时一律走 B，逐页渲染 9 页后 ``doc.save("report.pdf")`` 真下载；http/https 场景
-# 有 ``data-pdf`` 才直接用预生成文件，没有也退 B。
+# 时一律走 B，逐页渲染 10 页（封面 + 9 页内容）后 ``doc.save("report.pdf")``
+# 真下载；http/https 场景有 ``data-pdf`` 才直接用预生成文件，没有也退 B。
 
 #: 环境变量：显式指定浏览器可执行文件（排在最优先；便于测试/便携环境）。
 PDF_BROWSER_ENV = "FLIGHTLOG_PDF_BROWSER"
@@ -5482,10 +5484,15 @@ def _build_payload(
         }
         if item not in vne_items:
             vne_items.append(item)
+    player = limits.player_name if limits is not None else ""
     debrief_html = _debrief_host_html(
-        model, flight_payloads, blueprint_meta,
-        player_name=(limits.player_name if limits is not None else ""),
+        model, flight_payloads, blueprint_meta, player_name=player,
     )
+    # PDF 第 1 页封面：复用 PNG 复盘卡（annotated + clean 两份），屏幕隐藏、只打印。
+    cover_html = _pdf_cover_html(
+        model, flight_payloads, blueprint_meta, player_name=player,
+    )
+    pdf_page_count = len(pages) + (1 if cover_html else 0)
     return {
         "title": "%s · %s" % (title_prefix, os.path.basename(model.path)),
         "file": os.path.basename(model.path),
@@ -5501,9 +5508,11 @@ def _build_payload(
         "html": {
             "pages": pages,
             "page_count": len(pages),
+            "pdf_page_count": pdf_page_count,
             "flight_selector": _flight_selector_html(flight_payloads, default_index),
             "player_switch": player_switch,
             "debrief": debrief_html,
+            "cover": cover_html,
         },
     }
 
@@ -5558,10 +5567,16 @@ def _debrief_card_svg(
     flight_payload: Dict[str, Any],
     clean: bool,
     meta: Dict[str, str],
+    suffix: str = "",
 ) -> str:
     """一张 1600×1000 的复盘卡（C 档案袋风格）：纸底 + 印章 + 关键数据 + 标注图 + 打字机注。
 
     ``clean=True`` 时去掉所有手绘圈 / 编号 / 分析员注记（保留曲线、坐标、事件线）。
+
+    ``suffix`` 追加到 SVG 的 ``id`` 与内部 ``<pattern>`` 的 id 上（默认空 = 现有
+    PNG 复盘卡导出用的 ``debrief-svg-annotated`` / ``debrief-svg-clean`` 保持不变）；
+    PDF 封面用 ``suffix="-cover"`` 复用同一份画法，避免和 ``#debrief-src`` 里的
+    两份卡在同一个文档里撞 id。
     """
     times = [float(t) for t in (flight_payload.get("times") or []) if t is not None]
     series = flight_payload.get("series") or {}
@@ -5586,7 +5601,8 @@ def _debrief_card_svg(
     # ---------- 画布与纸张 ----------
     W, H = 1600, 1000
     parts: List[str] = []
-    svg_id = "debrief-svg-clean" if clean else "debrief-svg-annotated"
+    svg_id = ("debrief-svg-clean" if clean else "debrief-svg-annotated") + suffix
+    tag = ("a" if clean else "b") + suffix
     parts.append(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"'
         ' id="%s" class="debrief-svg" role="img" aria-label="%s">'
@@ -5604,16 +5620,16 @@ def _debrief_card_svg(
         '<path d="M0,0 L4,0" stroke="#E2D6BB" stroke-width="0.6" opacity="0.6"/>'
         "</pattern>"
         "</defs>"
-        % ("a" if clean else "b", "a" if clean else "b")
+        % (tag, tag)
     )
     parts.append('<rect width="%d" height="%d" fill="url(#pcard-lines-%s)"/>'
-                 % (W, H, "a" if clean else "b"))
+                 % (W, H, tag))
     parts.append('<rect x="52" y="42" width="%d" height="%d" fill="#00000018"/>'
                  % (W - 96, H - 76))
     parts.append(
         '<rect x="42" y="32" width="%d" height="%d" fill="url(#pcard-paper-%s)"'
         ' stroke="#8A734C" stroke-width="1.6"/>'
-        % (W - 84, H - 64, "a" if clean else "b")
+        % (W - 84, H - 64, tag)
     )
     parts.append(
         '<rect x="54" y="44" width="%d" height="%d" fill="none" stroke="#B7A483"'
@@ -6110,16 +6126,19 @@ def _debrief_card_svg(
     return "".join(parts)
 
 
-def _debrief_host_html(
-    model: LogModel,
+def _debrief_card_source(
     flight_payloads: Sequence[Dict[str, Any]],
     bp: Optional[Dict[str, str]],
     player_name: str = "",
-) -> str:
-    """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。"""
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, str]]:
+    """复盘卡 / PDF 封面共用的「用哪个架次 + 卡片元信息」选择逻辑。
+
+    多架次时取样本数最多的那一个（与 PNG 复盘卡一致）；没有可用架次时返回
+    ``(None, {})``，调用方据此不输出卡片。
+    """
     usable = [payload for payload in flight_payloads if payload.get("times")]
     if not usable:
-        return ""
+        return None, {}
     main = max(usable, key=lambda item: len(item.get("times") or []))
     meta = dict(bp) if bp else {
         "project": "WTHUD FLIGHT LOG",
@@ -6130,6 +6149,19 @@ def _debrief_host_html(
     }
     if player_name:
         meta["player"] = player_name
+    return main, meta
+
+
+def _debrief_host_html(
+    model: LogModel,
+    flight_payloads: Sequence[Dict[str, Any]],
+    bp: Optional[Dict[str, str]],
+    player_name: str = "",
+) -> str:
+    """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。"""
+    main, meta = _debrief_card_source(flight_payloads, bp, player_name)
+    if main is None:
+        return ""
     stem = os.path.splitext(os.path.basename(model.path))[0]
     prefix = "debrief-%s-" % stem
     return (
@@ -6141,6 +6173,49 @@ def _debrief_host_html(
             _debrief_card_svg(model, main, False, meta),
             _debrief_card_svg(model, main, True, meta),
         )
+    )
+
+
+#: PDF 封面复用复盘卡的两个版本：``(变体名, clean)``，打印时按批注开关二选一。
+PDF_COVER_VARIANTS: Tuple[Tuple[str, bool], ...] = (
+    ("annotated", False),
+    ("clean", True),
+)
+
+
+def _pdf_cover_html(
+    model: LogModel,
+    flight_payloads: Sequence[Dict[str, Any]],
+    bp: Optional[Dict[str, str]],
+    player_name: str = "",
+) -> str:
+    """PDF 第 1 页封面：**直接复用** PNG 复盘卡的 SVG（annotated + clean 两份）。
+
+    * 屏幕：``#pdf-cover{display:none}``（CSS），不进 ``.page`` 集合 → 不占翻页、
+      不进 pager、不影响 localStorage 页号；
+    * 打印 / PDF（方案 A headless 打印 + 方案 B html2canvas）：变成 1600×1000 的
+      第 1 页，``page-break-after:always``，无页边距、整页铺满；
+    * 批注联动：打印态里默认显示 annotated 卡，``body.no-annot`` 时换成 clean 卡
+      （与正文页「保留批注」开关同一个 class，方案 B 导出前会切这个 class）。
+
+    两份卡的 SVG id / pattern id 都带 ``-cover`` 后缀，避免和 ``#debrief-src``
+    里用于 PNG 导出的两份卡撞 id。
+    """
+    main, meta = _debrief_card_source(flight_payloads, bp, player_name)
+    if main is None:
+        return ""
+    cards = "".join(
+        '<div class="pdf-cover-card pdf-cover-%s" data-cover="%s">%s</div>'
+        % (
+            variant,
+            variant,
+            _debrief_card_svg(model, main, clean, meta, suffix="-cover"),
+        )
+        for variant, clean in PDF_COVER_VARIANTS
+    )
+    return (
+        '<div class="pdf-cover" id="pdf-cover" data-pdf-page="cover"'
+        ' aria-hidden="true">%s</div>' % cards
     )
 
 
@@ -6616,6 +6691,9 @@ a{color:var(--link)}
 .save-btn.ghost{background:transparent;color:var(--ghost-fg)}
 body.modal-open{overflow:hidden}
 #debrief-src{position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
+/* PDF 封面（第 1 页）：屏幕不显示、也不在 .page 集合里 → 不占翻页 / 不进 pager /
+   不影响 localStorage 页号；只在 @media print 与方案 B 的 .pdf-capture 里变成整页。 */
+#pdf-cover{display:none}
 """
 
 #: 方案 B（找不到 Edge/Chrome 时在浏览器内生成 PDF）的「打印态仿真」基础布局。
@@ -6657,6 +6735,19 @@ CSS_PRINT = """
     page-break-after:always;border-top:1px solid var(--line);
   }
   .page:first-of-type{border-top:0}
+  /* PDF 封面：第 1 页 = PNG 复盘卡（1600×1000、无页边距、整页铺满）。
+     封面用独立容器而不是 .page：屏幕翻页 / pager / localStorage 页号都不受影响。 */
+  #pdf-cover{
+    position:relative;display:block;width:1600px;height:1000px;margin:0;padding:0;
+    overflow:hidden;background:#F6F1E3;
+    page-break-after:always;break-after:page;
+  }
+  #pdf-cover .pdf-cover-card{display:block;width:1600px;height:1000px;line-height:0}
+  #pdf-cover .pdf-cover-card svg{display:block;width:1600px;height:1000px}
+  /* 批注开关联动：默认 annotated 卡，body.no-annot 时换成 clean 卡 */
+  #pdf-cover .pdf-cover-clean{display:none}
+  body.no-annot #pdf-cover .pdf-cover-annotated{display:none}
+  body.no-annot #pdf-cover .pdf-cover-clean{display:block}
   .page-body{min-height:420px}
   .flight-view{display:none!important}
   .flight-view.active{display:flex!important}
@@ -7601,10 +7692,11 @@ JS = r"""
   // ---------------- PDF 完整版：file:// 必走内联生成，http(s) 可直下预生成 ----------------
   // file://：Chromium 会拦截 <a download>（file:// 没有常规 origin，等同于跨源），
   //         只能打开 PDF 查看器、不能真下载 → **一律走方案 B**：逐页
-  //         html2canvas(.page) → jsPDF 1600×1000 px → doc.save("report.pdf")。
+  //         html2canvas(封面 + .page) → jsPDF 1600×1000 px → doc.save("report.pdf")。
+  //         封面（#pdf-cover）是第 1 页，所以进度是 1/10 … 10/10。
   // http(s)：有 <body data-pdf="report.pdf">（headless 预生成）就 <a download> 直接下载；
   //         没有也走方案 B。vendor 库始终内联在页面里（不再只在 A 失败时注入）。
-  // 兜底：连内联库都没有（极旧环境）→ 沿用 window.print()。
+  // 兜底：连内联库都没有（极旧环境）→ 沿用 window.print()（打印 CSS 同样带封面）。
   function pdfDataFile(){
     var body = document.body;
     return (body && body.getAttribute("data-pdf")) || "";
@@ -7637,7 +7729,9 @@ JS = r"""
     document.body.removeChild(link);
   }
   function pdfPageNodes(){
-    return qsa("#pages > section.page");
+    // PDF 页序：封面（#pdf-cover，第 1 页）→ 9 页内容；querySelectorAll 按文档顺序
+    // 返回，所以这里不用额外排序。封面不是 .page（屏幕翻页不受影响）。
+    return qsa("#pages > .pdf-cover, #pages > section.page");
   }
   function nextFrame(){
     // 只等一个宏任务：足够让 .pdf-capture 的样式/布局生效；不用 requestAnimationFrame
@@ -7758,7 +7852,9 @@ JS = r"""
       fallback: pdfFallbackReady(),
       file: pdfFileProtocol(),
       mode: pdfModeName(),
-      progress: (document.body && document.body.getAttribute("data-pdf-progress")) || ""
+      progress: (document.body && document.body.getAttribute("data-pdf-progress")) || "",
+      pageCount: pdfPageNodes().length,
+      pageIds: pdfPageNodes().map(function(node){ return node.id; })
     };
   };
 
@@ -7849,7 +7945,7 @@ SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal
       <div class="save-group">
         <div class="save-label">输出类型 / OUTPUT</div>
         <label class="save-opt"><input type="radio" name="save-kind" value="pdf" checked>
-          <span><b>PDF 完整版</b><i>9 页 · 档案纸 · 直接下载 PDF 文件（file:// 双击打开时浏览器内生成，http 下用预生成同名 .pdf）</i></span></label>
+          <span><b>PDF 完整版</b><i>10 页 · 档案纸（封面 + 9 页内容）· 直接下载 PDF 文件（file:// 双击打开时浏览器内生成，http 下用预生成同名 .pdf）</i></span></label>
         <label class="save-opt"><input type="radio" name="save-kind" value="png">
           <span><b>PNG 单张复盘卡</b><i>1600 × 1000 · 档案袋风格 · 下载单张 PNG</i></span></label>
       </div>
@@ -7936,6 +8032,8 @@ def render_report(
         ' title="导出 PDF 完整版 / PNG 复盘卡">保存</button>'
     )
     debrief_host = payload["html"].get("debrief") or ""
+    cover_html = payload["html"].get("cover") or ""
+    pdf_page_count = payload["html"].get("pdf_page_count") or page_count
     stem = os.path.splitext(os.path.basename(model.path))[0]
 
     data_json = json.dumps(
@@ -7974,7 +8072,7 @@ def render_report(
         '<div class="subline">%s</div>\n'
         "</header>\n"
         "%s\n"
-        '<main id="pages">\n%s\n'
+        '<main id="pages" data-pdf-pages="%d">\n%s\n%s\n'
         '<button type="button" class="side prev" data-nav="prev" aria-label="上一页" disabled>'
         "&#8249;</button>"
         '<button type="button" class="side next" data-nav="next" aria-label="下一页">'
@@ -7999,6 +8097,8 @@ def render_report(
             replay_banner,
             subline,
             NOSCRIPT,
+            pdf_page_count,
+            cover_html,
             pages_html,
             pager,
             debrief_host,

@@ -2051,6 +2051,33 @@ def _blueprint_svg_block(html: str, svg_id: str) -> str:
     return match.group(0) if match else ""
 
 
+def _pdf_cover_block(html: str) -> str:
+    """取出 ``#pdf-cover``（PDF 封面）那一段 HTML（到第一张内容页之前）。"""
+    start = html.find('<div class="pdf-cover"')
+    if start < 0:
+        return ""
+    end = html.find('<section class="page', start)
+    return html[start:end] if end > start else html[start:]
+
+
+def _cover_card_block(html: str, svg_id: str) -> str:
+    """取出封面里带 ``-cover`` 后缀的复盘卡 SVG。"""
+    match = re.search(r'<svg [^>]*id="%s".*?</svg>' % re.escape(svg_id), html, re.S)
+    return match.group(0) if match else ""
+
+
+def _behead_cover_svg(svg: str) -> str:
+    """把封面卡的 ``-cover`` id 后缀去掉，便于和 PNG 复盘卡逐字节比较（证明复用）。"""
+    return (
+        svg.replace("debrief-svg-annotated-cover", "debrief-svg-annotated")
+        .replace("debrief-svg-clean-cover", "debrief-svg-clean")
+        .replace("pcard-lines-b-cover", "pcard-lines-b")
+        .replace("pcard-paper-b-cover", "pcard-paper-b")
+        .replace("pcard-lines-a-cover", "pcard-lines-a")
+        .replace("pcard-paper-a-cover", "pcard-paper-a")
+    )
+
+
 def test_blueprint_report(tmp: Path) -> None:
     """A 工程蓝图：默认主题 / 图框图号页脚 / 保存二级页 / 内嵌复盘卡 / 打印 CSS。"""
     print("\n[8] A 工程蓝图：图框 / 图号 / 保存设置页 / PNG 复盘卡 / 打印分页")
@@ -2113,6 +2140,41 @@ def test_blueprint_report(tmp: Path) -> None:
           "内联 JS 暴露导出/保存状态钩子（便于自动化验证）")
     check("function renderDebriefCanvas" in html and "function exportDebriefPNG" in html,
           "PNG 导出实现（canvas + a[download]）在页面内联")
+
+    # ---- PDF 第 1 页封面：复用 PNG 复盘卡（屏幕隐藏 / 打印显示 / 批注开关联动） ----
+    cover = _pdf_cover_block(html)
+    check('class="pdf-cover"' in cover and 'id="pdf-cover"' in cover
+          and 'data-pdf-page="cover"' in cover,
+          "PDF 封面元素存在（#pdf-cover / data-pdf-page=cover）")
+    check(html.find("<main id=\"pages\"") < html.find('id="pdf-cover"') <
+          html.find('id="page-overview"'),
+          "封面在 <main> 里、排在全部内容页之前（PDF 第 1 页）")
+    check("#pdf-cover{display:none}" in html,
+          "屏幕不显示封面（display:none，不占 9 页翻页）")
+    cover_rules = re.findall(r"#pdf-cover\{([^}]*)\}", html)
+    check(any("display:block" in rule and "width:1600px" in rule
+              and "height:1000px" in rule and "page-break-after:always" in rule
+              for rule in cover_rules),
+          "打印时封面整页显示：1600×1000 + page-break-after:always（无页边距）")
+    check(any("display:block" in rule for rule in
+              re.findall(r"body\.pdf-capture #pdf-cover\{([^}]*)\}", html)),
+          "方案 B 的打印态仿真（.pdf-capture）也显示封面")
+    cover_ann = _cover_card_block(html, "debrief-svg-annotated-cover")
+    cover_clean = _cover_card_block(html, "debrief-svg-clean-cover")
+    check('viewBox="0 0 1600 1000"' in cover_ann and 'viewBox="0 0 1600 1000"' in cover_clean,
+          "封面 = 1600×1000 复盘卡（annotated + clean 两份）")
+    check(_behead_cover_svg(cover_ann) == annotated,
+          "封面 annotated 卡与 PNG 复盘卡逐字节相同（直接复用 _debrief_card_svg）")
+    check(_behead_cover_svg(cover_clean) == clean,
+          "封面 clean 卡与 PNG 无批注卡逐字节相同（同一画法）")
+    check("body.no-annot #pdf-cover .pdf-cover-annotated{display:none}" in html
+          and "body.no-annot #pdf-cover .pdf-cover-clean{display:block}" in html,
+          "封面随「保留批注」开关切换 annotated / clean")
+    check('data-pdf-pages="10"' in html, "PDF 总页数 = 10（封面 = 第 1 页 + 9 页内容）")
+    check('class="page ' not in cover and "data-page-no" not in cover,
+          "封面不是 .page、不写 data-page-no（不进 pager / 不影响 localStorage 页号）")
+    check("10 页" in html and "封面 + 9 页" in html,
+          "保存设置页文案写明 10 页（封面 + 9 页）")
 
     # ---- 批注（屏幕十字/方框；打印手绘圈） ----
     speed = _blueprint_svg_block(html, "svg-f1-speed")
@@ -2709,6 +2771,15 @@ def test_pdf_export(tmp: Path) -> None:
           and '"report.pdf"' in html
           and "html2canvas" in html,
           "方案 B 用内联 jsPDF + html2canvas 逐页生成 report.pdf")
+    check('qsa("#pages > .pdf-cover, #pages > section.page")' in html,
+          "方案 B 的捕获列表含封面（封面 → 9 页内容，按文档顺序）")
+    check("pageCount: pdfPageNodes().length" in html
+          and 'data-pdf-pages="%d"' % (html.count('<section class="page') + 1) in html,
+          "方案 B 页数 = 内容页 + 封面（data-pdf-pages / __pdfState.pageCount）")
+    check('(index + 1) + "/" + pages.length' in html,
+          "方案 B 逐页进度按 10 页计算（1/10 … 10/10）")
+    check("doc.addPage([W, H], \"landscape\")" in html,
+          "方案 B 第 2 页起 addPage 追加（封面在第 1 页）")
     check("body.pdf-capture" in html and "body.pdf-capture .ann-screen{display:none!important}" in html,
           "方案 B 的打印态仿真 CSS（.pdf-capture）已内联")
     check("window.__exportPdf" in html and "window.__pdfState" in html,
