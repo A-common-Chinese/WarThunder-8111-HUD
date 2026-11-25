@@ -39,6 +39,10 @@ no packet interception, no automation.
 |---|---|
 | ![比能量页](docs/screenshots/flightlog-energy.jpg) | ![姿态页](docs/screenshots/flightlog-attitude.jpg) |
 
+**PDF 封面 / PNG 复盘卡**（也是完整 PDF 的第 1 页）：
+
+![复盘卡封面](docs/screenshots/flightlog-debrief.jpg)
+
 > 截图由当前版本的分析工具在真实记录上现场渲染（J-16 · 3 架次 · 983.6 s · 57,781 样本）。
 
 ## 特性
@@ -423,6 +427,10 @@ replays, and renders paged HTML / PDF debrief reports. The same analysis is avai
 | Specific energy (Es) | Attitude |
 |---|---|
 | ![Energy](docs/screenshots/flightlog-energy.jpg) | ![Attitude](docs/screenshots/flightlog-attitude.jpg) |
+
+**PDF cover / PNG debrief card** (also page 1 of the full PDF):
+
+![Debrief card cover](docs/screenshots/flightlog-debrief.jpg)
 
 > Screenshots rendered by the current analyzer on a real recording (J-16, 3 flights, 983.6 s, 57,781 samples).
 
