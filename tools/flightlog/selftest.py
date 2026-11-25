@@ -969,6 +969,104 @@ def test_line_legibility(tmp: Path) -> None:
 
 
 
+def test_series_toggles(tmp: Path) -> None:
+    """曲线显示/隐藏开关：默认清单 / data-series / 工具条 / localStorage / 打印 / solo。"""
+    print("\n[21] 曲线显示/隐藏开关（图例开关 + 工具条 + localStorage + 打印 WYSIWYG）")
+    jsonl = tmp / "toggles.jsonl"
+    if not jsonl.exists():
+        build_full_log(jsonl)
+    model = P.analyze(str(jsonl))
+    html = render_report(model)
+
+    page_nos = re.findall(r'data-page-no="(\d+)"', html)
+    check(page_nos == [str(index + 1) for index in range(len(page_nos))] and len(page_nos) == 9,
+          "每页写死 data-page-no 1..9（localStorage 按页隔离，共 %d 页）" % len(page_nos))
+
+    speed_page = _page_section(html, "page-speed")
+    speed_view = _active_view(speed_page)
+    altitude_view = _active_view(_page_section(html, "page-altitude"))
+    attitude_view = _active_view(_page_section(html, "page-attitude"))
+    energy_view = _active_view(_page_section(html, "page-energy"))
+    global_page = _page_section(html, "page-global")
+
+    # ---- 默认隐藏清单（Python 注入；没有该线数据的页面自然不出现） ----
+    check('data-default-hidden="mach"' in speed_view, "速度页默认隐藏清单 = mach")
+    check('data-default-hidden="ralt"' in altitude_view, "高度页默认隐藏清单 = ralt（雷达高度）")
+    check('data-default-hidden="roll"' in attitude_view, "姿态页默认隐藏清单 = roll（Roll rate）")
+    check('data-default-hidden=""' in energy_view, "其它页（能量页）默认全部可见")
+    check('data-default-hidden="' not in global_page, "全局总览页没有默认隐藏清单")
+
+    # ---- 图例项 = 开关：data-series + 可聚焦 + aria ----
+    legend_keys = re.findall(r'<span class="lg" data-series="([^"]+)"', speed_view)
+    check(legend_keys == ["ias", "tas", "mach"],
+          "速度页图例项按顺序带 data-series（%s）" % legend_keys)
+    check('role="button"' in speed_view and 'tabindex="0"' in speed_view
+          and 'aria-pressed="true"' in speed_view,
+          "图例项可 Tab 聚焦（role=button / tabindex=0 / aria-pressed）")
+    check(speed_view.count('data-series="mach"') >= 2,
+          "曲线 path 与图例项共用 data-series=mach（%d 处）"
+          % speed_view.count('data-series="mach"'))
+    check(bool(re.search(r'<path d="[^"]*" fill="none"[^>]*data-series="mach"', speed_view)),
+          "Mach 曲线仍在静态 SVG 里（默认隐藏靠 class 切换，不删 DOM）")
+    check(bool(re.search(
+              r'<path d="[^"]*" fill="[^"]*" fill-opacity="[^"]*" stroke="none" data-series="es"',
+              energy_view)),
+          "面积填充 path 也带 data-series（能量页 Es）")
+    check(bool(re.search(r'<line id="avg-mach-f1-speed"[^>]*data-series="mach"', speed_view)),
+          "平均速度虚线（Mach）也跟随开关（data-series）")
+    rate_view = _active_view(_page_section(html, "page-energy_rate"))
+    rate_keys = re.findall(r'<span class="lg" data-series="([^"]+)"', rate_view)
+    check(rate_keys == ["des_pos", "des_neg"]
+          and 'data-series="des_pos"' in rate_view and 'data-series="des_neg"' in rate_view,
+          "同一数据列拆成两段的图例有独立 series_id（%s）" % rate_keys)
+    check('"sid":"des_pos"' in html and '"sid":"des_neg"' in html,
+          "悬停数据带 series_id（隐藏的曲线不画悬停点 / 不进浮窗）")
+
+    # ---- 每张图的工具条 ----
+    check(speed_view.count('data-series-act="all"') == 1
+          and speed_view.count('data-series-act="main"') == 1
+          and speed_view.count('data-series-act="reset"') == 1,
+          "每张图有「全部显示 / 仅看主线 / 重置」三个工具条按钮")
+    check("全部显示" in speed_view and "仅看主线" in speed_view and "重置" in speed_view,
+          "工具条按钮文案正确")
+    check(global_page.count('data-series-act="all"') == 3,
+          "全局总览页 3 张堆叠图各有工具条")
+
+    # ---- 内联 JS：localStorage / solo / 键盘 / 打印 ----
+    check("localStorage" in html and "wtflightlog:" in html,
+          "内联 JS 用 localStorage 记住曲线开关")
+    check('+ ":p" + seriesPageNo(pageEl)' in html,
+          "localStorage 键 = wtflightlog:<日志文件名>:p<页号>")
+    check('"file":"' in html, "内联数据带日志文件名（拼 localStorage 键用）")
+    check("seriesSolo" in html and 'addEventListener("dblclick"' in html,
+          "双击图例 = solo（seriesSolo / dblclick 标记）")
+    check('item.addEventListener("keydown"' in html, "图例项支持 Enter / Space 键盘切换")
+    check("seriesStore" in html and "getItem" in html and "setItem" in html,
+          "localStorage 读写封装存在（file:// 不可用时退化成内存）")
+    check("@media print" in html and ".series-off{display:none!important}" in html,
+          "打印时隐藏的曲线 / 图例在 @media print 下也不出现（WYSIWYG）")
+    check(".series-bar{display:none!important}" in html, "打印时工具条不出现")
+
+    # ---- 没有雷达高度数据时：不出现该线的默认隐藏项 ----
+    noralt = tmp / "toggles-noralt.jsonl"
+    lines = [
+        json.dumps(
+            {"type": "meta", "schema": 1, "app": "0.5.0-selftest", "utc": _iso(EPOCH0),
+             "vehicle": "f_15ex", "rate": "per-sample"}
+        )
+    ]
+    for index in range(6):  # 旧样本没有 ralt_m / 姿态
+        lines.append(json.dumps(_old_sample(1.0 + 0.4 * index, EPOCH0)))
+    noralt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    noralt_html = render_report(P.analyze(str(noralt)))
+    noralt_alt = _page_section(noralt_html, "page-altitude")
+    check('data-default-hidden="ralt"' not in noralt_alt,
+          "没有雷达高度数据的页面不出现 ralt 默认隐藏项")
+    check('data-default-hidden="mach"'
+          in _active_view(_page_section(noralt_html, "page-speed")),
+          "无雷达高度时速度页仍按清单隐藏 Mach")
+
+
 def test_cli(tmp: Path) -> None:
     print("\n[5] CLI：--summary / --out")
     path = tmp / "full.jsonl"
@@ -2012,11 +2110,13 @@ def test_blueprint_report(tmp: Path) -> None:
     check('<span class="ai-h">批注对照</span>' in speed_page, "对照表带「批注对照」小标题")
     check("① IAS_MAX 最大指示空速 · 684 km/h · T+00:10" in speed_page,
           "速度页 legend 行 = 缩写 + 全称 + 值 + 时间")
-    check(speed_page.count('class="ann ann-screen"') == speed_page.count('<span class="ai">'),
+    check(len(re.findall(r'<g class="ann ann-screen"', speed_page))
+          == len(re.findall(r'<span class="ai"[\s>]', speed_page)),
           "速度页 legend 行数 = 图面批注数")
     check("ES_MIN" in energy_page and "DEATH" in energy_page,
           "能量页 legend 含 ES_MIN / DEATH（合成数据 dEs/dt 不为负，无 ES_DROP）")
-    check(energy_page.count('class="ann ann-screen"') == energy_page.count('<span class="ai">'),
+    check(len(re.findall(r'<g class="ann ann-screen"', energy_page))
+          == len(re.findall(r'<span class="ai"[\s>]', energy_page)),
           "能量页 legend 行数 = 图面批注 + 死亡圈")
     check('class="ann-legend"' not in attitude_page, "姿态页不批注 → 不输出对照表")
     check("body.no-annot .ann-legend{display:none!important}" in html,
@@ -2695,6 +2795,7 @@ def main() -> int:
         test_avg_report_html(tmp)
         test_report_themes(tmp)
         test_line_legibility(tmp)
+        test_series_toggles(tmp)
         test_blueprint_report(tmp)
         test_annotations()
         test_kill_events(tmp)

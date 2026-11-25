@@ -19,6 +19,11 @@
   图下 legend 加 ``GAP 数据中断 2.66s · T+00:19``；概览页有「数据完整性」一行
   （样本 / 空洞 / 最大间隔 / >1 s 中断数）；
 * 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
+* **曲线显示/隐藏开关**：图例项即开关（点按隐藏/显示、双击 solo 只看这一条），每张图
+  图例行右侧有「全部显示 / 仅看主线 / 重置」；速度页 Mach、高度页雷达高度、姿态页
+  Roll rate 默认隐藏（「仅看主线」= 恢复这份默认清单，「重置」= 清记忆 + 回默认），
+  状态按「日志文件名 + 页号」存 localStorage，各页互不影响、重开保持；
+  隐藏时图例变灰划掉、曲线/面积/断口桥/关联批注一起隐藏，PDF/打印只输出当前可见曲线；
 * 事件（死亡 / 复活 / 换机型 / 击落）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
   击落（``kill``，0.5.2 起）用青绿/蓝竖线，图下 legend 补一行 ``KILL 击落 <target> · T+mm:ss``；
   数据中断（``gap``，0.5.3 起日志才有）不画事件竖线，用断口虚线桥 + 竖带表示，
@@ -2335,13 +2340,18 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
             width: Optional[float] = None,
             clip: Optional[str] = None, fill: Optional[str] = None,
             tooltip: bool = True, signed: bool = False,
-            tooltip_label: Optional[str] = None) -> Dict[str, Any]:
+            tooltip_label: Optional[str] = None,
+            series_id: Optional[str] = None) -> Dict[str, Any]:
     """一条曲线的定义。
 
     ``dash`` / ``width`` 省略时取 :data:`LINE_STYLES` 里按 ``key`` 登记的线型
     （速度页 IAS/TAS/Mach/平均速度、姿态页 Pitch/Bank/Roll 已集中登记）；
     ``dash=True`` 兼容旧写法（= :data:`DEFAULT_DASH`），字符串则按 SVG
     ``stroke-dasharray`` 原样使用。
+
+    ``series_id`` 是"图例开关"用的独立 id（默认为 ``key``）。同一份数据被拆成
+    多段独立显示时（dEs/dt 的获得/损失能量、clip=pos/neg）用不同的 id，
+    点一个图例只隐藏它自己那一段；``key`` 仍是取数/悬停用的数据列名。
     """
     style = line_style(key)
     if dash is None:
@@ -2354,6 +2364,7 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
         pattern = str(dash)
     return {
         "key": key,
+        "series_id": series_id or key,
         "label": label,
         "color": color,
         "unit": unit,
@@ -2380,6 +2391,9 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
             "height": height,
             "left_unit": "km/h",
             "right_unit": "Mach",
+            #: 默认隐藏的曲线（图例开关的初始状态 / 「仅看主线」的目标状态）。
+            #: 只列"主线以外"的辅助线；没有该线数据的页面自然不出现开关。
+            "default_hidden": ("mach",),
             "series": [
                 _series("ias", "IAS 指示空速", COLORS["ias"], "km/h", decimals=0),
                 _series("tas", "TAS 真空速", COLORS["tas"], "km/h", decimals=0),
@@ -2392,6 +2406,7 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
             "subtitle": "气压高度 （实线）+ 雷达高度（虚线）",
             "height": height,
             "left_unit": "m",
+            "default_hidden": ("ralt",),
             "series": [
                 _series("alt", "气压高度", COLORS["alt"], "m", decimals=0, width=1.8),
                 _series("ralt", "雷达高度", COLORS["ralt"], "m", decimals=1, dash=True, width=1.3),
@@ -2416,10 +2431,10 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
             "series": [
                 _series("des", "获得能量", COLORS["des_pos"], "m/s", decimals=1, width=1.4,
                         clip="pos", fill="zero", tooltip=True, signed=True,
-                        tooltip_label="dEs/dt"),
+                        tooltip_label="dEs/dt", series_id="des_pos"),
                 _series("des", "损失能量", COLORS["des_neg"], "m/s", decimals=1, width=1.4,
                         clip="neg", fill="zero", tooltip=False, signed=True,
-                        tooltip_label="dEs/dt"),
+                        tooltip_label="dEs/dt", series_id="des_neg"),
             ],
         },
         {
@@ -2452,6 +2467,7 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
             "height": height,
             "left_unit": "°",
             "right_unit": "° / °/s",
+            "default_hidden": ("roll",),
             "series": [
                 _series("pitch", "Pitch 俯仰", COLORS["pitch"], "°", decimals=1),
                 _series("bank", "Bank 滚转", COLORS["bank"], "°", axis="right", decimals=1),
@@ -2557,6 +2573,11 @@ def _svg_series(
     width = defn.get("width", 1.7)
     dash_pattern = defn.get("dash")
     dash = ' stroke-dasharray="%s"' % dash_pattern if dash_pattern else ""
+    # 曲线 / 面积填充 / 断口桥都带 data-series：图例开关（内联 JS）按此整组
+    # 加/去 ``series-off`` class，屏幕与打印都同步隐藏（不删除 DOM）。
+    series_attr = ' data-series="%s"' % html.escape(
+        str(defn.get("series_id") or defn["key"])
+    )
     parts: List[str] = []
 
     for index, segment in enumerate(segments):
@@ -2573,8 +2594,8 @@ def _svg_series(
             pixels = _decimate(pixels, MAX_SVG_POINTS)
         if len(pixels) == 1:
             parts.append(
-                '<circle cx="%s" cy="%s" r="2.2" fill="%s"/>'
-                % (_fmt_coord(pixels[0][0]), _fmt_coord(pixels[0][1]), color)
+                '<circle cx="%s" cy="%s" r="2.2" fill="%s"%s/>'
+                % (_fmt_coord(pixels[0][0]), _fmt_coord(pixels[0][1]), color, series_attr)
             )
         else:
             if fill:
@@ -2598,13 +2619,13 @@ def _svg_series(
                     )
                     opacity = "0.16" if fill == "min" else "0.22"
                     parts.append(
-                        '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"/>'
-                        % (area, color, opacity)
+                        '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"%s/>'
+                        % (area, color, opacity, series_attr)
                     )
             parts.append(
                 '<path d="%s" fill="none" stroke="%s" stroke-width="%s" stroke-linejoin="round"'
-                ' stroke-linecap="round"%s vector-effect="non-scaling-stroke"/>'
-                % (_bezier_path(pixels), color, width, dash)
+                ' stroke-linecap="round"%s vector-effect="non-scaling-stroke"%s/>'
+                % (_bezier_path(pixels), color, width, dash, series_attr)
             )
 
         # 到下一段的断口：虚线贝塞尔桥（表示插值 / 中断，不画实线直连）
@@ -2626,8 +2647,8 @@ def _svg_series(
             parts.append(
                 '<path class="gap-bridge" d="%s" fill="none" stroke="%s"'
                 ' stroke-width="%s" stroke-dasharray="4 4" stroke-linecap="round"'
-                ' opacity="%s" vector-effect="non-scaling-stroke"/>'
-                % (bridge, color, GAP_BRIDGE_WIDTH, GAP_BRIDGE_OPACITY)
+                ' opacity="%s" vector-effect="non-scaling-stroke"%s/>'
+                % (bridge, color, GAP_BRIDGE_WIDTH, GAP_BRIDGE_OPACITY, series_attr)
             )
     return "".join(parts)
 
@@ -2930,11 +2951,13 @@ def _svg_avg_overlay(
         if py is None:
             continue
         parts.append(
-            '<line id="avg-%s-%s" class="avg-line" data-avg-line="%s" x1="%s" y1="%s"'
+            '<line id="avg-%s-%s" class="avg-line" data-avg-line="%s" data-series="%s"'
+            ' x1="%s" y1="%s"'
             ' x2="%s" y2="%s" stroke="%s" stroke-width="%s"%s opacity="0.9"/>'
             % (
                 key,
                 chart_id,
+                key,
                 key,
                 _fmt_coord(PLOT_LEFT),
                 _fmt_coord(py),
@@ -3086,6 +3109,13 @@ def _svg_annotations(
     for order, annotation in enumerate(annotations):
         px = float(annotation["px"])
         py = float(annotation["py"])
+        # 批注关联的数据曲线（ias / alt / es / ny）：曲线被图例开关隐藏时，
+        # 图面十字/方框与图下对照行一起隐藏；DEATH / KILL / GAP 没有 series，
+        # 始终显示（它们不是某条曲线的一部分）。
+        ann_series = annotation.get("series")
+        ann_series_attr = (
+            ' data-series="%s"' % html.escape(str(ann_series)) if ann_series else ""
+        )
         text = "%s %s" % (
             annotation.get("num") or _annotation_number(order),
             _annotation_mark_text(annotation),
@@ -3097,7 +3127,7 @@ def _svg_annotations(
         # 引线：从数据点连到标注条最近的边
         edge_x = bx if bx >= px else bx + bw
         edge_y = by + bh / 2.0
-        group: List[str] = ['<g class="ann ann-screen">']
+        group: List[str] = ['<g class="ann ann-screen"%s>' % ann_series_attr]
         group.append(
             '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"'
             ' opacity="0.9"/>' % (px, py, edge_x, edge_y)
@@ -3149,7 +3179,7 @@ def _svg_annotations(
                 pty = ring_cy + 20.0
                 break
         ring_slots.append((px, ring_cy))
-        pgroup: List[str] = ['<g class="ann ann-print">']
+        pgroup: List[str] = ['<g class="ann ann-print"%s>' % ann_series_attr]
         pgroup.append(
             '<path class="ann-crayon" d="%s" stroke-width="3.4" opacity="0.8"/>'
             % _wobble_ring(px, ring_cy, ring_rx, ring_ry, order * 1.7)
@@ -3490,9 +3520,16 @@ def _render_chart(
 
     legend_parts: List[str] = []
     for defn in defs:
+        label = defn["label"]
         legend_parts.append(
-            '<span class="lg">%s<span class="lg-t">%s</span></span>'
-            % (_series_swatch(defn), html.escape(defn["label"]))
+            '<span class="lg" data-series="%s" role="button" tabindex="0"'
+            ' aria-pressed="true" title="%s">%s<span class="lg-t">%s</span></span>'
+            % (
+                html.escape(str(defn.get("series_id") or defn["key"])),
+                html.escape(label + "：点击隐藏/显示，双击只看这一条"),
+                _series_swatch(defn),
+                html.escape(label),
+            )
         )
     if avg is not None:
         legend_parts.append(
@@ -3502,11 +3539,17 @@ def _render_chart(
         )
 
     # 批注对照表：图上只有 ① IAS_MAX，这里给出「缩写 + 全称 + 值 + 时间」。
+    # 关联到某条曲线的行带 data-series，曲线被隐藏时整行一起隐藏；
+    # DEATH / KILL / GAP 行没有 series，始终显示。
     ann_legend_parts: List[str] = []
     for index, item in enumerate(ann_items):
+        series_key = item.get("series")
+        series_attr = (
+            ' data-series="%s"' % html.escape(str(series_key)) if series_key else ""
+        )
         ann_legend_parts.append(
-            '<span class="ai">%s</span>'
-            % html.escape(_annotation_legend_line(item, index))
+            '<span class="ai"%s>%s</span>'
+            % (series_attr, html.escape(_annotation_legend_line(item, index)))
         )
     for index, item in enumerate(mark_items):
         ann_legend_parts.append(
@@ -3545,6 +3588,7 @@ def _render_chart(
         "series": [
             {
                 "key": defn["key"],
+                "sid": defn.get("series_id") or defn["key"],
                 "label": defn["label"],
                 "color": defn["color"],
                 "axis": defn["axis"],
@@ -3558,11 +3602,20 @@ def _render_chart(
             for defn in defs
         ],
     }
+    # 默认隐藏只保留"这张图里真的画了"的曲线（没有 ralt 数据的架次不出现开关）；
+    # 面板清单写的是数据列名，这里换成一图例一份的 series_id。
+    declared = set(panel.get("default_hidden") or ())
+    default_hidden: List[str] = []
+    for defn in defs:
+        series_id = defn.get("series_id") or defn["key"]
+        if defn["key"] in declared and series_id not in default_hidden:
+            default_hidden.append(series_id)
     return {
         "svg": "".join(parts),
         "legend": "".join(legend_parts),
         "ann_legend": "".join(ann_legend_parts),
         "geometry": geometry,
+        "default_hidden": default_hidden,
         "left_unit": panel.get("left_unit"),
         "right_unit": panel.get("right_unit"),
     }
@@ -4237,6 +4290,28 @@ def _strip_html(flight_payload: Dict[str, Any], page_key: str) -> str:
     return strip or ""
 
 
+def _series_bar_html() -> str:
+    """每张图表右上角的曲线显示工具条（纯按钮，逻辑全部在内联 JS 里）。
+
+    * ``全部显示``：本页所有曲线可见；
+    * ``仅看主线``：恢复面板默认清单（速度页 = 隐藏 Mach，高度页 = 隐藏雷达高度，
+      姿态页 = 隐藏 Roll rate，其它页 = 全部可见）；
+    * ``重置``：清掉本页 localStorage 记忆，再回到默认清单。
+
+    工具条本身在 ``@media print`` 里隐藏，PDF 只保留当前可见曲线的图例。
+    """
+    return (
+        '<div class="series-bar" role="group" aria-label="曲线显示开关">'
+        '<button type="button" class="series-btn" data-series-act="all"'
+        ' title="本页所有曲线都显示">全部显示</button>'
+        '<button type="button" class="series-btn" data-series-act="main"'
+        ' title="恢复默认：只留主线（Mach / Roll rate / 雷达高度 默认隐藏）">仅看主线</button>'
+        '<button type="button" class="series-btn" data-series-act="reset"'
+        ' title="清除本页记住的显示状态，回到默认清单">重置</button>'
+        "</div>"
+    )
+
+
 def _flight_view_html(
     flight_payload: Dict[str, Any],
     page_key: str,
@@ -4245,9 +4320,10 @@ def _flight_view_html(
     badges_html: str = "",
 ) -> str:
     """一页里"某个架次"的可切换内容：事件条 + 图例 + 图。"""
+    defaults = ",".join(block.get("default_hidden") or ()) if block else ""
     parts = [
-        '<div class="flight-view%s" data-flight="%d">'
-        % (" active" if is_active else "", flight_payload["index"])
+        '<div class="flight-view%s" data-flight="%d" data-default-hidden="%s">'
+        % (" active" if is_active else "", flight_payload["index"], html.escape(defaults))
     ]
     if badges_html:
         parts.append(badges_html)
@@ -4257,7 +4333,11 @@ def _flight_view_html(
     if block is None:
         parts.append('<div class="empty">该架次没有此项数据</div>')
     else:
-        parts.append('<div class="legend">%s</div>' % block["legend"])
+        parts.append(
+            '<div class="legend-row"><div class="legend" role="group"'
+            ' aria-label="曲线显示开关：点按隐藏/显示，双击只看这一条">%s</div>%s</div>'
+            % (block["legend"], _series_bar_html())
+        )
         parts.append('<div class="chart-wrap">%s</div>' % block["svg"])
         if block.get("ann_legend"):
             parts.append(
@@ -4466,13 +4546,15 @@ def _global_page_html(overview: Dict[str, Any]) -> str:
         items.append(
             '<div class="stack-item">'
             '<div class="chart-label">%s<span>%s</span></div>'
-            '<div class="legend">%s</div>'
+            '<div class="legend-row"><div class="legend" role="group"'
+            ' aria-label="曲线显示开关：点按隐藏/显示，双击只看这一条">%s</div>%s</div>'
             '<div class="chart-wrap">%s</div>'
             "</div>"
             % (
                 _html_escape(spec["title"]),
                 _html_escape(" · ".join(units)),
                 block["legend"],
+                _series_bar_html(),
                 block["svg"],
             )
         )
@@ -4669,6 +4751,18 @@ def _inject_page_chrome(page: str, chrome: str) -> str:
     return page[: end + 1] + chrome + page[end + 1 :]
 
 
+def _inject_page_no(page: str, page_no: int) -> str:
+    """给 ``<section ...>`` 开标签补 ``data-page-no``（1 起，和页码/SHEET 一致）。
+
+    内联 JS 用这个页号拼 localStorage 键（``wtflightlog:<文件>:p<页号>``），
+    因此各页的曲线显示状态互不影响；DOM 顺序变了也不会串页。
+    """
+    end = page.find(">")
+    if end < 0:
+        return page
+    return page[:end] + ' data-page-no="%d"' % page_no + page[end:]
+
+
 def _build_payload(
     model: LogModel, limits: Optional[SpeedLimits] = None
 ) -> Dict[str, Any]:
@@ -4755,6 +4849,9 @@ def _build_payload(
     # 多玩家时不拼"全局总览"：不同玩家的时间轴互相重叠，拼在一起没有意义
     if overview is not None and not multi_player:
         pages.append(_global_page_html(overview))
+
+    # 每页写死页号（1 起）：曲线显示状态按页存 localStorage，翻页/打印都不串。
+    pages = [_inject_page_no(page, index + 1) for index, page in enumerate(pages)]
 
     # A 工程蓝图：每页注入图框 / 图号 / 页脚 SHEET n/9 / 右下角标题栏
     blueprint_meta: Optional[Dict[str, str]] = None
@@ -5632,6 +5729,29 @@ main{position:relative;flex:1 1 auto;min-height:0}
   background-image:linear-gradient(90deg,var(--dash-fg) 0 60%,transparent 60% 100%)!important;
   background-size:7px 3px;background-repeat:repeat-x;
 }
+/* ---------- 曲线显示/隐藏：图例即开关 + 右上角工具条 ---------- */
+/* 每张图的图例行右侧放「全部显示 / 仅看主线 / 重置」；屏幕可切，打印时整条工具条不出现 */
+.legend-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.legend-row .legend{flex:1 1 auto;min-width:0}
+.series-bar{flex:0 0 auto;display:flex;align-items:center;gap:4px;margin:2px 0 3px}
+.series-btn{
+  font-family:var(--font-num);font-size:10.5px;letter-spacing:.04em;
+  color:var(--legend-fg);background:transparent;border:1px solid var(--line);
+  border-radius:var(--radius-xs);padding:0 7px;line-height:1.6;cursor:pointer;
+  transition:.12s;
+}
+.series-btn:hover{border-color:var(--accent);color:var(--text)}
+.series-btn:focus-visible{outline:1px solid var(--accent);outline-offset:1px}
+/* 图例项 = 按钮：Tab 可聚焦、Enter/Space 切换、双击 solo */
+.lg[data-series]{cursor:pointer;border-radius:3px;padding:0 2px;transition:opacity .12s}
+.lg[data-series]:hover{background:rgba(127,127,127,.16)}
+.lg[data-series]:focus-visible{outline:1px solid var(--accent);outline-offset:1px}
+.lg.series-off{opacity:.42}
+.lg.series-off .lg-t{text-decoration:line-through}
+/* 曲线 / 面积填充 / 断口桥 / 批注圈（SVG 内）与批注对照行（图下）一起隐藏；
+   事件类批注（死亡 / 击落 / 数据中断）没有 data-series，不受影响，始终显示 */
+svg [data-series].series-off{display:none}
+.ann-legend .ai.series-off{display:none}
 .chart-wrap{
   flex:1 1 auto;min-height:0;position:relative;background:var(--chart-bg);
   box-shadow:var(--chart-ring);border-radius:var(--chart-radius);
@@ -5890,6 +6010,10 @@ CSS_PRINT = """
   .flight-view{display:none!important}
   .flight-view.active{display:flex!important}
   .pager,.side,.hint,.header-save,.save-modal,#debrief-src,#tip{display:none}
+  /* 曲线显示/隐藏：WYSIWYG —— 打印/PDF 只保留当前可见曲线。
+     工具条不打印；被隐藏的 path/area/断口桥/批注圈和图例行（含图例项）整块不出现 */
+  .series-bar{display:none!important}
+  .series-off{display:none!important}
   .card{box-shadow:none}
   /* 批注：打印层显示手绘圈 + 打字机短注，屏幕层隐藏；关闭批注时整层隐藏 */
   .ann-screen{display:none!important}
@@ -6052,6 +6176,12 @@ JS = r"""
         P.line.setAttribute("y2", P.p.y1);
         P.line.setAttribute("opacity", "0.7");
         P.dots.forEach(function(D){
+          // 被图例开关隐藏的曲线不画悬停点、也不进数值浮窗
+          var dotPage = P.svg.closest ? P.svg.closest(".page") : null;
+          if (dotPage && !seriesEnabled(dotPage, D.s.sid || D.s.key)){
+            D.el.setAttribute("opacity", "0");
+            return;
+          }
           var raw = desc.series[D.s.key] ? desc.series[D.s.key][index] : null;
           if (raw === null || raw === undefined){
             D.el.setAttribute("opacity", "0");
@@ -6192,6 +6322,200 @@ JS = r"""
       showPage(pages.length - 1, true);
     }
   });
+
+  // ---------------- 曲线显示 / 隐藏（图例开关 + 工具条 + localStorage） ----------------
+  // 状态结构：{page: {seriesKey: 是否可见}}。localStorage 键 =
+  //   wtflightlog:<日志文件名>:p<页号>
+  // 所以各页开关互不影响、重开报告还能保持。默认清单由 Python 写在
+  // data-default-hidden（速度页 mach / 高度页 ralt / 姿态页 roll；别的页为空）。
+  // 隐藏 = 给图例项 / 曲线 / 面积 / 断口桥 / 批注圈 / 批注对照行加 series-off class，
+  // 屏幕显示为图例变灰划掉、图面不画；@media print 里整块 display:none（WYSIWYG）。
+  var SERIES_KEY_PREFIX = "wtflightlog:";
+  var SERIES_FILE = DATA.file || "log";
+  var seriesStore = (function(){
+    try {
+      var probe = "__wtflightlog_probe__";
+      window.localStorage.setItem(probe, "1");
+      window.localStorage.removeItem(probe);
+      return window.localStorage;
+    } catch (err) {
+      // file:// 隐私模式 / 禁用存储：退化成只记在内存里（本次打开有效）
+      var memory = {};
+      return {
+        getItem: function(key){
+          return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null;
+        },
+        setItem: function(key, value){ memory[key] = String(value); },
+        removeItem: function(key){ delete memory[key]; }
+      };
+    }
+  })();
+  var seriesCache = {};
+
+  function seriesPageNo(pageEl){
+    var n = pageEl ? parseInt(pageEl.getAttribute("data-page-no"), 10) : NaN;
+    if (isFinite(n) && n > 0) return n;
+    var index = pages.indexOf(pageEl);
+    return index < 0 ? 1 : index + 1;
+  }
+  function seriesStorageKey(pageEl){
+    return SERIES_KEY_PREFIX + SERIES_FILE + ":p" + seriesPageNo(pageEl);
+  }
+  function seriesKeys(pageEl){
+    var seen = {}, keys = [];
+    qsa(".legend .lg[data-series]", pageEl).forEach(function(item){
+      var key = item.getAttribute("data-series");
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      keys.push(key);
+    });
+    return keys;
+  }
+  function seriesDefaults(pageEl){
+    var hidden = {};
+    qsa("[data-default-hidden]", pageEl).forEach(function(el){
+      var raw = el.getAttribute("data-default-hidden") || "";
+      raw.split(",").forEach(function(key){
+        key = key.replace(/^\s+|\s+$/g, "");
+        if (key) hidden[key] = false;
+      });
+    });
+    return hidden;
+  }
+  function seriesState(pageEl){
+    var no = seriesPageNo(pageEl);
+    if (seriesCache[no]) return seriesCache[no];
+    var saved = null;
+    try {
+      var raw = seriesStore.getItem(seriesStorageKey(pageEl));
+      if (raw) saved = JSON.parse(raw);
+    } catch (err) { saved = null; }
+    if (!saved || typeof saved !== "object") saved = null;
+    var defaults = seriesDefaults(pageEl);
+    var state = {};
+    seriesKeys(pageEl).forEach(function(key){
+      if (saved && Object.prototype.hasOwnProperty.call(saved, key)){
+        state[key] = !!saved[key];
+      } else {
+        state[key] = defaults[key] !== false;
+      }
+    });
+    seriesCache[no] = state;
+    return state;
+  }
+  function seriesSave(pageEl){
+    try {
+      seriesStore.setItem(seriesStorageKey(pageEl), JSON.stringify(seriesState(pageEl)));
+    } catch (err) { /* 存储不可写：状态只留在内存 */ }
+  }
+  function seriesEnabled(pageEl, key){
+    var state = seriesState(pageEl);
+    return state[key] !== false;
+  }
+  function seriesApply(pageEl){
+    var state = seriesState(pageEl);
+    qsa(".legend .lg[data-series]", pageEl).forEach(function(item){
+      var key = item.getAttribute("data-series");
+      var shown = state[key] !== false;
+      item.classList.toggle("series-off", !shown);
+      item.setAttribute("aria-pressed", shown ? "true" : "false");
+    });
+    // SVG 内的曲线 / 面积填充 / 断口桥 / 平均速度虚线 / 批注圈
+    qsa("svg [data-series]", pageEl).forEach(function(el){
+      var key = el.getAttribute("data-series");
+      el.classList.toggle("series-off", state[key] === false);
+    });
+    // 图下批注对照行（只隐藏关联到该曲线的行；事件类批注没有 data-series，始终显示）
+    qsa(".ann-legend [data-series]", pageEl).forEach(function(el){
+      var key = el.getAttribute("data-series");
+      el.classList.toggle("series-off", state[key] === false);
+    });
+  }
+  function seriesApplyAll(){ pages.forEach(seriesApply); }
+  function seriesSetMany(pageEl, values){
+    var state = seriesState(pageEl);
+    Object.keys(values).forEach(function(key){ state[key] = !!values[key]; });
+    seriesSave(pageEl);
+    seriesApply(pageEl);
+    hideAll();
+  }
+  function seriesShowAll(pageEl){
+    var values = {};
+    seriesKeys(pageEl).forEach(function(key){ values[key] = true; });
+    seriesSetMany(pageEl, values);
+  }
+  function seriesShowDefaults(pageEl){
+    var defaults = seriesDefaults(pageEl), values = {};
+    seriesKeys(pageEl).forEach(function(key){ values[key] = defaults[key] !== false; });
+    seriesSetMany(pageEl, values);
+  }
+  function seriesReset(pageEl){
+    try { seriesStore.removeItem(seriesStorageKey(pageEl)); } catch (err) { /* ignore */ }
+    delete seriesCache[seriesPageNo(pageEl)];
+    seriesApply(pageEl);
+    hideAll();
+  }
+  // 双击 solo：只看这一条；再次双击恢复全部（作用范围 = 该图例所在的这张图）
+  function seriesSolo(pageEl, item, key){
+    var scope = item.closest ? item.closest(".legend") : null;
+    var keys = scope ? qsa(".lg[data-series]", scope).map(function(el){
+      return el.getAttribute("data-series");
+    }) : seriesKeys(pageEl);
+    var state = seriesState(pageEl);
+    var onlyThis = state[key] !== false;
+    keys.forEach(function(other){
+      if (other !== key && state[other] !== false) onlyThis = false;
+    });
+    var values = {};
+    keys.forEach(function(other){
+      values[other] = onlyThis ? true : (other === key);
+    });
+    seriesSetMany(pageEl, values);
+  }
+
+  var seriesClickTimer = null;  // 单击延迟执行，给双击 solo 让路（全局只保留一个）
+  pages.forEach(function(pageEl){
+    qsa(".legend .lg[data-series]", pageEl).forEach(function(item){
+      var key = item.getAttribute("data-series");
+      function toggle(){
+        var state = seriesState(pageEl);
+        var values = {};
+        values[key] = state[key] === false;  // 取反
+        seriesSetMany(pageEl, values);
+      }
+      item.addEventListener("click", function(ev){
+        // 双击的第二下不单独切换（等 dblclick 的 solo 生效）
+        if (ev.detail > 1) return;
+        if (seriesClickTimer){ clearTimeout(seriesClickTimer); seriesClickTimer = null; }
+        seriesClickTimer = setTimeout(function(){
+          seriesClickTimer = null;
+          toggle();
+        }, 220);
+      });
+      item.addEventListener("dblclick", function(ev){
+        ev.preventDefault();
+        if (seriesClickTimer){ clearTimeout(seriesClickTimer); seriesClickTimer = null; }
+        seriesSolo(pageEl, item, key);
+      });
+      // 键盘可用性：Tab 聚焦，Enter / Space 切换
+      item.addEventListener("keydown", function(ev){
+        if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar"){
+          ev.preventDefault();
+          toggle();
+        }
+      });
+    });
+    qsa(".series-btn[data-series-act]", pageEl).forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var act = btn.getAttribute("data-series-act");
+        if (act === "all") seriesShowAll(pageEl);
+        else if (act === "main") seriesShowDefaults(pageEl);
+        else if (act === "reset") seriesReset(pageEl);
+      });
+    });
+  });
+  // 首屏就把默认清单 / 上次记忆应用到所有页（打印时非当前页也是对的）
+  seriesApplyAll();
 
   // ---------------- 平均速度 / 手动统计范围（速度页） ----------------
   // 静态 HTML 里已经画好默认（全程）的平均值和 SVG 图层；这里加载后按同一份
@@ -6740,6 +7064,7 @@ def render_report(
     data_json = json.dumps(
         {
             "title": page_title,
+            "file": payload["file"],
             "overview": payload["overview"],
             "flights": payload["flights"],
             "players": payload.get("players") or [],
