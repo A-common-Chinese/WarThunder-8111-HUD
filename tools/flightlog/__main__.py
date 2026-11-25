@@ -37,7 +37,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from . import picker
 from .parse import DEFAULT_GAP_SPLIT_S, LogError, analyze
@@ -485,26 +485,49 @@ def _speed_limits(args):
     return limits
 
 
+def _print_pdf_status(status) -> None:
+    """打印 PDF 导出方式：A 预生成（http 直下）/ B 浏览器内生成（file:// 必走）/ 退回打印。"""
+    if not status:
+        return
+    mode = status.get("mode")
+    if mode == "prebuilt":
+        browser = os.path.basename(str(status.get("browser") or "browser"))
+        print("PDF : %s（%s headless 预生成；http 下报告按钮直接下载，file:// 下浏览器内生成）"
+              % (status.get("pdf"), browser))
+    elif mode == "inline":
+        print("PDF : 浏览器内生成（未找到 Edge/Chrome；报告已内联 jsPDF + html2canvas）")
+    elif mode == "print":
+        print("PDF : 浏览器打印（离线 PDF 组件不可用）")
+    elif status.get("error"):
+        print("PDF : 未生成（%s）" % status.get("error"))
+
+
 def _finish_model(args, model, source_stem: str) -> int:
     limits = _speed_limits(args)
     if args.summary:
         print(json.dumps(model.summary, ensure_ascii=False, indent=2))
         if args.out:
+            status: Dict[str, Any] = {}
             out_path = write_report(
-                model, args.out, title=args.title, theme=args.theme, limits=limits
+                model, args.out, title=args.title, theme=args.theme, limits=limits,
+                status=status,
             )
             print("\nHTML: %s" % out_path, file=sys.stderr)
+            _print_pdf_status(status)
         return 0
 
     if args.out:
         out_path = Path(args.out)
     else:
         out_path = default_out_dir() / (_safe_stem(source_stem) + ".html")
+    status = {}
     written = write_report(
-        model, str(out_path), title=args.title, theme=args.theme, limits=limits
+        model, str(out_path), title=args.title, theme=args.theme, limits=limits,
+        status=status,
     )
     size_kb = os.path.getsize(written) / 1024.0
     print("HTML: %s (%.1f KB)" % (written, size_kb))
+    _print_pdf_status(status)
     for item in model.flights:
         vne, source = limits.vne_for(item.vehicle)
         if vne is not None:

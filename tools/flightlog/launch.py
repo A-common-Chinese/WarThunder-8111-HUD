@@ -326,13 +326,26 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+def _log_pdf(status: dict) -> None:
+    """打印 PDF 导出方式：A 预生成（http 直下）/ B 浏览器内生成（file:// 必走）/ 退回打印。"""
+    mode = (status or {}).get("mode")
+    if mode == "prebuilt":
+        _log("PDF: %s（headless 预生成；http 下直接下载，file:// 下浏览器内生成）" % status.get("pdf"))
+    elif mode == "inline":
+        _log("PDF: 未找到 Edge/Chrome → 报告内联 jsPDF + html2canvas，浏览器内生成")
+    elif mode == "print":
+        _log("PDF: 离线组件不可用 → 报告退回浏览器打印")
+
+
 def _run_jsonl(source: Path) -> Path:
     from flightlog import analyze, write_report
 
     _log("读取飞行日志: %s" % source.name)
     result = analyze(str(source))
     out = _out_path(source)
-    write_report(result, str(out))
+    status: dict = {}
+    write_report(result, str(out), status=status)
+    _log_pdf(status)
     _log("架次 %d | 样本 %d" % (len(result.flights), result.summary["counts"]["samples"]))
     return out
 
@@ -382,7 +395,9 @@ def _run_replay(source: Path, players: list[str], kind: str) -> Path | None:
     out = _out_path(source)
     from flightlog import write_report
 
-    write_report(model, str(out))
+    status: dict = {}
+    write_report(model, str(out), status=status)
+    _log_pdf(status)
     totals = model.summary["totals"]
     _log(
         "架次 %d | 样本 %d | 时长 %.0f s | 最大 IAS %.0f km/h"

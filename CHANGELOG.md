@@ -1,3 +1,23 @@
+## 未发布（v0.5.6）— 轮询线程修复、Es 断崖高亮、PDF 直接下载
+
+2026-11-25
+
+### 修复
+- **8111 轮询线程 5 项加固**：
+  1. 录制启停不再占轮询锁（`Stop` 锁外执行），`Cleanup` 移后台线程；
+  2. `StreamWriter AutoFlush=false`，保留 100 行/1 s 批量落盘；
+  3. `/state` 失败时不再用旧 `/indicators` 拼无效快照；
+  4. interval=0 时加 15 ms 最小周期，避免本地 100+ Hz 空转（实测 57–62 Hz）；
+  5. gap 判定改用单调 `ElapsedSeconds`，系统时钟跳变不再误报。
+- **PDF 导出**：
+  - 有 Chrome/Edge 时预生成矢量 PDF（9 页，约 6.5 s），http 打开报告时「导出 PDF」直接下载；
+  - **file:// 下自动走浏览器内生成（jsPDF + html2canvas，约 22 s，真下载）**，不再只弹打印；
+  - 每份报告内联约 551 KB vendor（MIT，含许可证），HTML 约 3.9 MB。
+- **Es 断崖改为曲线加粗标红**：不再画斜纹带/括号，直接把 `[t0,t1]` 段的 Es 曲线叠为红色加粗（屏幕 5px / 打印深红 4.2px / 复盘卡蜡笔红），标注与 legend 保留；区间口径保持 30% 双侧、最长 10 s。
+
+### 验证
+- HUD `selftest` 501 PASS；FlightLog `selftest` 901 PASS；CDP 24/24（file:// B 分支真下载 9 页、http A 分支直下、高亮与开关联动、打印 WYSIWYG）。
+
 ## 未发布（v0.5.5）— 曲线可手动显示/隐藏
 
 2026-11-25

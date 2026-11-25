@@ -25,6 +25,12 @@ public sealed class TelemetryClient : IDisposable
 
     private const int LatencyWindowCapacity = 8192;
 
+    /// <summary>最小轮询周期（ms）：interval=0 时补足到它，别让本地 8111 把专用线程空转成 100+ Hz。</summary>
+    internal const int MinCycleMs = 15;
+
+    /// <summary>/state 失败（没游戏、连接被拒）时的退避周期（ms），别把专用线程空转成 100% CPU。</summary>
+    internal const int NoDataBackoffMs = 20;
+
     private readonly string _stateUrl;
     private readonly string _indicatorsUrl;
     private readonly HttpClient _http;
@@ -160,7 +166,10 @@ public sealed class TelemetryClient : IDisposable
                     if (fresh != null) lastIndicators = fresh;
                 }
 
-                if (state != null || lastIndicators != null)
+                // ★ 本次 /state 请求失败（state == null）就整轮跳过 Parse/发布/事件：
+                // 不要拿上一次的 /indicators 拼一个 valid=false 的快照发出去 —— 那等于凭空
+                // 造了一帧「掉线」，会让融合姿态/记录器/UI 跟着抖一下。等下一轮重新拿 /state。
+                if (state != null)
                 {
                     try
                     {
@@ -192,10 +201,15 @@ public sealed class TelemetryClient : IDisposable
                 {
                     if (_cts.Token.WaitHandle.WaitOne(_intervalMs)) break;
                 }
-                else if (state is null && lastIndicators is null)
+                else
                 {
-                    // 没游戏时连接会被立刻拒绝：别把专用线程空转成 100% CPU。
-                    if (_cts.Token.WaitHandle.WaitOne(20)) break;
+                    // ★ 最小轮询间隔：本地 8111 一次往返只要 5~10 ms，interval=0（overlay 就是传 0）
+                    // 时「拿到就立刻再问」会把专用线程空转成 100+ Hz。本轮耗时不够就补足；
+                    // 没数据（/state 失败，连接被拒）退回 20 ms 退避，别把专用线程空转成 100% CPU。
+                    int minPeriodMs = state is null ? NoDataBackoffMs : MinCycleMs;
+                    double cycleMs = Stopwatch.GetElapsedTime(cycleStart).TotalMilliseconds;
+                    int waitMs = (int)Math.Ceiling(minPeriodMs - cycleMs);
+                    if (waitMs > 0 && _cts.Token.WaitHandle.WaitOne(waitMs)) break;
                 }
             }
         }

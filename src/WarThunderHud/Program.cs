@@ -1092,7 +1092,13 @@ public static partial class Program
     // 正常退出（关窗/结束进程）时把记录器缓冲落盘；被强杀仍可能丢最后几行。
     AppDomain.CurrentDomain.ProcessExit += (_, _) =>
     {
-        try { lock (recGate) { flightRecorder?.Stop(); flightRecorder = null; } } catch { }
+        try
+        {
+            FlightRecorder? rec;
+            lock (recGate) { rec = flightRecorder; flightRecorder = null; }
+            StopRecorderOutsideGate(rec);   // Stop 的 Join 不在 recGate 里
+        }
+        catch { }
     };
 
         // 单实例：两个 WtHud 同时跑会互相偷热键（后起的那个 RegisterHotKey 报 err=1409，F10/F1 就
@@ -2385,12 +2391,14 @@ public static partial class Program
         }
 
         cursorStop = true;
+        FlightRecorder? recOnExit;
         lock (recGate)
         {
-            flightRecorder?.Stop();
+            recOnExit = flightRecorder;
             flightRecorder = null;
-            recLastSampleUtc = null;
+            recLastSampleElapsed = null;
         }
+        StopRecorderOutsideGate(recOnExit);   // Stop 的 Join 不在 recGate 里
         configLink?.Dispose();
         telemetry.Dispose();
         Console.WriteLine($"overlay closed after {frames} frames");
@@ -3281,14 +3289,38 @@ public static partial class Program
     /// 结束 = 5 秒无新快照，或连续 60 秒不在对局（回大厅/结算）。
     /// 死亡不停止记录（复活模式同一文件继续），只写一行事件；复活/换机型也写事件。
     /// 注意：8111 在机库里仍报 valid=true、机型也在，所以「是否对局」只能靠 map self 判断。
-    /// <para>调用点有两个：轮询线程（每个新快照写样本）+ 主循环（断流看护），所以整个方法在锁里跑。</para>
+    /// <para>调用点有两个：轮询线程（每个新快照写样本）+ 主循环（断流看护）。
+    /// 状态机整体在 <see cref="recGate"/> 里跑；唯一的例外是停录时的 <c>Stop()</c>（要 Join
+    /// 写线程最多 3 s）—— 锁内只把 recorder 摘下来返回，锁外再停。</para>
     /// </summary>
     private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
     {
-        lock (recGate) UpdateFlightRecordingLocked(cfg, snap, inBattle);
+        FlightRecorder? toStop;
+        lock (recGate) toStop = UpdateFlightRecordingLocked(cfg, snap, inBattle);
+        // ★ Stop() 要 Join 写线程（最多 3 s），必须在 recGate 外面做：锁里等它的话，
+        // 轮询线程和主循环的断流看护会一起堵在锁上，录制收尾反而拖慢整条 HUD。
+        StopRecorderOutsideGate(toStop);
     }
 
-    private static void UpdateFlightRecordingLocked(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
+    /// <summary>
+    /// 自检钩子：在锁外 Stop 之前调用（正常运行为 null）。仅用于断言「Stop 不在 recGate 内」。
+    /// </summary>
+    internal static Action<FlightRecorder>? RecorderStopProbe;
+
+    /// <summary>在 <see cref="recGate"/> 之外停录：等写线程落盘，失败只打日志。</summary>
+    private static void StopRecorderOutsideGate(FlightRecorder? rec)
+    {
+        if (rec is null) return;
+        RecorderStopProbe?.Invoke(rec);   // 自检断言点：这里必须还没持有 recGate
+        try { rec.Stop(); }
+        catch (Exception ex) { Console.WriteLine("recorder: stop failed: " + ex.Message); }
+    }
+
+    /// <summary>
+    /// 锁内的记录状态机。需要停录时只把 <see cref="flightRecorder"/> 摘下来并返回它，
+    /// 由调用方在锁外 Stop()（<see cref="UpdateFlightRecording"/> 负责）。
+    /// </summary>
+    private static FlightRecorder? UpdateFlightRecordingLocked(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
     {
         long nowTicks = Environment.TickCount64;
 
@@ -3307,31 +3339,28 @@ public static partial class Program
 
         if (!cfg.RecordEnabled)
         {
-            if (flightRecorder != null)
-            {
-                flightRecorder.Stop();
-                flightRecorder = null;
-                recLastStampUtc = default;
-                recLastPacketTicks = 0;
-                recLastSampleUtc = null;
-                recOutSince = 0;
-                recInvalidTicks = 0;
-                recDeathLogged = false;
-                recHudmsgDeathUtc = default;
-                recDeathTicks = 0;
-                ResetZeroSnapshotGuard();
-                Console.WriteLine("recording stopped (toggle off)");
-            }
-            return;
+            if (flightRecorder is not { } pendingStop) return null;
+            flightRecorder = null;
+            recLastStampUtc = default;
+            recLastPacketTicks = 0;
+            recLastSampleElapsed = null;
+            recOutSince = 0;
+            recInvalidTicks = 0;
+            recDeathLogged = false;
+            recHudmsgDeathUtc = default;
+            recDeathTicks = 0;
+            ResetZeroSnapshotGuard();
+            Console.WriteLine("recording stopped (toggle off)");
+            return pendingStop;   // 锁外 Stop
         }
 
         // 自动开始：进入对局且拿到有效遥测。
         if (flightRecorder == null)
         {
-            if (!snap.Valid || !inBattle) return;
+            if (!snap.Valid || !inBattle) return null;
             flightRecorder = FlightRecorder.Start(cfg, snap);
             recLastPacketTicks = nowTicks;
-            recLastSampleUtc = null;        // 新文件：第一条样本不参与中断判定
+            recLastSampleElapsed = null;    // 新文件：第一条样本不参与中断判定
             recVehiclePrev = snap.VehicleType;
             recOutSince = 0;
             recInvalidTicks = 0;
@@ -3435,18 +3464,21 @@ public static partial class Program
         bool idleOut = recOutSince != 0 && nowTicks - recOutSince > 60_000;
         if (!packetsAlive || idleOut)
         {
-            flightRecorder.Stop();
+            var pendingStop = flightRecorder;
             flightRecorder = null;
             recLastStampUtc = default;
             recLastPacketTicks = 0;
-            recLastSampleUtc = null;
+            recLastSampleElapsed = null;
             recOutSince = 0;
             // 缓冲中的单帧全 0 直接丢掉：没有下一帧可确认，写进去反而会在文件末尾多一个 0 点。
             ResetZeroSnapshotGuard();
             Console.WriteLine(idleOut
                 ? "recording stopped (out of battle for 60 s)"
                 : "recording stopped (no telemetry)");
+            return pendingStop;   // 锁外 Stop
         }
+
+        return null;
     }
 
     /// <summary>数据中断阈值（秒）：相邻样本间隔超过它才写 gap 事件。</summary>
@@ -3454,12 +3486,15 @@ public static partial class Program
 
     /// <summary>
     /// 相邻样本间隔是否算「数据中断」。返回中断秒数；首样本或 ≤ 阈值返回 null。
+    /// <para>★ 用快照的单调时间（<see cref="TelemetrySnapshot.ElapsedSeconds"/>，来自 Stopwatch）
+    /// 而不是 DateTime：系统时钟 NTP 校时/手动改时间会让墙钟跳变，用墙钟算间隔会在
+    /// 时钟回拨时漏报、前跳时误报一整段「假 gap」（FlightLog 就会多一条虚假事件）。</para>
     /// 抽成纯函数是为了能在 selftest 里把 &lt;1 s / =1 s / &gt;1 s 三种边界都断言一遍。
     /// </summary>
-    internal static double? SampleGapSeconds(DateTime? prevUtc, DateTime curUtc)
+    internal static double? SampleGapSeconds(double? prevElapsedS, double curElapsedS)
     {
-        if (prevUtc is not { } prev) return null;
-        double gapS = (curUtc - prev).TotalSeconds;
+        if (prevElapsedS is not { } prev) return null;
+        double gapS = curElapsedS - prev;
         return gapS > RecordGapThresholdS ? gapS : null;
     }
 
@@ -3468,20 +3503,22 @@ public static partial class Program
         => string.Create(CultureInfo.InvariantCulture, $"record gap {gapS:F2}s at sample t={sampleT:F2}");
 
     /// <summary>
-    /// 写一条记录样本：先补 gap 事件（相邻**已写**样本间隔 &gt;1 s），再落样本。
+    /// 写一条记录样本：先补 gap 事件（相邻**已写**样本的单调时间间隔 &gt;1 s），再落样本。
     /// 抽成方法是因为「单帧全 0 缓冲后按原时间戳补写」要复用完全相同的 gap 语义：
-    /// 跳过一段全 0 快照期间 recLastSampleUtc 不前进，所以下一条真实样本间隔 &gt;1 s 时
+    /// 跳过一段全 0 快照期间 recLastSampleElapsed 不前进，所以下一条真实样本间隔 &gt;1 s 时
     /// 照旧写 gap —— 那正是数据中断。
     /// </summary>
     private static void WriteRecordSample(HudConfig cfg, TelemetrySnapshot snap, AttitudeSolution att)
     {
         if (flightRecorder is not { } rec) return;
-        if (SampleGapSeconds(recLastSampleUtc, snap.TimestampUtc) is double gapS)
+        // ★ 间隔用单调时间（ElapsedSeconds）算：系统时钟跳变不会造成假 gap。
+        if (SampleGapSeconds(recLastSampleElapsed, snap.ElapsedSeconds) is double gapS)
         {
+            // 事件时间戳仍是这一帧的墙钟时间（JSONL 的 utc 字段要能和外部日志对上）。
             rec.Event("gap", null, snap.TimestampUtc, null, gapS);
             Console.WriteLine(GapLogLine(gapS, snap.ElapsedSeconds));
         }
-        recLastSampleUtc = snap.TimestampUtc;
+        recLastSampleElapsed = snap.ElapsedSeconds;
         rec.Add(snap, att, EffectiveRadioAltM(snap, cfg));
     }
 
@@ -3762,7 +3799,7 @@ public static partial class Program
     private static readonly object recGate = new();
     private static long recLastPacketTicks;
     private static DateTime recLastStampUtc;
-    private static DateTime? recLastSampleUtc;   // 上一条写入样本的快照时间，数据中断检测用
+    private static double? recLastSampleElapsed;   // 上一条写入样本的单调时间（快照 ElapsedSeconds），数据中断检测用
     private static string recVehiclePrev = "";
     private static long recOutSince;
     private static long recInvalidTicks;      // 本次 valid=false 的起点（0 = 当前有效）

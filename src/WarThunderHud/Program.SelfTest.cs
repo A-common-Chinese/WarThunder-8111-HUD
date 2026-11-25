@@ -1648,6 +1648,75 @@ public static partial class Program
             WtHud.Telemetry.FlightRecorder.Folder.EndsWith("recordings",
                 StringComparison.OrdinalIgnoreCase));
 
+        // ★ 旧记录清理不在 Start 同步路径上：删文件（目录 IO，可能被杀软/同步盘拖慢）不能卡住
+        // 调用 Start 的轮询线程。这里用不常见的 keep=137 当探针，等后台清理真的跑过再断言
+        // 「跑在别的线程上」—— 如果 Cleanup 还是同步的，它会在 Start 返回前用当前线程跑完，断言失败。
+        var cleanupCfg = new HudConfig { RecordKeep = 137 };
+        var cleanupSnap = new TelemetrySnapshot
+        {
+            Valid = true, InFlight = true, VehicleType = "selftest-cleanup",
+            ElapsedSeconds = 1.0, TimestampUtc = DateTime.UtcNow,
+        };
+        var cleanupRec = WtHud.Telemetry.FlightRecorder.Start(cleanupCfg, cleanupSnap);
+        bool cleanupRanOffStartThread = false;
+        long cleanupWaitUntil = Environment.TickCount64 + 3000;
+        while (Environment.TickCount64 < cleanupWaitUntil)
+        {
+            if (System.Threading.Volatile.Read(ref WtHud.Telemetry.FlightRecorder.LastCleanupKeep) == 137)
+            {
+                cleanupRanOffStartThread =
+                    System.Threading.Volatile.Read(ref WtHud.Telemetry.FlightRecorder.LastCleanupThreadId)
+                    != Environment.CurrentManagedThreadId;
+                break;
+            }
+            Thread.Sleep(5);
+        }
+        string cleanupRecPath = cleanupRec.FilePath;
+        cleanupRec.Stop();
+        try { File.Delete(cleanupRecPath); } catch { }
+        Check("recorder cleanup runs on a background thread, not inside Start", cleanupRanOffStartThread);
+
+        // ★ AutoFlush=false 的补偿：写线程每 100 行 / 1 s 手动 Flush，飞行中的文件仍然每秒可见。
+        // 不 Stop 也能读到样本 = 手动 Flush 没被关掉（崩溃时最多丢 ~1 s，不会丢整局）。
+        string? liveRecPath = null;
+        try
+        {
+            var liveCfg = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var liveBase = DateTime.UtcNow;
+            for (int i = 0; i < 15; i++)
+            {
+                UpdateFlightRecording(liveCfg, new TelemetrySnapshot
+                {
+                    Valid = true, InFlight = true, VehicleType = "selftest-flush",
+                    ElapsedSeconds = i * 0.1, TimestampUtc = liveBase.AddSeconds(i * 0.1),
+                    IasKmh = 600, TasKmh = 620, AltM = 2000, VyMs = 1, NyG = 1,
+                }, true);
+                liveRecPath ??= flightRecorder?.FilePath;
+                Thread.Sleep(100);
+            }
+            bool liveSampleVisible = false;
+            try
+            {
+                // 写线程还开着这个文件（FileShare.Read），读侧必须允许 Write 才能同时打开。
+                if (liveRecPath is not null)
+                {
+                    using var liveStream = new FileStream(liveRecPath, FileMode.Open,
+                        FileAccess.Read, FileShare.ReadWrite);
+                    using var liveReader = new StreamReader(liveStream);
+                    liveSampleVisible = liveReader.ReadToEnd().Contains("\"type\":\"sample\"");
+                }
+            }
+            catch (IOException) { }
+            Check("recorder flushes periodically while recording (AutoFlush is off)", liveSampleVisible);
+        }
+        finally
+        {
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (liveRecPath != null) { try { File.Delete(liveRecPath); } catch { } }
+        }
+
         // 记录器端到端：meta → sample → marker → end，读回来验证 JSONL 结构。
         string? recPath = null;
         try
@@ -1710,12 +1779,13 @@ public static partial class Program
 
         // ---- 数据中断 gap：阈值纯函数 + 真实记录路径（不依赖游戏）----
         // 阈值是严格 > 1.0 s：正好 1 s 的间隔不算中断，避免和 1 Hz 采样互相误伤。
-        var gapT0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        // ★ 间隔用单调时间（快照 ElapsedSeconds，来自 Stopwatch），不用墙钟 DateTime。
+        const double gapT0 = 10.0;
         Check("data gap threshold is strictly greater than 1 s",
             SampleGapSeconds(null, gapT0) is null
-            && SampleGapSeconds(gapT0, gapT0.AddSeconds(0.4)) is null
-            && SampleGapSeconds(gapT0, gapT0.AddSeconds(1.0)) is null
-            && SampleGapSeconds(gapT0, gapT0.AddSeconds(1.001)) is double gEdge
+            && SampleGapSeconds(gapT0, gapT0 + 0.4) is null
+            && SampleGapSeconds(gapT0, gapT0 + 1.0) is null
+            && SampleGapSeconds(gapT0, gapT0 + 1.001) is double gEdge
             && Math.Abs(gEdge - 1.001) < 1e-6);
         Check("data gap log line keeps the documented shape",
             GapLogLine(2.66, 41.2) == "record gap 2.66s at sample t=41.20");
@@ -1754,6 +1824,83 @@ public static partial class Program
                 UpdateFlightRecording(new HudConfig { RecordEnabled = false },
                     new TelemetrySnapshot { Valid = false }, false);
             if (gapRecPath != null) { try { File.Delete(gapRecPath); } catch { } }
+        }
+
+        // ★ 时钟跳变不能误报 gap：墙钟回拨/前跳 1 小时、单调时间正常推进 → 一条 gap 都不写。
+        // 反过来单调时间真的中断 2 s 时必须写 gap，而且事件 utc 仍然用这一帧的墙钟时间。
+        string? jumpRecPath = null;
+        try
+        {
+            var jumpCfg = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var jumpBase = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+            TelemetrySnapshot JumpSnap(double t, DateTime utc) => new()
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest-jump",
+                ElapsedSeconds = t, TimestampUtc = utc,
+                IasKmh = 700, TasKmh = 720, AltM = 3000, VyMs = 1, NyG = 1.1,
+                HeadingDeg = 90, FuelKg = 900, Fuel0Kg = 1000,
+            };
+            UpdateFlightRecording(jumpCfg, JumpSnap(0.0, jumpBase), true);
+            jumpRecPath = flightRecorder?.FilePath;
+            UpdateFlightRecording(jumpCfg, JumpSnap(0.2, jumpBase.AddHours(-1)), true);   // 墙钟回拨 1 h
+            UpdateFlightRecording(jumpCfg, JumpSnap(0.4, jumpBase.AddHours(1)), true);    // 墙钟前跳 1 h
+            var jumpGapSnap = JumpSnap(2.4, jumpBase.AddSeconds(2.4));                    // 单调时间真的断了 2 s
+            UpdateFlightRecording(jumpCfg, jumpGapSnap, true);
+            UpdateFlightRecording(new HudConfig { RecordEnabled = false }, jumpGapSnap, true);
+            var jumpLines = jumpRecPath is null ? Array.Empty<string>() : File.ReadAllLines(jumpRecPath);
+            var jumpGaps = jumpLines
+                .Where(l => l.Contains("\"type\":\"event\"") && l.Contains("\"kind\":\"gap\""))
+                .ToArray();
+            Check("gap uses monotonic time, wall-clock jumps do not create fake gaps",
+                jumpRecPath is not null && jumpGaps.Length == 1 && jumpGaps[0].Contains("\"gap\":2"));
+            Check("gap event keeps the snapshot wall-clock utc",
+                jumpGaps.Length == 1
+                && jumpGaps[0].Contains("\"utc\":\""
+                    + jumpGapSnap.TimestampUtc.ToString("O", CultureInfo.InvariantCulture) + "\""));
+        }
+        finally
+        {
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (jumpRecPath != null) { try { File.Delete(jumpRecPath); } catch { } }
+        }
+
+        // ★ 停录不在 recGate 里：Locked 只把 recorder 摘下来返回，Stop（Join 写线程最多 3 s）
+        // 由 UpdateFlightRecording 在锁外执行。用钩子断言「Stop 前一刻没持有 recGate、字段已摘下」。
+        string? stopProbePath = null;
+        try
+        {
+            var stopCfgOn = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var stopCfgOff = new HudConfig { RecordEnabled = false };
+            var stopSnap = new TelemetrySnapshot
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest-stop",
+                ElapsedSeconds = 1.0, TimestampUtc = DateTime.UtcNow,
+                IasKmh = 500, TasKmh = 520, AltM = 1000, NyG = 1,
+            };
+            int stopProbeCalls = 0;
+            bool stopProbeHeldGate = false, stopProbeDetached = false;
+            RecorderStopProbe = _ =>
+            {
+                stopProbeCalls++;
+                if (Monitor.IsEntered(recGate)) stopProbeHeldGate = true;
+                if (flightRecorder is null) stopProbeDetached = true;
+            };
+            UpdateFlightRecording(stopCfgOn, stopSnap, true);    // 开始记录
+            stopProbePath = flightRecorder?.FilePath;
+            UpdateFlightRecording(stopCfgOff, stopSnap, true);   // 停录（Stop 应在锁外）
+            Check("recorder Stop runs outside recGate",
+                stopProbeCalls == 1 && !stopProbeHeldGate && stopProbeDetached
+                && flightRecorder is null);
+        }
+        finally
+        {
+            RecorderStopProbe = null;
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (stopProbePath != null) { try { File.Delete(stopProbePath); } catch { } }
         }
 
         // ---- 全 0 快照（8111 冻结帧）：判定纯函数 + 连续去抖 + 记录端真的跳过 ----
@@ -1938,7 +2085,8 @@ public static partial class Program
             int pollPort = ((IPEndPoint)listener.LocalEndpoint).Port;
             const string stateBody = """{"valid":true,"IAS, km/h":800,"TAS, km/h":820,"M":0.7,"H, m":3000,"Vy, m/s":2,"AoA, deg":3,"AoS, deg":0.5,"Ny":1.2,"Mfuel, kg":500,"Mfuel0, kg":1000}""";
             const string indBody = """{"valid":true,"type":"selftest-poll","compass":90,"vario":2}""";
-            // 0 = 正常应答，1 = 回 500（制造 HTTP 失败，用来验证 errors 计数与汇总行）
+            // 0 = 正常应答；1 = 全部回 500（验证 errors 计数与汇总行）；
+            // 2 = 只有 /state 回 500（/indicators 正常，验证「state 失败整轮跳过」）
             var srvMode = new int[1];
             using var srvCts = new System.Threading.CancellationTokenSource();
             var srvThread = new Thread(() =>
@@ -1957,7 +2105,9 @@ public static partial class Program
                             string? requestLine = reader.ReadLine();
                             string? header;
                             do { header = reader.ReadLine(); } while (!string.IsNullOrEmpty(header));
-                            bool fail = System.Threading.Volatile.Read(ref srvMode[0]) != 0;
+                            int mode = System.Threading.Volatile.Read(ref srvMode[0]);
+                            bool isStateRequest = requestLine != null && requestLine.Contains("/state");
+                            bool fail = mode == 1 || (mode == 2 && isStateRequest);
                             byte[] head;
                             if (fail)
                             {
@@ -1990,7 +2140,11 @@ public static partial class Program
             var oldOut = Console.Out;
             int oldWindowMs = WtHud.Telemetry.TelemetryClient.StatsWindowMs;
             WtHud.Telemetry.TelemetryClient? poller = null;
+            WtHud.Telemetry.TelemetryClient? pollerZero = null;
             bool pollThreadOk = false;
+            int seqBeforeStateFail, seqAfterStateFail;
+            int zeroPollCount = 0;
+            long zeroPollElapsedMs = 1;
             try
             {
                 WtHud.Telemetry.TelemetryClient.StatsWindowMs = 150;   // 自检不等 5 s
@@ -2006,12 +2160,36 @@ public static partial class Program
                 Thread.Sleep(250);
                 System.Threading.Volatile.Write(ref srvMode[0], 1);   // 之后回 500 → errors 计数
                 Thread.Sleep(500);
+
+                // ★ /state 失败时整轮跳过：只让 /state 回 500、/indicators 正常。
+                // 旧行为会拿上一次的 indicators 拼一帧 valid=false 发出来（seq 继续涨），
+                // 新行为一帧都不发布。先等 100 ms 让切换前在飞的请求收尾，再取基准。
+                System.Threading.Volatile.Write(ref srvMode[0], 2);
+                Thread.Sleep(100);
+                lock (pollSeqs) seqBeforeStateFail = pollSeqs.Count;
+                Thread.Sleep(300);
+                lock (pollSeqs) seqAfterStateFail = pollSeqs.Count;
+
+                // ★ 最小轮询间隔：interval=0（overlay 传 0）时不能 100+ Hz 空转。
+                // 用回环假 8111 计时：hz 上限 = 1000 / MinCycleMs，留一点调度余量。
+                System.Threading.Volatile.Write(ref srvMode[0], 0);
+                poller.Dispose();
+                poller = null;
+                var zeroSeqs = new List<long>();
+                pollerZero = new WtHud.Telemetry.TelemetryClient(0, "http://127.0.0.1:" + pollPort);
+                pollerZero.SnapshotReceived += s => { lock (zeroSeqs) zeroSeqs.Add(s.Seq); };
+                long zeroStartTicks = Environment.TickCount64;
+                pollerZero.Start();
+                Thread.Sleep(450);
+                zeroPollElapsedMs = Math.Max(1, Environment.TickCount64 - zeroStartTicks);
+                lock (zeroSeqs) zeroPollCount = zeroSeqs.Count;
             }
             finally
             {
                 Console.SetOut(oldOut);
                 WtHud.Telemetry.TelemetryClient.StatsWindowMs = oldWindowMs;
                 poller?.Dispose();
+                pollerZero?.Dispose();
                 try { listener.Stop(); } catch { }
                 srvThread.Join(1000);
             }
@@ -2024,6 +2202,16 @@ public static partial class Program
                 && pollLog.Contains(" p95=") && pollLog.Contains(" errors="));
             Check("poller logs poll errors as a summary instead of spamming",
                 pollLog.Contains("poll error:"));
+            // /state 失败 → 不 Parse / 不发布 / 不触发 SnapshotReceived（否则会凭空造一帧掉线）
+            Check("poller skips the frame when /state fails",
+                seqAfterStateFail == seqBeforeStateFail);
+            // interval=0 也必须补足最小轮询周期：hz 不超过 1000/MinCycleMs（+ 调度余量）
+            double zeroHz = zeroPollCount * 1000.0 / zeroPollElapsedMs;
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  poll interval=0: {zeroPollCount} frames in {zeroPollElapsedMs} ms -> hz={zeroHz:F1} " +
+                $"(cap {1000.0 / WtHud.Telemetry.TelemetryClient.MinCycleMs:F1})"));
+            Check("poller enforces the minimum cycle interval when interval is 0",
+                zeroPollCount >= 5 && zeroHz <= 1000.0 / WtHud.Telemetry.TelemetryClient.MinCycleMs + 10);
         }
         catch (Exception ex)
         {

@@ -38,11 +38,15 @@ public sealed class FlightRecorder : IDisposable
         _writer.Start();
     }
 
-    /// <summary>开始一局记录：清理旧文件（保留最近 recordKeep 个）、建目录、写 meta。</summary>
+    /// <summary>开始一局记录：建目录、写 meta、把清理旧文件丢到后台。</summary>
+    /// <remarks>
+    /// ★ 清理会删旧文件（目录 IO，可能被杀软/同步盘拖慢），不能阻塞调用方 —— 这个 Start
+    /// 是在轮询线程的 recGate 锁里调的，删文件卡住就等于录制/看护一起卡住。所以只排队清理。
+    /// </remarks>
     public static FlightRecorder Start(HudConfig cfg, TelemetrySnapshot first)
     {
         Directory.CreateDirectory(Folder);
-        Cleanup(cfg.RecordKeep);
+        CleanupInBackground(cfg.RecordKeep);
 
         string vehicle = string.IsNullOrWhiteSpace(first.VehicleType) ? "unknown" : first.VehicleType;
         foreach (var bad in System.IO.Path.GetInvalidFileNameChars()) vehicle = vehicle.Replace(bad, '_');
@@ -168,13 +172,15 @@ public sealed class FlightRecorder : IDisposable
     {
         try
         {
-            using var w = new StreamWriter(_path, append: false, new UTF8Encoding(false)) { AutoFlush = true };
+            using var w = new StreamWriter(_path, append: false, new UTF8Encoding(false)) { AutoFlush = false };
             int lines = 0;
             long lastFlush = Environment.TickCount64;
             foreach (var line in _queue.GetConsumingEnumerable())
             {
                 w.WriteLine(line);
                 // 定期落盘：飞行中文件就能看到内容，崩溃也不会丢整局。
+                // AutoFlush=false：每行一次系统调用太贵，靠这里的 100 行 / 1 s 手动 Flush 兜底，
+                // Stop() 里 Join 前也会把队列写完 + 最后一次 Flush，所以收尾不丢数据。
                 if (++lines % 100 == 0 || Environment.TickCount64 - lastFlush > 1000)
                 {
                     w.Flush();
@@ -189,19 +195,42 @@ public sealed class FlightRecorder : IDisposable
         }
     }
 
+    /// <summary>自检用：最近一次 Cleanup 的 keep 参数与运行线程 id（0 = 还没跑过）。</summary>
+    internal static int LastCleanupKeep;
+    internal static int LastCleanupThreadId;
+
+    /// <summary>
+    /// 把「清理旧记录」丢到后台线程池。Start 里同步做会因为删文件抖动而卡住轮询线程；
+    /// 清理失败（权限/文件占用）只打日志，绝不影响本次录制。
+    /// </summary>
+    internal static void CleanupInBackground(int keep)
+    {
+        Task.Run(() =>
+        {
+            try { Cleanup(keep); }
+            catch (Exception ex) { Console.WriteLine("recorder: cleanup failed: " + ex.Message); }
+        });
+    }
+
     /// <summary>清理旧记录：按文件名（时间戳）排序，保留最近的 keep-1 个（给新文件留一位）。</summary>
     internal static void Cleanup(int keep)
     {
+        System.Threading.Volatile.Write(ref LastCleanupKeep, keep);
+        System.Threading.Volatile.Write(ref LastCleanupThreadId, Environment.CurrentManagedThreadId);
         try
         {
             keep = Math.Clamp(keep, 2, 200);
             if (!Directory.Exists(Folder)) return;
             foreach (var old in PlanDeletions(Directory.GetFiles(Folder, Prefix + "*.jsonl"), keep))
             {
-                try { File.Delete(old); } catch { }
+                try { File.Delete(old); }
+                catch (Exception ex) { Console.WriteLine("recorder: cleanup could not delete " + old + ": " + ex.Message); }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Console.WriteLine("recorder: cleanup failed: " + ex.Message);
+        }
     }
 
     /// <summary>纯函数：返回需要删除的文件（最老的在前）。文件名带时间戳，按名称排序即可。</summary>

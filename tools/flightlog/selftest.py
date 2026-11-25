@@ -30,8 +30,11 @@
 14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET n/9/标题栏、打印分页 CSS、
     保存设置二级页（PDF/PNG + 保留批注开关）、内嵌 PNG 复盘卡 SVG 与 canvas 导出钩子。
 15. 审阅批注规则：速度（最大 IAS + 首次超限速）、高度（最低气压高度）、Es（最低点 +
-    2 s 滑动平均 dEs/dt 最负的断崖起点）、迎角/过载（最大过载）、姿态不批注、
-    时间相近（<10 s）合并、每页 ≤2 条。
+    断崖**区间**：2 s 滑动平均 dEs/dt 最负处向左右扩到恢复 30% 或最长 10 s，
+    带 t0/t1/时长/ΔEs/平均斜率；与最低点 <10 s 合并成「断崖段至最低点」；
+    屏幕 / 打印 / 复盘卡都在同一 Es 曲线上画**加粗红线段**（屏幕亮红、打印深红、
+    卡蜡笔红）+ 端点圆点，不再画区间带 / 括号）、
+    迎角/过载（最大过载）、姿态不批注、时间相近（<10 s）合并、每页 ≤2 条。
 16. 限速读取：与 FlightLog.exe 同目录的 hud-config.json / airframes.json
     （perVehicleOverrides → airframes → 全局 overspeedKmh），缺文件/坏 JSON 不报错，
     ``--vne-kmh`` 手动覆盖。
@@ -40,6 +43,11 @@
 18. 数据中断（0.5.3）：曲线改用三次贝塞尔平滑（Catmull-Rom 切线 + 限幅，零过冲）、
     断线阈值 1.0 s、断口虚线贝塞尔桥 + 淡灰竖带/斜纹、gap 事件解析与合并去重、
     老日志按样本间隔自动检测、GAP legend 文本与编号、概览「数据完整性」行。
+19. PDF 导出（0.5.6）：报告**始终**内联 vendored jsPDF/html2canvas + 导出脚本
+    （vendor base64 解码 / sha256 校验）；``file://`` 下按钮必走浏览器内逐页生成
+    （Chromium 拦 ``<a download>``），``http(s)`` + ``<body data-pdf="...">`` 用方案 A
+    预生成文件直下；``__pdfState`` 暴露 ``file`` / ``mode`` /
+    ``data-pdf-fallback="inline"`` 分支标记。
 """
 
 from __future__ import annotations
@@ -61,19 +69,33 @@ _PARENT = _TOOL_DIR.parent
 if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
+#: selftest 只用合成数据：不启动 Edge/Chrome、不写 PDF，``write_report`` 只落 HTML。
+#: （真实 PDF A/B 路径由 out/_verify 下的构建脚本 + 真实日志验证。）
+os.environ.setdefault("FLIGHTLOG_NO_PDF", "1")
+
 from flightlog import parse as P  # noqa: E402
 from flightlog import picker as PK  # noqa: E402
 from flightlog import replay as R  # noqa: E402
 from flightlog import acmi as A  # noqa: E402
 from flightlog import mfd as MF  # noqa: E402
+from flightlog import report as RPT  # noqa: E402
 from flightlog.__main__ import main as cli_main  # noqa: E402
 from flightlog.report import (  # noqa: E402
     ANNOTATION_CODES,
     ANNOTATION_NAMES,
     DEFAULT_THEME,
+    ES_HIGHLIGHT_COLOR,
+    ES_HIGHLIGHT_PRINT_COLOR,
+    ES_HIGHLIGHT_PRINT_WIDTH,
+    ES_HIGHLIGHT_WIDTH,
+    ES_RANGE_COLOR,
+    ES_RANGE_MAX_S,
+    ES_RANGE_RECOVER_RATIO,
     GAP_HOLE_S,
     LINE_STYLES,
     PATH_GAP_S,
+    PDF_DISABLE_ENV,
+    PDF_PRINT_FLAGS,
     PLOT_LEFT,
     PLOT_RIGHT,
     THEMES,
@@ -81,8 +103,11 @@ from flightlog.report import (  # noqa: E402
     SpeedLimits,
     _annotation_card_line,
     _annotation_code_label,
+    _annotation_is_range,
     _annotation_legend_line,
     _annotation_mark_text,
+    _annotation_range_measure,
+    _annotation_range_time,
     _annotation_text,
     _Axis,
     _bezier_path,
@@ -96,19 +121,29 @@ from flightlog.report import (  # noqa: E402
     _iter_segments_with_gaps,
     _kill_card_line,
     _kill_legend_line,
+    _median_step,
     _moving_average,
     _svg_series,
+    _tc_range_text,
     _tc_text,
     _tc_text_floor,
     _XAxis,
     annotation_code,
     annotation_name,
     compute_annotations,
+    find_pdf_browser,
+    generate_pdf,
     get_theme,
+    inject_pdf_data_attr,
+    inject_pdf_fallback,
     line_style,
     load_speed_limits,
     manual_speed_limits,
+    pdf_fallback_script,
+    pdf_print_command,
+    pdf_vendor_ready,
     render_report,
+    write_report,
 )
 
 FAILURES = []
@@ -1951,7 +1986,13 @@ def test_replay_cli(tmp: Path) -> None:
           "单玩家回放 9 页（含全局总览）")
     check('id="player-bar"' not in html, "单玩家不出玩家切换器")
     check("window.__FLIGHTLOG__=" in html, "回放报告也内联悬停数据")
-    check("<script src" not in html and "<link" not in html and "<img" not in html,
+    # 报告现在始终内联 jsPDF/html2canvas（file:// 下真下载 PDF）：库源码里会出现
+    # "<img" / "<link" 之类创建标签的字符串，判断"外链"要先剥掉 <script> 内容。
+    replay_shell = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.S)
+    check("data-pdf-vendor=\"jspdf\"" in html,
+          "回放报告也内联 PDF vendor（file:// 下可直接下载 PDF）")
+    check("<script src" not in replay_shell and "<link" not in replay_shell
+          and "<img" not in replay_shell,
           "回放报告自包含（无外链脚本/样式/图片）")
 
     # 多玩家 → 8 页 + 玩家切换器
@@ -2202,11 +2243,33 @@ def test_annotations() -> None:
     cliff = next(item for item in energy if item["kind"] == "es_cliff")
     check(es_min["value"] == 200.0 and abs(es_min["t"] - 60.0) < 0.25,
           "Es 最低点 = 200 m @ 60 s")
-    check(28.0 <= cliff["t"] <= 31.0,
-          "Es 断崖标在下跌段起点（%.1f s，≈30 s）" % cliff["t"])
-    check(cliff["rate"] < -100.0, "断崖速率为明显负值（%.0f m/s）" % cliff["rate"])
-    check(840.0 <= cliff["value"] <= 980.0,
-          "断崖起点取该处 Es 值（%.0f m，≈900）" % cliff["value"])
+    check(_annotation_is_range(cliff) and cliff["range"] is True,
+          "Es 断崖是区间批注（range=True，带 t0/t1）")
+    check(28.5 <= cliff["t0"] <= 30.0,
+          "区间起点 = 下跌前滚动 dEs/dt 回到 30%% 的位置（%.1f s）" % cliff["t0"])
+    check(35.0 <= cliff["t1"] <= 36.5,
+          "区间终点 = 回稳后滚动 dEs/dt 回到 30%% 的位置（%.1f s）" % cliff["t1"])
+    check(5.0 <= cliff["duration"] <= 7.5,
+          "区间时长 %.2f s（最长 10 s 以内）" % cliff["duration"])
+    check(abs(cliff["delta"] - (-632.0)) < 30.0,
+          "区间 ΔEs = 首尾差（%.0f m，≈-632）" % cliff["delta"])
+    check(abs(cliff["avg_rate"] - cliff["delta"] / cliff["duration"]) < 1e-6,
+          "平均斜率 = ΔEs / 时长（%.0f m/s）" % cliff["avg_rate"])
+    check(840.0 <= cliff["value"] <= 990.0,
+          "区间起点取该处 Es 值（%.0f m，≈953）" % cliff["value"])
+    # 30% 边界：两端点的滚动 dEs/dt 已恢复，而再往外一步仍陡（区间正好覆盖断崖）
+    _times = flight.series["t"]
+    _step = _median_step(_times)
+    _half = max(1, int(round(2.0 / (2.0 * _step))))
+    _smoothed = _moving_average(flight.series["des"], _half)
+    _core = min(value for value in _smoothed if value is not None)
+    _threshold = abs(_core) * ES_RANGE_RECOVER_RATIO
+    _i0 = min(range(len(_times)), key=lambda i: abs(_times[i] - cliff["t0"]))
+    _i1 = min(range(len(_times)), key=lambda i: abs(_times[i] - cliff["t1"]))
+    check(abs(_smoothed[_i0]) <= _threshold and abs(_smoothed[_i1]) <= _threshold,
+          "区间两端滚动 dEs/dt 已回到核心值的 30%% 以内")
+    check(abs(_smoothed[_i0 + 1]) > _threshold and abs(_smoothed[_i1 - 1]) > _threshold,
+          "往核心方向一步仍超过核心值 30%%（区间恰好到恢复点，没有多扩）")
 
     aoa = annotations["aoa_ny"]
     check(len(aoa) == 1 and aoa[0]["kind"] == "max_ny", "迎角/过载页 1 条：最大过载")
@@ -2287,8 +2350,27 @@ def test_annotations() -> None:
           and _annotation_code_label(cliff) == "ES_DROP",
           "高度 / Es 最低点 / Es 断崖 code = ALT_MIN / ES_MIN / ES_DROP")
     cliff_line = _annotation_legend_line(cliff, 1)
-    check("Es 断崖 · -" in cliff_line and "m/s" in cliff_line,
-          "断崖 legend 行带 dEs/dt 速率：%s" % cliff_line)
+    check(
+        cliff_line.startswith("② ES_DROP Es 断崖 · ")
+        and " s · ΔEs -" in cliff_line
+        and " m · 平均 -" in cliff_line
+        and " m/s · T+" in cliff_line,
+        "断崖 legend 行 = code + 全称 + 时长 + ΔEs + 平均斜率 + 时间区间：%s" % cliff_line,
+    )
+    check(
+        "–" in _annotation_range_time(cliff)
+        and _tc_range_text(59.0, 61.0) == "T+00:59–01:01",
+        "区间时间码 T+mm:ss–mm:ss（跨分钟只写终点 mm:ss）",
+    )
+    check(
+        _annotation_range_measure(cliff).endswith(" m/s")
+        and " s · ΔEs -" in _annotation_range_measure(cliff),
+        "区间数据段格式：%s" % _annotation_range_measure(cliff),
+    )
+    check(_annotation_mark_text(cliff).startswith("ES_DROP "),
+          "区间批注图上标记 = code + 区间数据（%s）" % _annotation_mark_text(cliff))
+    check(_annotation_card_line(cliff, 1).startswith("② ES_DROP — Es 断崖 "),
+          "复盘卡 legend 行也带区间数据：%s" % _annotation_card_line(cliff, 1))
     death_line = _death_legend_line({"t": 395.4, "note": "数据终止"}, 2)
     check(death_line == "③ DEATH 死亡 · 395.4 s · T+06:35（数据终止）",
           "DEATH legend 行：%s" % death_line)
@@ -2298,6 +2380,433 @@ def test_annotations() -> None:
     check("限速预警 · >500 km/h" in merged_line and "最大指示空速 · 800 km/h" in merged_line,
           "合并批注 legend 行列出全部成员：%s" % merged_line)
     check(len(merged[0]["members"]) == 2, "合并批注数据模型保留 2 个成员（供 legend 用）")
+
+
+def build_es_drop_log(path: Path, merge_min: bool = False) -> None:
+    """合成日志：0.2 s 采样 60 s，30 s 起 Es 断崖（可选最低点紧接断崖 → 触发合并）。"""
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.6-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "jh_7a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    lines.append(json.dumps({"type": "event", "kind": "spawn", "t": 0.0}))
+    for index in range(301):
+        t = round(index * 0.2, 3)
+        if merge_min:
+            # 30 s 起 1.5 s 掉 600 m，然后停在最低点（最低点紧接断崖）
+            if t <= 30.0:
+                alt = 1100.0 - 5.0 * t
+            elif t <= 31.5:
+                alt = 1100.0 - 150.0 - 600.0 * ((t - 30.0) / 1.5)
+            else:
+                alt = 350.0
+        else:
+            alt = 1100.0 - 5.0 * t - 120.0 * min(5.0, max(0.0, t - 30.0))
+        lines.append(
+            json.dumps(
+                _sample(t, EPOCH0, alt_m=alt, tas_kmh=520.0, ias_kmh=480.0, ny_g=2.0),
+                ensure_ascii=False,
+            )
+        )
+    lines.append(json.dumps({"type": "event", "kind": "death", "t": 60.0}))
+    lines.append(json.dumps({"type": "end", "utc": _iso(EPOCH0 + 60.0)}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_es_range_annotations(tmp: Path) -> None:
+    """Es 断崖区间（0.5.6）：10 s 上限 / ΔEs / 平均斜率 / 与最低点合并 / 曲线加粗标红。"""
+    print("\n[19] Es 断崖区间：30% 恢复 / 10 s 上限 / ΔEs / 合并 / 曲线加粗标红")
+
+    # ---- 1) 长时间等速下坠：30% 阈值迟迟不满足 → 区间被 10 s 上限截断 ----
+    step = 0.2
+    times = [round(index * step, 3) for index in range(201)]
+    alt = [1000.0 - 50.0 * t for t in times]
+    es = [1000.0 - 50.0 * t for t in times]
+    des = [None] + [(es[i] - es[i - 1]) / step for i in range(1, len(es))]
+    flat_drop = P.Flight(
+        index=1, reason="test", vehicle="test_jet", start_t=0.0, end_t=40.0,
+        series={"t": times, "alt": alt, "es": es, "des": des},
+    )
+    capped = _es_cliff(times, des, es)
+    check(capped is not None, "持续陡降时仍能识别断崖")
+    check(ES_RANGE_MAX_S - 1e-6 <= capped["duration"] <= ES_RANGE_MAX_S + 1e-6,
+          "滚动 dEs/dt 一直不恢复 30%% 时区间按 10 s 上限截断（%.2f s）" % capped["duration"])
+    check(capped["recovered"] is False, "被上限截断时 recovered=False（如实标出没回到 30%）")
+
+    # ---- 2) ΔEs / 平均斜率 / 区间时间码（真实日志之外的确定性合成样本） ----
+    model = P.analyze(str(_write_es_log(tmp)))
+    cliff_ann = compute_annotations(model.flights[0])["energy"]
+    cliff_ann = next(item for item in cliff_ann if item["kind"] == "es_cliff")
+    check(_annotation_is_range(cliff_ann), "合成日志的 Es 断崖批注是区间类型")
+    check(abs(cliff_ann["delta"] - (-632.0)) < 30.0,
+          "ΔEs = 区间首尾 Es 差（%.0f m，≈-632）" % cliff_ann["delta"])
+    check(abs(cliff_ann["avg_rate"] - cliff_ann["delta"] / cliff_ann["duration"]) < 1e-6,
+          "平均斜率 = ΔEs / 时长（%.0f m/s）" % cliff_ann["avg_rate"])
+    check(_annotation_range_time(cliff_ann).startswith("T+00:29–00:3"),
+          "区间时间码 = T+00:29–00:3x（%s）" % _annotation_range_time(cliff_ann))
+    check("6.4 s" not in _annotation_range_measure(cliff_ann)
+          or _annotation_range_measure(cliff_ann).split(" s")[0].replace(".", "").isdigit(),
+          "区间数据段里的时长是数字：%s" % _annotation_range_measure(cliff_ann))
+
+    # ---- 3) 与 Es 最低点距离 <10 s → 合并成「断崖段至最低点」复合批注 ----
+    merge_model = P.analyze(str(_write_es_log(tmp, merge_min=True)))
+    merged_energy = compute_annotations(merge_model.flights[0])["energy"]
+    check(len(merged_energy) == 1, "最低点紧接断崖时合并成 1 条复合批注")
+    merged_cliff = merged_energy[0]
+    check(merged_cliff.get("merge_min") is True and merged_cliff["kind"] == "es_cliff",
+          "合并批注 kind 仍是 es_cliff，带 merge_min 标记")
+    check(merged_cliff["t1"] >= merged_cliff["t0"] + 1.0,
+          "合并后的区间跨到最低点（%.1f–%.1f s）" % (merged_cliff["t0"], merged_cliff["t1"]))
+    check(_annotation_code_label(merged_cliff) == "ES_DROP+ES_MIN",
+          "合并批注 code 标签 = ES_DROP+ES_MIN（%s）" % _annotation_code_label(merged_cliff))
+    merged_line = _annotation_legend_line(merged_cliff, 0)
+    check("Es 断崖段至最低点" in merged_line and "ΔEs" in merged_line,
+          "合并 legend 行含「断崖段至最低点」：%s" % merged_line)
+    merged_svg = _blueprint_svg_block(render_report(merge_model), "svg-f1-energy")
+    check("es-highlight-path" in merged_svg and "ES_DROP+ES_MIN" in merged_svg,
+          "合并批注（断崖段至最低点）也用同一曲线加粗红线，标注写合并 code")
+
+    # ---- 4) 三处呈现：同一曲线上的加粗红线（屏幕 / 打印 / 复盘卡），不再画竖带 / 括号 ----
+    html = render_report(model)
+    energy_svg = _blueprint_svg_block(html, "svg-f1-energy")
+    check("es-range-band" not in energy_svg and "es-range-hatch" not in energy_svg,
+          "Es 页不再画淡红/斜纹区间竖带（GAP 数据中断带保持不动）")
+    check("es-range-bracket" not in energy_svg, "Es 页不再画区间两端括号")
+
+    def _highlight_group(svg_text: str, layer: str) -> str:
+        match = re.search(
+            r'<g class="ann %s es-highlight"[^>]*>.*?</g>' % layer, svg_text, re.S
+        )
+        return match.group(0) if match else ""
+
+    def _path_points(path_d: str) -> list:
+        return [
+            (float(px), float(py))
+            for px, py in re.findall(r"(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)", path_d)
+        ]
+
+    screen_group = _highlight_group(energy_svg, "ann-screen")
+    check(bool(screen_group) and 'data-series="es"' in screen_group,
+          "Es 页屏幕层有「同一曲线加粗标红」段（data-series=es，随曲线开关隐藏）")
+    screen_path = re.search(
+        r'<path class="es-highlight-path" d="([^"]+)" fill="none" stroke="([^"]+)"'
+        r' stroke-width="([^"]+)"[^>]*opacity="([^"]+)"',
+        screen_group,
+    )
+    check(screen_path is not None,
+          '屏幕层高亮是 <path class="es-highlight-path">（画在曲线上盖住原线）')
+    flight = model.flights[0]
+    ft0, ft1 = float(flight.start_t), float(flight.end_t)
+    if ft1 - ft0 < 0.5:
+        ft1 = ft0 + 0.5
+    xaxis = _XAxis(ft0, ft1, PLOT_LEFT, PLOT_RIGHT)
+    if screen_path is not None:
+        path_d, stroke, width, opacity = screen_path.groups()
+        check(stroke.upper() == ES_HIGHLIGHT_COLOR.upper(),
+              "高亮线用主题红色 %s（实际 %s）" % (ES_HIGHLIGHT_COLOR, stroke))
+        check(abs(float(width) - ES_HIGHLIGHT_WIDTH) < 1e-6
+              and float(width) >= 4.5,
+              "高亮线加粗（%.1f px，约 5px）" % float(width))
+        check(abs(float(opacity) - 0.95) < 1e-6, "高亮线 opacity ≈ 0.95")
+        points = _path_points(path_d)
+        check(abs(points[0][0] - xaxis(float(cliff_ann["t0"]))) < 0.2,
+              "高亮段起点 = t0 像素 x（%.2f ≈ %.2f）"
+              % (points[0][0], xaxis(float(cliff_ann["t0"]))))
+        check(abs(points[-1][0] - xaxis(float(cliff_ann["t1"]))) < 0.2,
+              "高亮段终点 = t1 像素 x（%.2f ≈ %.2f）"
+              % (points[-1][0], xaxis(float(cliff_ann["t1"]))))
+        text = re.search(
+            r'<text class="es-range-label" x="([^"]+)" y="([^"]+)"[^>]*>([^<]*)</text>',
+            screen_group,
+        )
+        check(text is not None and "ES_DROP" in text.group(3)
+              and "ΔEs -" in text.group(3) and "平均 -" in text.group(3),
+              "区间标注文字保留：ES_DROP + ΔEs + 平均斜率 + 时间区间")
+        if text is not None:
+            top_y = min(py for _px, py in points)
+            check(float(text.group(2)) <= top_y - 1.0,
+                  "标注条放在区间上方、不压曲线（text_y=%.1f ≤ 最高点 %.1f）"
+                  % (float(text.group(2)), top_y))
+        check(screen_group.count('class="es-highlight-dot"') == 2,
+              "高亮段两端各加一个小圆点")
+
+    print_group = _highlight_group(energy_svg, "ann-print")
+    check(bool(print_group), "打印层同样用加粗红线（ann-print es-highlight）")
+    check('stroke="%s"' % ES_HIGHLIGHT_PRINT_COLOR in print_group,
+          "打印层用深红墨色 %s" % ES_HIGHLIGHT_PRINT_COLOR)
+    check('stroke-width="%.1f"' % ES_HIGHLIGHT_PRINT_WIDTH in print_group,
+          "打印层线宽 %.1f px（WYSIWYG）" % ES_HIGHLIGHT_PRINT_WIDTH)
+    check("es-range-label" in screen_group and '<text class="ann-type"' in print_group,
+          "屏幕 / 打印各有一份区间标注（打印态也可读）")
+    check("es-highlight" not in _blueprint_svg_block(html, "svg-f1-speed"),
+          "加粗红线只画在 Es 断崖所在图（速度页没有）")
+
+    legend_html = re.search(
+        r'<section class="page[^"]*" id="page-energy".*?</section>', html, re.S
+    )
+    energy_page = legend_html.group(0) if legend_html else ""
+    check("② ES_DROP Es 断崖 · " in energy_page and "ΔEs -" in energy_page
+          and "平均 -" in energy_page,
+          "Es 页图下 legend 行 = code + 全称 + 区间数据 + 时间区间")
+
+    annotated_card = _blueprint_svg_block(html, "debrief-svg-annotated")
+    clean_card = _blueprint_svg_block(html, "debrief-svg-clean")
+    card_path = re.search(
+        r'<path class="ann-crayon ann-range-highlight" d="([^"]+)" fill="none"'
+        r' stroke="([^"]+)" stroke-width="([^"]+)"',
+        annotated_card,
+    )
+    check(card_path is not None,
+          "复盘卡：同一 Es 曲线叠红蜡笔加粗段（ann-range-highlight）")
+    check('class="ann-crayon ann-range"' not in annotated_card,
+          "复盘卡不再画红蜡笔范围括号")
+    if card_path is not None:
+        card_d, card_stroke, card_width = card_path.groups()
+        check(card_stroke.upper() == ES_RANGE_COLOR.upper()
+              and abs(float(card_width) - ES_HIGHLIGHT_PRINT_WIDTH) < 1e-6,
+              "复盘卡高亮段用蜡笔红 %s / %.1f px"
+              % (ES_RANGE_COLOR, float(card_width)))
+        card_points = _path_points(card_d)
+        card_t0, card_t1 = float(flight.start_t), float(flight.end_t)
+        if card_t1 - card_t0 < 1.0:
+            card_t1 = card_t0 + 1.0
+        card_x0, card_x1 = 500.0, 1516.0
+
+        def _card_x(t: float) -> float:
+            return card_x0 + (t - card_t0) / (card_t1 - card_t0) * (card_x1 - card_x0)
+
+        check(abs(card_points[0][0] - _card_x(float(cliff_ann["t0"]))) < 0.3
+              and abs(card_points[-1][0] - _card_x(float(cliff_ann["t1"]))) < 0.3,
+              "复盘卡高亮段起点 / 终点 = t0 / t1 的像素 x")
+    check("ES_DROP — Es 断崖 " in annotated_card,
+          "复盘卡 legend 行也带区间数据")
+    check("ann-range-highlight" not in clean_card and "ES_DROP" not in clean_card,
+          "clean 复盘卡不画高亮段 / 不写 ES_DROP")
+
+    # ---- 5) MFD JSON 不受影响（MFD 不显示批注，schema 不变） ----
+    mfd_text = MF.dump_mfd_json(MF.build_mfd_payload(model))
+    check("ES_DROP" not in mfd_text and "annotation" not in mfd_text,
+          "--mfd-json 不包含批注（区间模型不需要改 MFD schema）")
+
+
+def _write_es_log(tmp: Path, merge_min: bool = False) -> Path:
+    path = tmp / ("es-drop-merge.jsonl" if merge_min else "es-drop.jsonl")
+    build_es_drop_log(path, merge_min=merge_min)
+    return path
+
+
+def test_pdf_export(tmp: Path) -> None:
+    """PDF 导出（0.5.6）：file:// 必走 B / http 直下 A / 始终内联 vendor / vendor 校验。"""
+    print("\n[20] PDF 导出：file:// 走 B 真下载 / http data-pdf 直下 / vendor 始终内联")
+
+    # ---- 1) vendor 资源：文件存在、base64 解码与原始文件一致、sha256/长度对得上 ----
+    vendor = _TOOL_DIR / "vendor"
+    jspdf_file = vendor / "jspdf.umd.min.js"
+    html2canvas_file = vendor / "html2canvas.min.js"
+    check(jspdf_file.is_file() and jspdf_file.stat().st_size > 300000,
+          "vendor/jspdf.umd.min.js 存在（%d 字节）"
+          % (jspdf_file.stat().st_size if jspdf_file.is_file() else 0))
+    check(html2canvas_file.is_file() and html2canvas_file.stat().st_size > 150000,
+          "vendor/html2canvas.min.js 存在（%d 字节）"
+          % (html2canvas_file.stat().st_size if html2canvas_file.is_file() else 0))
+    check((vendor / "licenses" / "jspdf-LICENSE.txt").is_file()
+          and (vendor / "licenses" / "html2canvas-LICENSE.txt").is_file(),
+          "vendor/licenses/ 有 jsPDF / html2canvas 的 MIT 许可证原文")
+    check((vendor / "README.md").is_file(), "vendor/README.md 说明来源 / 版本 / 打包方式")
+    libs = RPT._pdf_vendor_libs()
+    check(libs is not None, "vendor base64 资源能解码且 sha256 校验通过")
+    if libs is not None:
+        check(libs[0].encode("utf-8") == jspdf_file.read_bytes(),
+              "assets.py 里的 jsPDF base64 == vendor/jspdf.umd.min.js")
+        check(libs[1].encode("utf-8") == html2canvas_file.read_bytes(),
+              "assets.py 里的 html2canvas base64 == vendor/html2canvas.min.js")
+        check("jsPDF" in libs[0] and "html2canvas" in libs[1],
+              "解码后的 JS 含库标识（jsPDF / html2canvas）")
+    check(pdf_vendor_ready() is True, "pdf_vendor_ready() = True（方案 B 可用）")
+
+    # ---- 2) 方案 B 注入块：两个内联 <script>，无外链、无提前闭合 ----
+    block = pdf_fallback_script()
+    check(block.count('data-pdf-vendor="jspdf"') == 1
+          and block.count('data-pdf-vendor="html2canvas"') == 1,
+          "注入块 = 两个 vendor <script>（jsPDF + html2canvas）")
+    check(block.count("</script>") == 2, "注入块里只有两处 </script> 闭合（库内无提前闭合）")
+    # 库的 minified JS 里会出现 "<script src=" 之类的字符串（创建标签用），
+    # 判断"外链"要先剥掉 <script> 内容，再看剩下的 HTML 标签。
+    block_shell = re.sub(r"<script\b[^>]*>.*?</script>", "", block, flags=re.S)
+    check(not re.search(r'(?:src|href)="?https?://', block_shell)
+          and "<link" not in block_shell and "<img" not in block_shell,
+          "注入块只含内联 <script>，不引用外链（离线可用）")
+    check('data-pdf-vendor-version="2.5.2"' in block
+          and 'data-pdf-vendor-version="1.4.1"' in block,
+          "注入块带库版本号（jsPDF 2.5.2 / html2canvas 1.4.1）")
+
+    # ---- 3) data-pdf 注入 / B 分支标记 ----
+    mini = "<!DOCTYPE html><html><body>\n<script>window.__FLIGHTLOG__={};</script>\n</body></html>"
+    injected = inject_pdf_data_attr(mini, "report-pdf.pdf")
+    check('<body data-pdf="report-pdf.pdf">' in injected, "方案 A：<body data-pdf=\"...\">")
+    injected_other = inject_pdf_data_attr(injected, "other.pdf")
+    check(injected_other.count("data-pdf=") == 1 and 'data-pdf="other.pdf"' in injected_other,
+          "已有 data-pdf 时只替换值，不重复加属性")
+    fallback_html = inject_pdf_fallback(mini)
+    check('data-pdf-fallback="inline"' in fallback_html, "方案 B：<body data-pdf-fallback=\"inline\"> 标记")
+    check(fallback_html.count('data-pdf-vendor="') == 2, "方案 B：注入两段 vendor script")
+    check(fallback_html.find("data-pdf-vendor=") < fallback_html.find("window.__FLIGHTLOG__="),
+          "vendor script 在页面主脚本之前注入（先到库、后到报告逻辑）")
+    fallback_shell = re.sub(r"<script\b[^>]*>.*?</script>", "", fallback_html, flags=re.S)
+    check(not re.search(r'(?:src|href)="?https?://', fallback_shell)
+          and "<link" not in fallback_shell and "<img" not in fallback_shell,
+          "方案 B 的 HTML 仍是单文件、无外链")
+
+    # ---- 4) headless 打印命令（不真的启动浏览器） ----
+    command = pdf_print_command(
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "out/report-pdf.html",
+        "out/report-pdf.pdf",
+        r"C:\Temp\profile",
+    )
+    check(command[0].endswith("chrome.exe"), "打印命令的可执行文件在 argv[0]")
+    check(all(flag in command for flag in PDF_PRINT_FLAGS),
+          "打印命令含 --headless=new / --disable-gpu / --no-pdf-header-footer 等参数")
+    check(any(item.startswith("--print-to-pdf=") for item in command)
+          and command[-1].startswith("file:///"),
+          "打印命令用 --print-to-pdf=<绝对路径> + file:// URI")
+    check("--user-data-dir=C:\\Temp\\profile" == command[-3]
+          or any(item.startswith("--user-data-dir=") for item in command),
+          "打印命令用独立临时 user-data-dir（不抢用户 Chrome Profile）")
+    check(generate_pdf(str(tmp / "missing.html"))["error"] == "html-missing",
+          "HTML 不存在时 generate_pdf 直接报 html-missing")
+    fake = generate_pdf(str(tmp / "missing.html"), browser=str(tmp / "no-browser.exe"))
+    check(fake["ok"] is False and fake["error"] in ("html-missing", "no-browser"),
+          "找不到浏览器时 generate_pdf 返回 ok=False（不抛异常）")
+    check(find_pdf_browser(explicit=str(tmp / "no-browser.exe")) is None,
+          "find_pdf_browser(explicit=不存在) 返回 None")
+
+    # ---- 5) 报告按钮逻辑：file:// 必走 B / http(s) 有 data-pdf 直下 / 否则 B ----
+    html = render_report(P.analyze(str(_write_es_log(tmp))))
+    check("function exportFullPdf" in html and "function pdfDataFile" in html,
+          "内联 JS 有「预生成 PDF 直下」实现（exportFullPdf / pdfDataFile）")
+    check("function pdfFileProtocol" in html
+          and 'location.protocol === "file:"' in html,
+          "file:// 分支标记：pdfFileProtocol() = location.protocol === \"file:\"")
+    check("function pdfModeName" in html and 'return "file-vendor";' in html,
+          "pdfModeName() 在 file:// 下返回 file-vendor（必走浏览器内生成）")
+    check('if (!pdfFileProtocol() && file)' in html,
+          "按钮逻辑：http(s) 且存在 data-pdf 时才用预生成 PDF 直下")
+    check(html.find('if (!pdfFileProtocol() && file)')
+          < html.find("generatePdfInBrowser(annotated, done, fail);"),
+          "按钮逻辑：file:// 跳过 data-pdf 直下，落到浏览器内生成")
+    check("link.download" in html and "clickDownload" in html,
+          "预生成 PDF 用 <a download> 点击下载（不弹打印界面）")
+    check("function generatePdfInBrowser" in html
+          and '"report.pdf"' in html
+          and "html2canvas" in html,
+          "方案 B 用内联 jsPDF + html2canvas 逐页生成 report.pdf")
+    check("body.pdf-capture" in html and "body.pdf-capture .ann-screen{display:none!important}" in html,
+          "方案 B 的打印态仿真 CSS（.pdf-capture）已内联")
+    check("window.__exportPdf" in html and "window.__pdfState" in html,
+          "内联 JS 暴露 PDF 导出验证钩子（__exportPdf / __pdfState）")
+    check("file: pdfFileProtocol()" in html and "mode: pdfModeName()" in html,
+          "__pdfState 暴露 file / mode（file:// 分支可断言）")
+    check("直接下载 PDF" in html, "保存设置页文案仍是直接下载 PDF")
+    full_injected = inject_pdf_data_attr(html, "report.pdf")
+    full_body = re.search(r"<body[^>]*>", full_injected)
+    check(full_body is not None and 'data-pdf="report.pdf"' in full_body.group(0),
+          "真实报告 HTML 的 document body 带上 data-pdf（不会误改 JS 注释里的 <body ...> 文本）")
+
+    # ---- 6) write_report：禁用预生成时仍始终内联 B 的库（file:// 才能真下载） ----
+    model = P.analyze(str(_write_es_log(tmp)))
+    out = tmp / "no-pdf.html"
+    status: dict = {}
+    written = write_report(model, str(out), pdf=False, status=status)
+    check(os.path.isfile(written) and os.path.getsize(written) > 20000,
+          "pdf=False：正常写出 HTML（%d 字节）" % os.path.getsize(written))
+    with open(written, "r", encoding="utf-8") as handle:
+        plain = handle.read()
+    body_tag = re.search(r"<body[^>]*>", plain)
+    body_html = body_tag.group(0) if body_tag else ""
+    check("data-pdf=" not in body_html,
+          "pdf=False：不写 data-pdf（跳过方案 A 预生成）")
+    check('data-pdf-fallback="inline"' in body_html
+          and plain.count('data-pdf-vendor="') == 2,
+          "pdf=False：仍始终内联两段 vendor script + data-pdf-fallback 标记")
+    plain_bytes = len(plain.encode("utf-8"))
+    check(500_000 < plain_bytes < 6 * 1024 * 1024,
+          "pdf=False：单文件体积 %.2f MB（内联 vendor，< 6 MB）"
+          % (plain_bytes / 1048576.0))
+    check(status.get("mode") == "html-only" and status.get("pdf") is None,
+          "status 记录 mode=html-only（pdf 未生成）")
+    check(not (tmp / "no-pdf.pdf").exists(), "pdf=False：没有生成同名 PDF")
+    check(RPT._pdf_enabled(False) is False
+          and RPT._pdf_enabled(None) is False
+          and RPT._pdf_enabled(True) is True,
+          "FLIGHTLOG_NO_PDF=1 时自动模式关闭、显式 True 仍可强制尝试")
+
+    # ---- 7) write_report 端到端：找不到浏览器 → 自动走方案 B ----
+    original_finder = RPT.find_pdf_browser
+    try:
+        RPT.find_pdf_browser = lambda explicit=None: None  # 模拟没装 Edge/Chrome
+        out_b = tmp / "b-path.html"
+        status_b: dict = {}
+        write_report(model, str(out_b), pdf=True, status=status_b)
+        b_text = out_b.read_text(encoding="utf-8")
+        b_body = re.search(r"<body[^>]*>", b_text).group(0)
+        check(status_b.get("mode") == "inline" and status_b.get("error") == "no-browser",
+              "找不到浏览器时 write_report 走方案 B（mode=inline，不报错中断）")
+        check('data-pdf-fallback="inline"' in b_body and "data-pdf=" not in b_body,
+              "方案 B 的 HTML：没有 data-pdf，带 data-pdf-fallback=\"inline\" 标记")
+        check(b_text.count('data-pdf-vendor="') == 2,
+              "方案 B 的 HTML 内联两段 vendor script（jsPDF + html2canvas）")
+        b_bytes = len(b_text.encode("utf-8"))
+        check(500_000 < b_bytes < 6 * 1024 * 1024,
+              "方案 B 的 HTML 体积 %.2f MB（内联库，< 6 MB）" % (b_bytes / 1048576.0))
+    finally:
+        RPT.find_pdf_browser = original_finder
+
+    # ---- 8) write_report 端到端：方案 A 成功 → http 直下 + vendor 仍在（file:// 也能下） ----
+    original_finder = RPT.find_pdf_browser
+    original_generate = RPT.generate_pdf
+    try:
+        RPT.find_pdf_browser = lambda explicit=None: "fake-chrome"
+
+        def _fake_generate(html_path, pdf_path=None, browser=None, timeout=0):
+            target = Path(pdf_path)
+            target.write_bytes(b"%PDF-1.4\n% selftest\n")
+            return {
+                "ok": True, "browser": browser or "fake-chrome",
+                "pdf": str(target), "error": "", "command": [],
+                "bytes": target.stat().st_size,
+            }
+
+        RPT.generate_pdf = _fake_generate
+        out_a = tmp / "a-path.html"
+        status_a: dict = {}
+        write_report(model, str(out_a), pdf=True, status=status_a)
+        a_text = out_a.read_text(encoding="utf-8")
+        a_body = re.search(r"<body[^>]*>", a_text).group(0)
+        check(status_a.get("mode") == "prebuilt"
+              and status_a.get("pdf") == str(tmp / "a-path.pdf"),
+              "方案 A 成功：status mode=prebuilt、pdf=同名 .pdf")
+        check('data-pdf="a-path.pdf"' in a_body
+              and 'data-pdf-fallback="inline"' in a_body,
+              "方案 A 成功时 body 同时带 data-pdf（http 直下）与 data-pdf-fallback（file:// 走 B）")
+        check(a_text.count('data-pdf-vendor="') == 2,
+              "方案 A 成功也始终内联两段 vendor script（不再只在失败时注入）")
+        check((tmp / "a-path.pdf").is_file(), "同名 PDF 已落盘（模拟 headless 结果）")
+        a_bytes = len(a_text.encode("utf-8"))
+        check(500_000 < a_bytes < 6 * 1024 * 1024,
+              "方案 A 的报告体积 %.2f MB（vendor 始终内联，< 6 MB）"
+              % (a_bytes / 1048576.0))
+    finally:
+        RPT.find_pdf_browser = original_finder
+        RPT.generate_pdf = original_generate
 
 
 def build_kill_log(path: Path) -> None:
@@ -2798,6 +3307,8 @@ def main() -> int:
         test_series_toggles(tmp)
         test_blueprint_report(tmp)
         test_annotations()
+        test_es_range_annotations(tmp)
+        test_pdf_export(tmp)
         test_kill_events(tmp)
         test_gap_bezier(tmp)
         test_speed_limits(tmp)

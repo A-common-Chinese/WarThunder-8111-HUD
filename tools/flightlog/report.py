@@ -34,31 +34,47 @@
   配色集中在 :data:`THEMES` 里，通过 CSS 变量输出，图表曲线/网格/事件线/统计卡
   全部取自同一份主题配置；
 * **审阅批注**：按日志自动计算每页最多 2 条（速度页 = 最大 IAS + 限速预警；高度页 =
-  最低气压高度；Es 页 = Es 最低点 + 2 s 滑动平均 dEs/dt 最负的断崖起点；迎角/过载页 =
+  最低气压高度；Es 页 = Es 最低点 + 2 s 滑动平均 dEs/dt 最负的断崖**区间**；迎角/过载页 =
   最大过载；姿态页不批注；死亡/坠毁竖线每页保留，只在概览/能量页加圈；
   击落竖线每页保留、legend 每页补 KILL 行，不进数据批注）。
   屏幕 = 红色十字/方框 + 浅色标注条；打印/PDF = 手绘双圈 + 打字机短注；
-  时间相近（<10 s）的批注自动合并；
+  Es 断崖区间不用竖带/括号，而是在同一 Es 曲线上叠一条**加粗红线**（屏幕亮红、
+  打印深红、复盘卡蜡笔红），标注条放区间上方；时间相近（<10 s）的批注自动合并；
 * **保存二级页**：页眉「保存」→「保存设置」模态：PDF 完整版 / PNG 单张复盘卡、
   保留批注开关。PNG 复盘卡 = 生成报告时 Python 画好的内嵌 SVG（档案袋风格），
-  JS 序列化 SVG → canvas → PNG 下载，不引任何外部库；
-* 不依赖任何外部资源（无 CDN / 图片 / 第三方 JS），离线双击即看。
+  JS 序列化 SVG → canvas → PNG 下载；PDF 完整版在 ``file://`` 下用内联
+  jsPDF + html2canvas 逐页渲染后真下载（Chromium 会拦 ``<a download>``），
+  http(s) 下优先下载 headless 预生成的同名 PDF；
+* 不依赖任何外部资源（无 CDN / 图片 / 外链脚本），离线双击即看。
 
 坐标/面板配置集中在文件开头的常量里；配色与字体栈见 ``THEMES``。
 """
 
 from __future__ import annotations
 
+import base64
+import bisect
+import hashlib
 import html
 import json
 import math
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .parse import EVENT_LABELS, Flight, LogModel, average_speed
+
+try:  # 离线 PDF 回退（方案 B）的 base64 资源；缺失时报告退化为 HTML 打印
+    from .vendor import assets as _PDF_VENDOR
+except Exception:  # pragma: no cover - 只在裁剪过的发行包里发生
+    _PDF_VENDOR = None
 
 # ---------------------------------------------------------------------------
 # 版式与配色
@@ -124,6 +140,69 @@ ANNOTATION_MERGE_S = 10.0
 ANNOTATION_MAX_PER_PAGE = 2
 #: Es 断崖：dEs/dt 的滑动平均窗口（秒）。
 ANNOTATION_SMOOTH_S = 2.0
+#: Es 断崖区间：向左右扩展，直到滚动 dEs/dt 回到「核心最负值的这个比例」以内。
+#: 0.30 = 核心值的 30%（即 ``abs(rate) <= abs(core_rate) * 0.30`` 时停）。
+ES_RANGE_RECOVER_RATIO = 0.30
+#: Es 断崖区间的最长时长（秒）；30% 阈值迟迟不满足时按这个上限截断。
+ES_RANGE_MAX_S = 10.0
+#: Es 断崖区间与 Es 最低点距离小于该值（秒）时合并成「断崖段至最低点」复合批注。
+ES_RANGE_MERGE_MIN_S = 10.0
+#: 区间批注的表现色（复盘卡红蜡笔，与批注圈同色）。
+ES_RANGE_COLOR = "#B0362A"
+#: 屏幕层「曲线加粗标红」的红色（比蜡笔红更亮，压在 Es 曲线上仍能看清）。
+ES_HIGHLIGHT_COLOR = "#E03A2F"
+#: 打印 / PDF 层的深红墨色（打印态不发光，用深红更接近红笔）。
+ES_HIGHLIGHT_PRINT_COLOR = "#8E2A24"
+#: 加粗高亮线的线宽（px，带 ``vector-effect: non-scaling-stroke``）。
+ES_HIGHLIGHT_WIDTH = 5.0
+#: 打印 / 复盘卡的线宽（略细一点，避免盖住打字机标注）。
+ES_HIGHLIGHT_PRINT_WIDTH = 4.2
+#: 高亮线不透明度（盖住原曲线但仍透出一点走向）。
+ES_HIGHLIGHT_OPACITY = 0.95
+#: 端点小圆点半径（px）。
+ES_HIGHLIGHT_DOT_R = 3.2
+
+# ---------------------------------------------------------------------------
+# PDF 导出：方案 A = 本机 Edge/Chrome headless 预生成 PDF；方案 B = 浏览器内联库
+# ---------------------------------------------------------------------------
+#
+# A（http 场景首选）：写完 HTML 后找本机 Chrome/Edge，跑
+#   --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf=<同名>.pdf <html>
+# 成功就把 PDF 的相对文件名写进 ``<body data-pdf="...">``。
+#
+# B（file:// 场景必须）：Chromium 在 ``file://`` 页面里会拦截 ``<a download>``
+# （没有常规 origin，等于跨源），只能打开 PDF 查看器、不能真下载。所以报告**始终**
+# 内联 jsPDF + html2canvas（见 ``vendor/``）：按钮在 ``location.protocol === "file:"``
+# 时一律走 B，逐页渲染 9 页后 ``doc.save("report.pdf")`` 真下载；http/https 场景
+# 有 ``data-pdf`` 才直接用预生成文件，没有也退 B。
+
+#: 环境变量：显式指定浏览器可执行文件（排在最优先；便于测试/便携环境）。
+PDF_BROWSER_ENV = "FLIGHTLOG_PDF_BROWSER"
+#: 环境变量：设为 1 时完全跳过 PDF 预生成（selftest / 只需 HTML 的场景）。
+PDF_DISABLE_ENV = "FLIGHTLOG_NO_PDF"
+#: headless 打印超时（秒）。慢机器 / 冷启动 Edge 可能 10~20 s。
+PDF_PRINT_TIMEOUT_S = 180.0
+#: headless 打印参数（顺序固定，便于 selftest 断言）。
+PDF_PRINT_FLAGS = (
+    "--headless=new",
+    "--disable-gpu",
+    "--no-pdf-header-footer",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    "--disable-background-networking",
+)
+#: 本机常见浏览器路径（%ProgramFiles% 等由 ``_browser_paths`` 展开）。
+#: Chrome 放前面：本机实测 Chrome headless 打印 ~3 s，Edge 冷启动可达 8~15 s。
+PDF_BROWSER_CANDIDATES = (
+    (r"%ProgramFiles%\Google\Chrome\Application\chrome.exe", "chrome"),
+    (r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe", "chrome"),
+    (r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe", "chrome"),
+    (r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe", "edge"),
+    (r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe", "edge"),
+    (r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe", "edge"),
+)
+
 
 #: 蓝图主题的结构样式（网格 / 图框 / 图号 / 页脚 / 标题栏 / 保存设置页）。
 BLUEPRINT_CSS = """
@@ -1437,6 +1516,17 @@ def _tc_text(seconds: float, tenths: bool = True) -> str:
     return "T+%02d:%s" % (minutes, text)
 
 
+def _tc_range_text(t0: float, t1: float) -> str:
+    """区间时间码 ``T+05:50–05:53``（起点带 ``T+``，终点只写 ``mm:ss``）。
+
+    跨分钟也清楚：``T+05:50–06:34``。
+    """
+    start = _tc_text(t0, tenths=False)
+    end = _tc_text(t1, tenths=False)
+    end_short = end[2:] if end.startswith("T+") else end
+    return "%s–%s" % (start, end_short)
+
+
 def _tc_text_floor(seconds: float) -> str:
     """任务时间码 ``T+mm:ss``（**向零截断**，不四舍五入）。
 
@@ -1510,49 +1600,121 @@ def _moving_average(values: Sequence[Optional[float]], half: int) -> List[Option
     return out
 
 
+def _nearest_es(es: Sequence[Optional[float]], index: int, direction: int) -> Optional[float]:
+    """``index`` 处 Es 为空时向 ``direction``（+1/-1）找最近的有效值。"""
+    total = len(es)
+    probe = int(index)
+    while 0 <= probe < total:
+        value = es[probe]
+        if value is not None:
+            return float(value)
+        probe += direction
+    return None
+
+
 def _es_cliff(times: Sequence[float], des: Sequence[Optional[float]],
               es: Sequence[Optional[float]]) -> Optional[Dict[str, Any]]:
-    """Es 断崖：2 秒滑动平均的 dEs/dt 最负值，返回该段的起点。
+    """Es 断崖**区间**：2 s 滑动平均 dEs/dt 最负处向两侧扩展到「恢复 30%」为止。
 
-    起点 = 从最负点往回走、直到滑动平均不再单调下降的那个局部高点
-    （即"开始掉能量"的时刻）。找不到下降段时返回 ``None``。
+    规则（2026-11 用户确认）：
+
+    * 核心 = 2 s 滑动平均后 dEs/dt 最负的样本（断崖最陡点，不再当批注起点）；
+    * 向左右扩展，直到滚动 dEs/dt 回到不超过核心值的 30%
+      （``abs(rate) <= abs(core_rate) * ES_RANGE_RECOVER_RATIO``），
+      边界样本算进区间；找不到（数据到头 / 太陡太短）就停在最后一个样本；
+    * 区间总时长最长 ``ES_RANGE_MAX_S``（10 s），超出时按两侧占比收缩；
+    * 返回 ``t0`` / ``t1`` / ``duration`` / ``delta``（首尾 Es 差）/ ``avg_rate``
+      （``delta / duration``）等字段；找不到下降段时返回 ``None``。
+
+    ``t`` / ``value`` / ``rate`` / ``bottom_t`` 保留旧字段语义（``t`` = 区间起点，
+    ``value`` = 起点 Es，``rate`` = 核心最负斜率），屏幕标记 / 复盘卡继续可用。
     """
     if len(times) < 3 or not des:
         return None
     step = _median_step(times) or 1.0
     half = max(1, int(round(ANNOTATION_SMOOTH_S / (2.0 * step))))
     smoothed = _moving_average(des, half)
-    best_index = -1
-    best_rate = 0.0
+    core_index = -1
+    core_rate = 0.0
     for index, value in enumerate(smoothed):
         if value is None:
             continue
-        if best_index < 0 or value < best_rate:
-            best_index = index
-            best_rate = float(value)
-    if best_index < 0 or best_rate >= 0:
+        if core_index < 0 or value < core_rate:
+            core_index = index
+            core_rate = float(value)
+    if core_index < 0 or core_rate >= 0:
         return None
-    # 「该段起点」：从最负点往回走，直到 2 s 平滑后的 dEs/dt 不再陡
-    # （绝对值跌到最负值的 8% 以内）——即断崖开始的位置；最多回看 30 s。
-    threshold = abs(best_rate) * 0.08
-    max_gap = max(4.0 * step, 0.2)  # 容忍个别丢样本，不因小缺口中断回看
-    index = best_index
-    while index > 0:
-        prev = smoothed[index - 1]
-        if prev is None or abs(prev) < threshold:
-            break
-        if times[index] - times[index - 1] > max_gap:
-            break
-        if times[best_index] - times[index] > 30.0:
-            break
-        index -= 1
-    start_index = index
-    start_value = es[start_index] if start_index < len(es) else None
+    threshold = abs(core_rate) * ES_RANGE_RECOVER_RATIO
+    max_gap = max(4.0 * step, 0.2)  # 容忍个别丢样本，不因小缺口中断扩展
+    total = len(times)
+
+    def walk(direction: int) -> int:
+        """从核心向外走到「滚动 dEs/dt 恢复 30%」的边界（含边界样本）。"""
+        index = core_index
+        while True:
+            nxt = index + direction
+            if nxt < 0 or nxt >= total:
+                break
+            if abs(times[nxt] - times[core_index]) > ES_RANGE_MAX_S:
+                break
+            if abs(times[nxt] - times[index]) > max_gap:
+                break
+            value = smoothed[nxt]
+            if value is None:
+                break
+            index = nxt
+            if abs(value) <= threshold:
+                break
+        return index
+
+    start_index = walk(-1)
+    end_index = walk(1)
+    # 总时长上限 10 s：按两侧实际占比收缩（不会把核心点挤出去）。
+    span = float(times[end_index]) - float(times[start_index])
+    if span > ES_RANGE_MAX_S:
+        left_room = float(times[core_index]) - float(times[start_index])
+        right_room = float(times[end_index]) - float(times[core_index])
+        total_room = max(left_room + right_room, 1e-9)
+        left_keep = ES_RANGE_MAX_S * left_room / total_room
+        right_keep = ES_RANGE_MAX_S * right_room / total_room
+        left_limit = float(times[core_index]) - left_keep
+        right_limit = float(times[core_index]) + right_keep
+        while start_index < core_index and times[start_index] < left_limit:
+            start_index += 1
+        while end_index > core_index and times[end_index] > right_limit:
+            end_index -= 1
+    t0 = float(times[start_index])
+    t1 = float(times[end_index])
+    duration = max(0.0, t1 - t0)
+    start_value = _nearest_es(es, start_index, 1)
+    end_value = _nearest_es(es, end_index, -1)
+    delta: Optional[float] = None
+    if start_value is not None and end_value is not None:
+        delta = end_value - start_value
+    avg_rate: Optional[float] = None
+    if delta is not None and duration > 1e-9:
+        avg_rate = delta / duration
     return {
-        "t": times[start_index],
+        # 旧字段（屏幕标记 / 复盘卡 / CLI 摘要兼容）
+        "t": t0,
         "value": start_value,
-        "rate": best_rate,
-        "bottom_t": times[best_index],
+        "rate": core_rate,
+        "bottom_t": float(times[core_index]),
+        # 区间字段
+        "t0": t0,
+        "t1": t1,
+        "duration": duration,
+        "delta": delta,
+        "avg_rate": avg_rate,
+        "start_index": start_index,
+        "end_index": end_index,
+        "core_index": core_index,
+        "recovered": (
+            smoothed[start_index] is not None
+            and abs(float(smoothed[start_index])) <= threshold
+            and smoothed[end_index] is not None
+            and abs(float(smoothed[end_index])) <= threshold
+        ),
     }
 
 
@@ -1607,9 +1769,58 @@ def _annotation_number(index: int) -> str:
     return "(%d)" % (int(index) + 1)
 
 
+def _fmt_signed(value: Optional[float], digits: int = 0) -> str:
+    """带符号整数/小数：``-3080`` / ``+5``（0 也写成 ``0``）。"""
+    if value is None:
+        return "—"
+    return ("%+." + str(int(digits)) + "f") % float(value)
+
+
+def _annotation_is_range(annotation: Dict[str, Any]) -> bool:
+    """这条批注是不是**区间**批注（Es 断崖 / 断崖段至最低点）。"""
+    return bool(annotation.get("range")) and annotation.get("t0") is not None \
+        and annotation.get("t1") is not None
+
+
+def _annotation_range_duration(annotation: Dict[str, Any]) -> float:
+    return max(0.0, float(annotation["t1"]) - float(annotation["t0"]))
+
+
+def _annotation_range_measure(annotation: Dict[str, Any]) -> str:
+    """区间批注的数据段：``6.5 s · ΔEs -3080 m · 平均 -477 m/s``。"""
+    duration = _annotation_range_duration(annotation)
+    bits = ["%s s" % _fmt_number(duration, 1)]
+    if annotation.get("delta") is not None:
+        bits.append("ΔEs %s m" % _fmt_signed(annotation.get("delta"), 0))
+    if annotation.get("avg_rate") is not None:
+        bits.append("平均 %s m/s" % _fmt_signed(annotation.get("avg_rate"), 0))
+    return " · ".join(bits)
+
+
+def _annotation_range_time(annotation: Dict[str, Any]) -> str:
+    """区间时间：``T+05:51–05:58``。"""
+    return _tc_range_text(float(annotation["t0"]), float(annotation["t1"]))
+
+
+def _annotation_range_name(annotation: Dict[str, Any]) -> str:
+    """区间批注的中文名：断崖 / 断崖段至最低点。"""
+    if annotation.get("merge_min"):
+        return "Es 断崖段至最低点"
+    return annotation_name("ES_DROP") or "ES_DROP"
+
+
+def _annotation_range_line(annotation: Dict[str, Any]) -> str:
+    """区间批注的一行完整文字（屏幕标注条 / 打印短注用，编号由调用方补）。"""
+    return "%s %s · %s" % (
+        _annotation_code_label(annotation),
+        _annotation_range_measure(annotation),
+        _annotation_range_time(annotation),
+    )
+
+
 def _annotation_member(annotation: Dict[str, Any]) -> Dict[str, Any]:
     """批注的一条「成员」：合并后一条批注可能对应多个 kind（每个各占 legend 一段）。"""
-    return {
+    member = {
         "kind": annotation.get("kind"),
         "code": annotation.get("code") or annotation_code(annotation.get("kind")),
         "value": annotation.get("value"),
@@ -1619,12 +1830,25 @@ def _annotation_member(annotation: Dict[str, Any]) -> Dict[str, Any]:
         "decimals": int(annotation.get("decimals", 0) or 0),
         "t": float(annotation["t"]),
     }
+    if _annotation_is_range(annotation):
+        member["range"] = True
+        member["t0"] = float(annotation["t0"])
+        member["t1"] = float(annotation["t1"])
+        member["duration"] = _annotation_range_duration(annotation)
+        member["delta"] = annotation.get("delta")
+        member["avg_rate"] = annotation.get("avg_rate")
+    return member
 
 
 def _annotation_part(annotation: Dict[str, Any]) -> str:
     """一条批注的完整短文字（CLI 摘要 / 数据导出用；图面改用 :func:`_annotation_mark_text`）。"""
     kind = annotation.get("kind")
     if kind == "es_cliff":
+        if _annotation_is_range(annotation):
+            return "%s %s" % (
+                _annotation_range_name(annotation),
+                _annotation_range_measure(annotation),
+            )
         return "Es 断崖 %+.0f m/s" % float(annotation.get("rate") or 0.0)
     if kind == "vne":
         return "限速预警 >%s km/h" % _fmt_number(annotation.get("ref"), 0)
@@ -1641,7 +1865,11 @@ def _annotation_part(annotation: Dict[str, Any]) -> str:
 def _merge_page_annotations(
     annotations: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """同一页：时间相近（<10 s）的批注合并，最后只留前 N 条。"""
+    """同一页：时间相近（<10 s）的批注合并，最后只留前 N 条。
+
+    ``parts_override`` / ``members_override`` 用于已经算好的复合批注
+    （如「Es 断崖区间 + Es 最低点」），不再按单条成员重新拆。
+    """
     ordered = sorted(
         annotations, key=lambda item: (int(item.get("priority", 9)), float(item["t"]))
     )
@@ -1654,9 +1882,13 @@ def _merge_page_annotations(
                 break
         if target is None:
             new = dict(annotation)
-            new["parts"] = [_annotation_part(annotation)]
-            new["members"] = [_annotation_member(annotation)]
-            new["merged"] = False
+            override_parts = annotation.get("parts_override")
+            override_members = annotation.get("members_override")
+            new["parts"] = list(override_parts) if override_parts else [_annotation_part(annotation)]
+            new["members"] = (
+                list(override_members) if override_members else [_annotation_member(annotation)]
+            )
+            new["merged"] = bool(annotation.get("merged"))
             kept.append(new)
             continue
         target["merged"] = True
@@ -1696,7 +1928,13 @@ def _annotation_code_label(annotation: Dict[str, Any]) -> str:
 
 
 def _annotation_mark_text(annotation: Dict[str, Any]) -> str:
-    """图上标记里只写缩写 code（编号由渲染器补 ``①``），不带数值 / 时间。"""
+    """图上标记文字：普通批注只写缩写 code；区间批注写「code + 区间数据」。
+
+    区间批注（Es 断崖）在屏幕 / 打印 / 复盘卡三处都用**区间括号**，标记里
+    直接到位：``ES_DROP 6.5 s · ΔEs -3080 m · 平均 -477 m/s``（编号由渲染器补）。
+    """
+    if _annotation_is_range(annotation):
+        return "%s %s" % (_annotation_code_label(annotation), _annotation_range_measure(annotation))
     return _annotation_code_label(annotation)
 
 
@@ -1728,7 +1966,19 @@ def _annotation_name_value_text(annotation: Dict[str, Any], name_sep: str = " ")
 
 
 def _annotation_legend_line(annotation: Dict[str, Any], index: int) -> str:
-    """屏幕 / PDF 的 legend 一行：``① IAS_MAX 最大指示空速 · 1215 km/h · T+04:32``。"""
+    """屏幕 / PDF 的 legend 一行：``① IAS_MAX 最大指示空速 · 1215 km/h · T+04:32``。
+
+    区间批注（Es 断崖）同内容带区间数据与时间范围：
+    ``② ES_DROP Es 断崖 · 6.5 s · ΔEs -3080 m · 平均 -477 m/s · T+05:51–05:58``
+    """
+    if _annotation_is_range(annotation):
+        return "%s %s %s · %s · %s" % (
+            _annotation_number(index),
+            _annotation_code_label(annotation),
+            _annotation_range_name(annotation),
+            _annotation_range_measure(annotation),
+            _annotation_range_time(annotation),
+        )
     return "%s %s %s · %s" % (
         _annotation_number(index),
         _annotation_code_label(annotation),
@@ -1739,6 +1989,14 @@ def _annotation_legend_line(annotation: Dict[str, Any], index: int) -> str:
 
 def _annotation_card_line(annotation: Dict[str, Any], index: int) -> str:
     """PNG 复盘卡的 legend 一行：``① IAS_MAX — 最大指示空速 1215 km/h · T+04:32``。"""
+    if _annotation_is_range(annotation):
+        return "%s %s — %s %s · %s" % (
+            _annotation_number(index),
+            _annotation_code_label(annotation),
+            _annotation_range_name(annotation),
+            _annotation_range_measure(annotation),
+            _annotation_range_time(annotation),
+        )
     return "%s %s — %s · %s" % (
         _annotation_number(index),
         _annotation_code_label(annotation),
@@ -1822,13 +2080,16 @@ def _gap_legend_line(item: Dict[str, Any], index: int) -> str:
 
 
 def _annotation_text(annotation: Dict[str, Any]) -> str:
-    """屏幕标注条上的完整文字：``值 · T+mm:ss``。"""
+    """屏幕标注条上的完整文字：``值 · T+mm:ss``（区间批注用区间时间）。"""
     body = " / ".join(annotation.get("parts") or [_annotation_part(annotation)])
-    return "%s · %s" % (body, _tc_text(float(annotation["t"])))
+    moment = _annotation_range_time(annotation) if _annotation_is_range(annotation) else _tc_text(float(annotation["t"]))
+    return "%s · %s" % (body, moment)
 
 
 def _annotation_print_text(annotation: Dict[str, Any]) -> str:
-    """打印/复盘卡上的打字机短注（一行，尽量短）。"""
+    """打印/复盘卡上的打字机短注（一行，尽量短；区间批注带区间数据）。"""
+    if _annotation_is_range(annotation):
+        return _annotation_range_line(annotation)
     parts = annotation.get("parts") or [_annotation_part(annotation)]
     body = parts[0]
     if len(parts) > 1:
@@ -1853,7 +2114,8 @@ def compute_annotations(
 
     * ``speed``：最大 IAS；首次 IAS 超过该机限速（限速预警）
     * ``altitude``：最低气压高度
-    * ``energy``：Es 最低点；Es 断崖（2 s 滑动平均 dEs/dt 最负值 → 标该段起点）
+    * ``energy``：Es 断崖**区间**（2 s 滑动平均 dEs/dt 最负处 → 向左右扩到恢复 30%
+      或最长 10 s；与最低点 <10 s 时合并成「断崖段至最低点」）；Es 最低点
     * ``aoa_ny``：最大过载（Ny 正值峰值）
     * ``attitude``：不批注
     * 死亡/坠毁只在概览 / 能量页加圈（由渲染侧处理，不在这里）
@@ -1910,16 +2172,98 @@ def compute_annotations(
             dimension=True)
 
     es = values("es")
-    index, value = _series_min(es)
-    if index >= 0:
-        add("energy", index=index, value=value, kind="es_min", title="Es 最低点",
-            series="es", unit="m", decimals=0, priority=0, dimension=True)
+    es_min_index, es_min_value = _series_min(es)
+    es_min_item: Optional[Dict[str, Any]] = None
+    if es_min_index >= 0:
+        es_min_item = {
+            "index": es_min_index,
+            "value": es_min_value,
+            "kind": "es_min",
+            "title": "Es 最低点",
+            "series": "es",
+            "unit": "m",
+            "decimals": 0,
+            "priority": 0,
+            "dimension": True,
+        }
     cliff = _es_cliff(times, values("des"), es)
+    cliff_item: Optional[Dict[str, Any]] = None
     if cliff is not None and cliff["value"] is not None:
-        nearest = min(range(len(times)), key=lambda i: abs(times[i] - cliff["t"]))
-        add("energy", index=nearest, value=cliff["value"], kind="es_cliff",
-            title="Es 断崖", series="es", unit="m", decimals=0,
-            rate=cliff["rate"], priority=1)
+        nearest = min(range(len(times)), key=lambda i: abs(times[i] - cliff["t0"]))
+        cliff_item = {
+            "index": nearest,
+            "value": cliff["value"],
+            "kind": "es_cliff",
+            "title": "Es 断崖",
+            "series": "es",
+            "unit": "m",
+            "decimals": 0,
+            "rate": cliff["rate"],
+            "priority": 1,
+            # ---- 区间批注（0.5.6）：t0/t1 + 区间数据 ----
+            "range": True,
+            "t0": float(cliff["t0"]),
+            "t1": float(cliff["t1"]),
+            "duration": float(cliff["duration"]),
+            "delta": cliff["delta"],
+            "avg_rate": cliff["avg_rate"],
+            "bottom_t": float(cliff["bottom_t"]),
+        }
+    if cliff_item is not None and es_min_item is not None:
+        # 断崖区间与 Es 最低点距离 < 10 s（含最低点落在区间内）→ 合并成复合批注
+        min_t = float(times[es_min_index])
+        close = (cliff_item["t0"] - ES_RANGE_MERGE_MIN_S
+                 <= min_t <= cliff_item["t1"] + ES_RANGE_MERGE_MIN_S)
+        if close:
+            merged_t0 = min(float(cliff_item["t0"]), min_t)
+            merged_t1 = max(float(cliff_item["t1"]), min_t)
+            start_index = cliff["start_index"] if merged_t0 >= cliff_item["t0"] else es_min_index
+            start_value = _nearest_es(es, int(start_index), 1)
+            if start_value is None:
+                start_value = es_min_value
+            end_value = es_min_value if merged_t1 >= min_t else _nearest_es(es, cliff["end_index"], -1)
+            if end_value is None:
+                end_value = es_min_value
+            delta: Optional[float] = None
+            if start_value is not None and end_value is not None:
+                delta = float(end_value) - float(start_value)
+            duration = max(0.0, merged_t1 - merged_t0)
+            avg_rate = (delta / duration) if (delta is not None and duration > 1e-9) else None
+            anchor = min(range(len(times)), key=lambda i: abs(times[i] - merged_t0))
+            cliff_item.update(
+                index=anchor,
+                t=merged_t0,
+                t0=merged_t0,
+                t1=merged_t1,
+                duration=duration,
+                delta=delta,
+                avg_rate=avg_rate,
+                value=start_value,
+                merge_min=True,
+            )
+            min_member = {
+                "kind": "es_min",
+                "code": "ES_MIN",
+                "value": es_min_value,
+                "unit": "m",
+                "decimals": 0,
+                "t": min_t,
+            }
+            cliff_item["parts_override"] = [_annotation_part(cliff_item)]
+            cliff_item["members_override"] = [
+                _annotation_member(cliff_item),
+                _annotation_member(min_member),
+            ]
+            add("energy", **cliff_item)
+        else:
+            add("energy", **es_min_item)
+            add("energy", **cliff_item)
+    elif cliff_item is not None:
+        if es_min_item is not None:
+            add("energy", **es_min_item)
+        add("energy", **cliff_item)
+    elif es_min_item is not None:
+        add("energy", **es_min_item)
 
     ny = values("ny")
     index, value = _series_max(ny)
@@ -3088,6 +3432,216 @@ def _place_label(
     return chosen
 
 
+def _interp_series_value(
+    times: Sequence[float], values: Sequence[Optional[float]], t: float
+) -> Optional[float]:
+    """线性插值 ``t`` 时刻的值（跳过 None；越界时取最近已知值）。
+
+    区间批注的 t0/t1 通常就是样本时刻；这里再插一次值，保证高亮段端点严格
+    落在 t0/t1 的像素 x 上（即使边界恰好落在两个样本之间）。
+    """
+    count = min(len(times), len(values))
+    if count < 1:
+        return None
+    index = bisect.bisect_left(times, t, 0, count)
+    right: Optional[Tuple[float, float]] = None
+    left: Optional[Tuple[float, float]] = None
+    probe = index
+    while probe < count:
+        value = values[probe]
+        if value is not None:
+            right = (float(times[probe]), float(value))
+            break
+        probe += 1
+    probe = index - 1
+    while probe >= 0:
+        value = values[probe]
+        if value is not None:
+            left = (float(times[probe]), float(value))
+            break
+        probe -= 1
+    if left is None:
+        return right[1] if right else None
+    if right is None:
+        return left[1]
+    span = right[0] - left[0]
+    if abs(span) < 1e-9:
+        return left[1]
+    return left[1] + (right[1] - left[1]) * (float(t) - left[0]) / span
+
+
+def _range_series_slice(
+    times: Sequence[float],
+    values: Sequence[Optional[float]],
+    t0: float,
+    t1: float,
+) -> Tuple[List[float], List[Optional[float]]]:
+    """取 ``[t0, t1]`` 内的样本；端点不在样本上时按线性插值补上。"""
+    out_t: List[float] = []
+    out_v: List[Optional[float]] = []
+    for t, v in zip(times, values):
+        if v is None:
+            continue
+        if float(t) < t0 - 1e-9 or float(t) > t1 + 1e-9:
+            continue
+        out_t.append(float(t))
+        out_v.append(float(v))
+    v0 = _interp_series_value(times, values, t0)
+    v1 = _interp_series_value(times, values, t1)
+    if v0 is not None and (not out_t or out_t[0] > t0 + 1e-9):
+        out_t.insert(0, t0)
+        out_v.insert(0, v0)
+    if v1 is not None and (not out_t or out_t[-1] < t1 - 1e-9):
+        out_t.append(t1)
+        out_v.append(v1)
+    return out_t, out_v
+
+
+def _curve_pixels(
+    times: Sequence[float],
+    values: Sequence[Optional[float]],
+    t0: float,
+    t1: float,
+    xf: Any,
+    yf: Any,
+) -> List[Tuple[float, float]]:
+    """区间 ``[t0, t1]`` 内同一曲线的像素点（端点严格对齐 t0 / t1 的像素 x）。"""
+    seg_t, seg_v = _range_series_slice(times, values, t0, t1)
+    points: List[Tuple[float, float]] = []
+    for t, v in zip(seg_t, seg_v):
+        if v is None:
+            continue
+        try:
+            y = yf(float(v))
+        except (TypeError, ValueError):
+            continue
+        if y is None or not math.isfinite(float(y)):
+            continue
+        points.append((float(xf(float(t))), float(y)))
+    if len(points) < 2:
+        return []
+    return _decimate(points, MAX_SVG_POINTS)
+
+
+def _svg_es_range_highlights(
+    annotations: Sequence[Dict[str, Any]],
+    series: Dict[str, Sequence[Optional[float]]],
+    times: Sequence[float],
+    xaxis: Any,
+    left_axis: Optional[_Axis],
+    right_axis: Optional[_Axis],
+    y0: float,
+    y1: float,
+) -> str:
+    """Es 断崖区间 = 「同一曲线加粗标红」：``[t0, t1]`` 上叠一条红色粗线。
+
+    不再画区间竖带 / 两端括号。屏幕层用亮红 ``ES_HIGHLIGHT_COLOR``，打印 / PDF
+    层用深红墨色 ``ES_HIGHLIGHT_PRINT_COLOR``；两端各加一个小圆点，标注文字放在
+    区间上方（不压曲线）。高亮段带 ``data-series``：曲线开关隐藏 Es 时一起隐藏；
+    ``ann-screen`` / ``ann-print`` 沿用现有打印规则（WYSIWYG、``body.no-annot`` 可关）。
+    """
+    parts: List[str] = []
+    for order, item in enumerate(annotations):
+        if not _annotation_is_range(item):
+            continue
+        series_key = item.get("series")
+        if not series_key:
+            continue
+        values = series.get(series_key)
+        if not values:
+            continue
+        axis = right_axis if item.get("axis") == "right" else left_axis
+        if axis is None:
+            continue
+        t0 = float(item["t0"])
+        t1 = float(item["t1"])
+        points = _curve_pixels(times, values, t0, t1, xaxis, axis)
+        if len(points) < 2:
+            continue
+        path = _bezier_path(points)
+        if not path:
+            continue
+        series_attr = ' data-series="%s"' % html.escape(str(series_key))
+        data_range = ' data-range="%s"' % html.escape(
+            str(item.get("code") or "ES_DROP")
+        )
+        label = "%s %s" % (
+            item.get("num") or _annotation_number(order),
+            _annotation_range_line(item),
+        )
+        x_start, y_start = points[0]
+        x_end, y_end = points[-1]
+        top_y = min(point[1] for point in points)
+        # 标注条放在区间**上方**：先取标注条水平覆盖范围内整条曲线的最高点
+        # （不只是高亮段），文字基线再往上 12 px → 保证文字不压曲线；
+        # 太靠上时回落到图表顶部内侧。水平居中并夹在图框内。
+        text_w = _text_width(label, 10.5)
+        text_x = min(
+            max((x_start + x_end) / 2.0 - text_w / 2.0, PLOT_LEFT + 2.0),
+            PLOT_RIGHT - text_w - 2.0,
+        )
+        span_left = text_x - 4.0
+        span_right = text_x + text_w + 4.0
+        curve_top: Optional[float] = None
+        for t_raw, v_raw in zip(times, values):
+            if v_raw is None:
+                continue
+            px_raw = xaxis(float(t_raw))
+            if px_raw < span_left or px_raw > span_right:
+                continue
+            py_raw = axis(float(v_raw))
+            if py_raw is None:
+                continue
+            if curve_top is None or py_raw < curve_top:
+                curve_top = py_raw
+        text_top = top_y if curve_top is None else min(top_y, curve_top)
+        text_y = max(y0 + 15.0, text_top - 12.0)
+        dots = (
+            '<circle class="es-highlight-dot" cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>'
+            '<circle class="es-highlight-dot" cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>'
+        )
+        screen = (
+            '<g class="ann ann-screen es-highlight"%s%s>'
+            '<path class="es-highlight-path" d="%s" fill="none" stroke="%s"'
+            ' stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"'
+            ' opacity="%.2f" vector-effect="non-scaling-stroke"/>'
+            + dots
+            + '<text class="es-range-label" x="%.1f" y="%.1f" font-size="10.5"'
+            ' font-family="Consolas,\'Courier New\',monospace">%s</text>'
+            "</g>"
+        ) % (
+            series_attr, data_range,
+            path, ES_HIGHLIGHT_COLOR, ES_HIGHLIGHT_WIDTH, ES_HIGHLIGHT_OPACITY,
+            x_start, y_start, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_COLOR,
+            x_end, y_end, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_COLOR,
+            text_x, text_y, html.escape(label),
+        )
+        parts.append(screen)
+        # 打印层：深红粗线 + 打字机短注（位置沿用旧版：区间下沿靠右，避免压圈）
+        ptw = _text_width(label, 11.0)
+        ptx = x_end - ptw - 6.0
+        if ptx < PLOT_LEFT + 2.0:
+            ptx = min(max(x_start + 6.0, PLOT_LEFT + 2.0), PLOT_RIGHT - ptw - 2.0)
+        pty = y1 - 10.0
+        printed = (
+            '<g class="ann ann-print es-highlight"%s%s>'
+            '<path class="es-highlight-path" d="%s" fill="none" stroke="%s"'
+            ' stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"'
+            ' opacity="%.2f" vector-effect="non-scaling-stroke"/>'
+            + dots
+            + '<text class="ann-type" x="%.1f" y="%.1f" font-size="11">%s</text>'
+            "</g>"
+        ) % (
+            series_attr, data_range,
+            path, ES_HIGHLIGHT_PRINT_COLOR, ES_HIGHLIGHT_PRINT_WIDTH, 0.92,
+            x_start, y_start, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_PRINT_COLOR,
+            x_end, y_end, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_PRINT_COLOR,
+            ptx, pty, html.escape(label),
+        )
+        parts.append(printed)
+    return "".join(parts)
+
+
 def _svg_annotations(
     annotations: Sequence[Dict[str, Any]],
     y0: float,
@@ -3107,6 +3661,10 @@ def _svg_annotations(
     boxes: List[Tuple[float, float, float, float]] = []
     ring_slots: List[Tuple[float, float]] = []
     for order, annotation in enumerate(annotations):
+        # 区间批注（Es 断崖）：曲线加粗标红 + 标注条由
+        # :func:`_svg_es_range_highlights` 单独画（屏幕 / 打印各一层），这里跳过。
+        if _annotation_is_range(annotation) and annotation.get("px0") is not None:
+            continue
         px = float(annotation["px"])
         py = float(annotation["py"])
         # 批注关联的数据曲线（ias / alt / es / ny）：曲线被图例开关隐藏时，
@@ -3430,6 +3988,44 @@ def _render_chart(
     # （没有可标记的空洞区间，画带会误导成"这里没数据"）。
     band_items = [item for item in gap_list if item.get("source") != "event"]
 
+    # ---- 审阅批注：先按「值 → 轴」解析出像素点并编号，图面与 legend 共用同一套编号 ----
+    # 区间批注（Es 断崖）额外解析 t0/t1 两个横向像素，供曲线加粗标红使用。
+    ann_items: List[Dict[str, Any]] = []
+    if annotations:
+        axis_for = {defn["key"]: defn["axis"] for defn in defs}
+        for annotation in annotations:
+            item = dict(annotation)
+            item["axis"] = axis_for.get(item.get("series") or "", "left")
+            axis = right_axis if item["axis"] == "right" else left_axis
+            value = item.get("value")
+            if axis is None or value is None:
+                continue
+            try:
+                px = xaxis(float(item["t"]))
+                py = axis(float(value))
+            except (TypeError, ValueError):
+                continue
+            if py is None or not math.isfinite(py):
+                continue
+            if not (PLOT_LEFT - 1.0 <= px <= PLOT_RIGHT + 1.0):
+                continue
+            item["px"] = px
+            item["py"] = min(max(py, y0 + 2.0), y1 - 2.0)
+            if _annotation_is_range(item):
+                try:
+                    x0 = xaxis(float(item["t0"]))
+                    x1 = xaxis(float(item["t1"]))
+                except (TypeError, ValueError):
+                    continue
+                item["px0"] = min(max(x0, PLOT_LEFT), PLOT_RIGHT)
+                item["px1"] = min(max(x1, PLOT_LEFT), PLOT_RIGHT)
+                if item["px1"] - item["px0"] < 2.0:  # 太窄也要看得见
+                    item["px0"] = max(PLOT_LEFT, item["px0"] - 1.0)
+                    item["px1"] = min(PLOT_RIGHT, item["px1"] + 1.0)
+            ann_items.append(item)
+    for index, item in enumerate(ann_items):
+        item["num"] = _annotation_number(index)
+
     parts: List[str] = [
         '<svg id="svg-%s" viewBox="0 0 %.0f %.1f" class="chart-svg"'
         ' preserveAspectRatio="none" role="img" aria-label="%s">'
@@ -3453,32 +4049,13 @@ def _render_chart(
     parts.append("".join(hover_group))
     if avg is not None:
         parts.append(_svg_avg_overlay(avg, chart_id, xaxis, left_axis, right_axis, y0, y1))
-
-    # ---- 审阅批注：先按「值 → 轴」解析出像素点并编号，图面与 legend 共用同一套编号 ----
-    ann_items: List[Dict[str, Any]] = []
-    if annotations:
-        axis_for = {defn["key"]: defn["axis"] for defn in defs}
-        for annotation in annotations:
-            item = dict(annotation)
-            item["axis"] = axis_for.get(item.get("series") or "", "left")
-            axis = right_axis if item["axis"] == "right" else left_axis
-            value = item.get("value")
-            if axis is None or value is None:
-                continue
-            try:
-                px = xaxis(float(item["t"]))
-                py = axis(float(value))
-            except (TypeError, ValueError):
-                continue
-            if py is None or not math.isfinite(py):
-                continue
-            if not (PLOT_LEFT - 1.0 <= px <= PLOT_RIGHT + 1.0):
-                continue
-            item["px"] = px
-            item["py"] = min(max(py, y0 + 2.0), y1 - 2.0)
-            ann_items.append(item)
-    for index, item in enumerate(ann_items):
-        item["num"] = _annotation_number(index)
+    # 区间批注（Es 断崖）：在同一曲线的 [t0, t1] 上叠一条加粗红线（画在曲线**上面**，
+    # 盖住原来那条细线），屏幕 / 打印各一层；标注文字放区间上方，不压曲线。
+    parts.append(
+        _svg_es_range_highlights(
+            ann_items, series, times, xaxis, left_axis, right_axis, y0, y1
+        )
+    )
 
     mark_items: List[Dict[str, Any]] = []
     for mark in event_marks:
@@ -5333,6 +5910,51 @@ def _debrief_card_svg(
         for index, annotation in enumerate(flat):
             key = annotation.get("series") or ""
             panel = panel_for.get(key)
+            # 区间批注（Es 断崖）：同一曲线在 [t0, t1] 上叠一条**红蜡笔加粗段**，
+            # 不再画范围括号 / 双圈；图上只写「编号 + 区间数据」，完整说明进下方 legend。
+            if _annotation_is_range(annotation) and panel is not None:
+                t0a, t1a = float(annotation["t0"]), float(annotation["t1"])
+                range_yf = alt_yf if key == "alt" else (
+                    lambda value, p=panel: yf(p, value)
+                )
+                range_t, range_v = _range_series_slice(
+                    times, series.get(key) or [], t0a, t1a
+                )
+                highlight = _card_polyline(range_t, range_v, xf, range_yf)
+                if highlight:
+                    parts.append(
+                        '<path class="ann-crayon ann-range-highlight" d="%s"'
+                        ' fill="none" stroke="%s" stroke-width="%.1f"'
+                        ' stroke-linecap="round" stroke-linejoin="round"'
+                        ' opacity="0.82"/>'
+                        % (highlight, ES_RANGE_COLOR, ES_HIGHLIGHT_PRINT_WIDTH)
+                    )
+                    ends = (
+                        (xf(range_t[0]), range_yf(range_v[0])),
+                        (xf(range_t[-1]), range_yf(range_v[-1])),
+                    )
+                    for end_x, end_y in ends:
+                        if end_y is None:
+                            continue
+                        parts.append(
+                            '<circle class="ann-crayon-dot" cx="%.1f" cy="%.1f"'
+                            ' r="3.4" fill="%s"/>'
+                            % (end_x, end_y, ES_RANGE_COLOR)
+                        )
+                note = "%s %s" % (_annotation_number(index), _annotation_mark_text(annotation))
+                note_w = _text_width(note, 10.5)
+                # 靠区间右端向左排，避免压到区间右侧的最低点 / 事件圈
+                note_x = xf(t1a) - note_w - 4.0
+                if note_x < X0 + 2.0:
+                    note_x = min(
+                        max(xf(t0a) + 4.0, X0 + 2.0), X1 - note_w - 2.0
+                    )
+                parts.append(
+                    '<text class="ann-type" x="%.1f" y="%.1f" font-family="Courier New,monospace"'
+                    ' font-size="10.5" fill="#9E2F26" letter-spacing="0.3">%s</text>'
+                    % (note_x, panel["bot"] + 13.0, _html_escape(note))
+                )
+                continue
             value = annotation.get("value")
             if panel is None or value is None:
                 continue
@@ -5947,6 +6569,11 @@ a{color:var(--link)}
 .ann-crayon-arrow{fill:none;stroke:#B0362A;stroke-width:2;stroke-linecap:round}
 .ann-type{font-family:"Courier New",Consolas,monospace;fill:#9E2F26;letter-spacing:.02em}
 .ann-num{font-family:"Courier New",Consolas,monospace;fill:#9E2F26}
+/* 区间批注（Es 断崖）：同一曲线 [t0,t1] 上的加粗红线 + 红字标注条（不再画竖带 / 括号） */
+.es-highlight-path{pointer-events:none}
+.es-highlight-dot{pointer-events:none}
+.es-range-label{fill:#8E2A24;font-family:"Courier New",Consolas,monospace;
+  letter-spacing:.02em}
 /* ---------- 页眉「保存」按钮 + 保存设置二级页（模态） ---------- */
 .header-save{
   margin-left:10px;font-family:var(--font-num);font-size:12.5px;letter-spacing:.1em;
@@ -5991,6 +6618,30 @@ body.modal-open{overflow:hidden}
 #debrief-src{position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
 """
 
+#: 方案 B（找不到 Edge/Chrome 时在浏览器内生成 PDF）的「打印态仿真」基础布局。
+#: html2canvas 只能读屏幕样式，导出时给 ``<body>`` 挂 ``.pdf-capture``，
+#: 把每一页摆成 1600×1000 的纸、隐藏交互层、只留打印批注层（主题纸张 / 墨色
+#: 由 :func:`_pdf_capture_css` 从 ``@media print`` 规则复制过来）。
+PDF_CAPTURE_CSS = """
+body.pdf-capture{height:auto!important;overflow:visible!important}
+body.pdf-capture .app{height:auto!important;display:block!important}
+body.pdf-capture main{position:static!important;display:block!important;min-height:0!important}
+body.pdf-capture .page{
+  position:relative!important;inset:auto!important;display:flex!important;
+  width:1600px!important;height:1000px!important;min-height:0!important;
+  margin:0!important;overflow:hidden!important;page-break-after:auto!important;
+}
+body.pdf-capture .pager,body.pdf-capture .side,body.pdf-capture .hint,
+body.pdf-capture .header-save,body.pdf-capture .save-modal,
+body.pdf-capture #debrief-src,body.pdf-capture #tip{display:none!important}
+body.pdf-capture .series-bar{display:none!important}
+body.pdf-capture .ann-screen{display:none!important}
+body.pdf-capture .ann-print{display:inline!important}
+body.pdf-capture.no-annot .ann-print{display:none!important}
+body.pdf-capture.no-annot .ann-legend{display:none!important}
+"""
+
+
 CSS_PRINT = """
 @media print{
   html,body{height:auto;overflow:visible}
@@ -6032,7 +6683,7 @@ def _css(theme: Theme) -> str:
     print_extra = ("@media print{" + theme.print_css + "}") if theme.print_css else ""
     # 打印时把 SVG 里的深色曲线/网格按主题配置换成纸上的墨色（属性选择器只影响
     # 内联 SVG 的 stroke/fill 属性值，屏幕样式完全不变）。
-    chart_print = ""
+    chart_rules = ""
     if theme.print_chart:
         pairs: Dict[str, str] = {}
         # 曲线/网格颜色可能重复（ias / alt / pitch 都是正文色），只保留第一次映射，
@@ -6041,14 +6692,74 @@ def _css(theme: Theme) -> str:
             old_color = theme.chart.get(key)
             if old_color and old_color != new_color and old_color not in pairs:
                 pairs[old_color] = new_color
-        rules = "".join(
+        chart_rules = "".join(
             '[stroke="%s"]{stroke:%s!important}[fill="%s"]{fill:%s!important}'
             % (old, new, old, new)
             for old, new in pairs.items()
         )
-        if rules:
-            chart_print = "@media print{" + rules + "}"
-    return root + "\n" + CSS_BASE + theme.extra_css + CSS_PRINT + chart_print + print_extra
+    chart_print = ("@media print{" + chart_rules + "}") if chart_rules else ""
+    # 方案 B（浏览器内生成 PDF）：html2canvas 只能读屏幕样式，所以把 @media print
+    # 的纸张 / 批注 / 墨色规则复制成 ``body.pdf-capture`` 作用域，导出瞬间挂上/摘掉。
+    capture = PDF_CAPTURE_CSS + _pdf_capture_css(theme, chart_rules)
+    return (
+        root + "\n" + CSS_BASE + theme.extra_css + CSS_PRINT + chart_print
+        + capture + print_extra
+    )
+
+
+def _scope_css(css: str, scope: str = "body.pdf-capture") -> str:
+    """把一段（打印用）CSS 规则整体加前缀，变成 ``body.pdf-capture`` 作用域。
+
+    ``@page`` 丢掉（屏幕仿真不需要纸张设置），``html`` / ``body`` 选择器合并到
+    ``body.pdf-capture`` 本身，``body.no-annot ...`` 变成 ``body.pdf-capture.no-annot ...``。
+    """
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    css = re.sub(r"@page\s*\{[^{}]*\}", "", css)
+    out: List[str] = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        selectors = [part.strip() for part in match.group(1).split(",") if part.strip()]
+        if not selectors:
+            continue
+        scoped: List[str] = []
+        for selector in selectors:
+            if selector in ("html", "body"):
+                scoped.append(scope)
+            elif selector.startswith("body."):
+                scoped.append(scope + selector[len("body"):])
+            elif selector.startswith("html "):
+                scoped.append(scope + " " + selector[len("html "):])
+            elif selector.startswith("body "):
+                scoped.append(scope + " " + selector[len("body "):])
+            elif selector.startswith("@"):
+                continue
+            else:
+                scoped.append(scope + " " + selector)
+        if scoped:
+            out.append(",".join(scoped) + "{" + match.group(2) + "}")
+    return "".join(out)
+
+
+def _pdf_capture_css(theme: Theme, chart_rules: str = "") -> str:
+    """方案 B 的打印态仿真 CSS：通用打印布局 + 主题打印覆盖 + 打印墨色映射。"""
+    inner = CSS_PRINT
+    start = inner.find("@media print{")
+    if start >= 0:
+        depth = 0
+        end = start + len("@media print{")
+        for index in range(start + len("@media print{") - 1, len(inner)):
+            char = inner[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        inner = inner[start + len("@media print{"):end]
+    scoped = _scope_css(inner) + _scope_css(theme.print_css or "")
+    if chart_rules:
+        scoped += _scope_css(chart_rules)
+    return scoped
 
 JS = r"""
 (function(){
@@ -6886,6 +7597,171 @@ JS = r"""
   window.__debriefInfo = function(){
     return {prefix: debriefPrefix(), filename: debriefPrefix() + debriefTimestamp() + ".png"};
   };
+
+  // ---------------- PDF 完整版：file:// 必走内联生成，http(s) 可直下预生成 ----------------
+  // file://：Chromium 会拦截 <a download>（file:// 没有常规 origin，等同于跨源），
+  //         只能打开 PDF 查看器、不能真下载 → **一律走方案 B**：逐页
+  //         html2canvas(.page) → jsPDF 1600×1000 px → doc.save("report.pdf")。
+  // http(s)：有 <body data-pdf="report.pdf">（headless 预生成）就 <a download> 直接下载；
+  //         没有也走方案 B。vendor 库始终内联在页面里（不再只在 A 失败时注入）。
+  // 兜底：连内联库都没有（极旧环境）→ 沿用 window.print()。
+  function pdfDataFile(){
+    var body = document.body;
+    return (body && body.getAttribute("data-pdf")) || "";
+  }
+  function pdfFileProtocol(){
+    // file:// 下 <a download> 不会真的下载 → 只有 http(s) 才能用预生成文件。
+    return location.protocol === "file:";
+  }
+  function pdfModeName(){
+    if (pdfFileProtocol()) return "file-vendor";
+    if (pdfDataFile()) return "prebuilt";
+    return pdfFallbackReady() ? "vendor" : "print";
+  }
+  function pdfFallbackReady(){
+    var jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+    return !!(jsPDFCtor && window.html2canvas);
+  }
+  function clickDownload(href, name, allowNewTab){
+    var link = document.createElement("a");
+    link.href = href;
+    link.download = name;
+    if (allowNewTab){
+      // 极旧 WebView 里 download 可能被忽略，target=_blank 至少能打开查看器；
+      // 常规 http(s) 报告走 download，不需要新标签页。
+      link.target = "_blank";
+      link.rel = "noopener";
+    }
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+  function pdfPageNodes(){
+    return qsa("#pages > section.page");
+  }
+  function nextFrame(){
+    // 只等一个宏任务：足够让 .pdf-capture 的样式/布局生效；不用 requestAnimationFrame
+    //（标签页在后台 / 被 PDF 查看器盖住时 rAF 不触发，导出会永远卡住）。
+    return new Promise(function(resolve){
+      window.setTimeout(resolve, 0);
+    });
+  }
+  function pdfBackground(){
+    try {
+      var style = window.getComputedStyle(document.body);
+      var bg = style.backgroundColor;
+      if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") return bg;
+      var variable = style.getPropertyValue("--print-bg").trim();
+      if (variable) return variable;
+    } catch (err) { /* 忽略：用下面的兜底色 */ }
+    return "#FBF7EC";
+  }
+  function generatePdfInBrowser(annotated, done, fail){
+    var body = document.body;
+    var jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+    if (!jsPDFCtor || !window.html2canvas){
+      fail("离线 PDF 组件缺失");
+      return;
+    }
+    var pages = pdfPageNodes();
+    if (!pages.length){
+      fail("没有可导出的页面");
+      return;
+    }
+    var W = 1600, H = 1000;
+    body.classList.toggle("no-annot", !annotated);
+    body.classList.add("pdf-capture");
+    var background = pdfBackground();
+    nextFrame().then(function(){
+      var doc = new jsPDFCtor({
+        unit: "px", format: [W, H], orientation: "landscape",
+        hotfixes: ["px_scaling"], compress: true
+      });
+      var index = 0;
+      function finishFail(err){
+        body.classList.remove("pdf-capture");
+        body.classList.remove("no-annot");
+        fail(err);
+      }
+      function step(){
+        if (index >= pages.length){
+          body.classList.remove("pdf-capture");
+          body.removeAttribute("data-pdf-progress");
+          try {
+            doc.save("report.pdf");
+          } catch (err) {
+            finishFail("PDF 保存失败: " + (err && err.message ? err.message : err));
+            return;
+          }
+          done({mode: "vendor", name: "report.pdf", pages: pages.length});
+          return;
+        }
+        var page = pages[index];
+        body.setAttribute("data-pdf-progress", (index + 1) + "/" + pages.length);
+        window.html2canvas(page, {
+          width: W, height: H, windowWidth: W, windowHeight: H,
+          scale: 1, backgroundColor: background, useCORS: false, logging: false,
+          scrollX: 0, scrollY: 0
+        }).then(function(canvas){
+          var data = canvas.toDataURL("image/jpeg", 0.92);
+          if (index > 0) doc.addPage([W, H], "landscape");
+          doc.addImage(data, "JPEG", 0, 0, W, H);
+          canvas.width = 0;
+          canvas.height = 0;
+          index += 1;
+          nextFrame().then(step);
+        }).catch(function(err){
+          finishFail("第 " + (index + 1) + " 页渲染失败: "
+            + (err && err.message ? err.message : err));
+        });
+      }
+      step();
+    });
+  }
+  function exportFullPdf(annotated, done, fail){
+    var body = document.body;
+    var file = pdfDataFile();
+    // file:// → 预生成 PDF 的 <a download> 会被 Chromium 拦截，只能浏览器内生成；
+    // http(s) + 有 data-pdf → 直接下载预生成文件。
+    if (!pdfFileProtocol() && file){
+      var name = (file.split("/").pop() || "").split("\\").pop() || "report.pdf";
+      // http(s) 下同源 <a download> 生效，直接下载预生成文件。
+      clickDownload(encodeURI(file), name, false);
+      done({mode: "prebuilt", name: name});
+      return;
+    }
+    if (pdfFallbackReady()){
+      generatePdfInBrowser(annotated, done, fail);
+      return;
+    }
+    // 最后的兜底：老行为（浏览器打印界面）
+    body.classList.toggle("no-annot", !annotated);
+    window.setTimeout(function(){
+      try {
+        window.print();
+      } catch (err) {
+        body.classList.remove("no-annot");
+      }
+    }, 40);
+    done({mode: "print", name: "print"});
+  }
+  // 自动化验证钩子：返回 {mode, name, pages?}，B 分支会真的走一遍逐页渲染
+  window.__exportPdf = function(annotated){
+    return new Promise(function(resolve, reject){
+      exportFullPdf(annotated !== false, resolve, reject);
+    });
+  };
+  window.__pdfState = function(){
+    var file = pdfDataFile();
+    return {
+      prebuilt: file || null,
+      fallback: pdfFallbackReady(),
+      file: pdfFileProtocol(),
+      mode: pdfModeName(),
+      progress: (document.body && document.body.getAttribute("data-pdf-progress")) || ""
+    };
+  };
+
   window.__saveState = function(){
     return {open: saveIsOpen(), kind: saveKind(), annot: saveAnnot()};
   };
@@ -6904,9 +7780,9 @@ JS = r"""
       var annot = saveAnnot();
       var body = document.body;
       var state = {kind: kind, annot: annot, result: ""};
-      body.classList.toggle("no-annot", !annot);
       saveClose();
       if (kind === "png"){
+        body.classList.toggle("no-annot", !annot);
         exportDebriefPNG(annot, function(info){
           state.result = info.name;
           body.setAttribute("data-last-save",
@@ -6916,15 +7792,16 @@ JS = r"""
           body.setAttribute("data-last-save", "png-error:" + message);
         });
       } else {
-        body.setAttribute("data-last-save", "pdf:" + (annot ? "annotated" : "clean"));
-        window.setTimeout(function(){
-          // 打印期间保持 body.no-annot；打印结束后由 afterprint 统一移除
-          try {
-            window.print();
-          } catch (err) {
-            body.classList.remove("no-annot");
-          }
-        }, 40);
+        // PDF 完整版：有 data-pdf 直下预生成文件；没有就浏览器内生成（离线库）；
+        // 都不行才退回 window.print()。不再无条件弹打印界面。
+        exportFullPdf(annot, function(info){
+          state.result = info.mode + ":" + info.name;
+          body.setAttribute("data-last-save",
+            "pdf:" + (annot ? "annotated" : "clean") + ":" + info.mode + ":" + info.name);
+        }, function(message){
+          state.result = "error:" + message;
+          body.setAttribute("data-last-save", "pdf-error:" + message);
+        });
       }
     });
     var cancelBtn = document.getElementById("save-cancel");
@@ -6972,7 +7849,7 @@ SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal
       <div class="save-group">
         <div class="save-label">输出类型 / OUTPUT</div>
         <label class="save-opt"><input type="radio" name="save-kind" value="pdf" checked>
-          <span><b>PDF 完整版</b><i>9 页 · 档案纸 · 每页独立分页（打印 / 另存为 PDF）</i></span></label>
+          <span><b>PDF 完整版</b><i>9 页 · 档案纸 · 直接下载 PDF 文件（file:// 双击打开时浏览器内生成，http 下用预生成同名 .pdf）</i></span></label>
         <label class="save-opt"><input type="radio" name="save-kind" value="png">
           <span><b>PNG 单张复盘卡</b><i>1600 × 1000 · 档案袋风格 · 下载单张 PNG</i></span></label>
       </div>
@@ -7132,19 +8009,342 @@ def render_report(
     )
 
 
+# ---------------------------------------------------------------------------
+# PDF 导出：方案 A（本机 Chrome/Edge headless 预生成）
+# ---------------------------------------------------------------------------
+
+
+def _env_flag(name: str) -> bool:
+    value = str(os.environ.get(name, "") or "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def pdf_disabled() -> bool:
+    """``FLIGHTLOG_NO_PDF=1``：完全跳过 PDF 预生成（selftest / 只要 HTML 的场景）。"""
+    return _env_flag(PDF_DISABLE_ENV)
+
+
+def _registry_browser_paths() -> List[str]:
+    """注册表 ``App Paths`` 里的 Chrome / Edge 完整路径（Windows；失败静默）。"""
+    paths: List[str] = []
+    try:
+        import winreg  # type: ignore
+    except Exception:
+        return paths
+    subkeys = (
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+    )
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for subkey in subkeys:
+            try:
+                with winreg.OpenKey(hive, subkey) as key:
+                    value = str(winreg.QueryValueEx(key, "")[0] or "").strip()
+            except OSError:
+                continue
+            except Exception:
+                continue
+            if value:
+                paths.append(value.strip('"'))
+    return paths
+
+
+def _browser_path_candidates() -> List[str]:
+    """按优先级列出浏览器候选：环境变量 → 常见安装路径 → PATH → 注册表。"""
+    candidates: List[str] = []
+    explicit = str(os.environ.get(PDF_BROWSER_ENV, "") or "").strip()
+    if explicit:
+        candidates.append(explicit)
+    for template, _engine in PDF_BROWSER_CANDIDATES:
+        expanded = os.path.expandvars(template)
+        if "%" in expanded:  # 非 Windows / 变量不存在
+            continue
+        candidates.append(expanded)
+    for name in (
+        "chrome", "chrome.exe", "msedge", "msedge.exe",
+        "google-chrome", "chromium", "chromium-browser", "microsoft-edge",
+    ):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    candidates.extend(_registry_browser_paths())
+    seen = set()
+    ordered: List[str] = []
+    for path in candidates:
+        key = os.path.normcase(os.path.abspath(path)) if path else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered
+
+
+def find_pdf_browser(explicit: Optional[str] = None) -> Optional[str]:
+    """找本机可用的 Chrome/Edge；``explicit`` 给定时只用它（便于测试）。
+
+    常见路径优先（Chrome 在 Edge 前：实测 headless 打印 Chrome ~3 s、Edge 冷启动
+    可到 8~15 s），其次是 PATH 上的 ``chrome`` / ``msedge``，最后查注册表 App Paths。
+    """
+    if explicit:
+        return os.path.abspath(explicit) if os.path.isfile(explicit) else None
+    for path in _browser_path_candidates():
+        try:
+            if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+                return os.path.abspath(path)
+        except OSError:
+            continue
+    return None
+
+
+def pdf_print_command(
+    browser: str,
+    html_path: str,
+    pdf_path: str,
+    profile_dir: Optional[str] = None,
+) -> List[str]:
+    """拼 headless 打印命令（独立函数便于 selftest 断言参数顺序 / 形状）。"""
+    command = [str(browser)]
+    command.extend(PDF_PRINT_FLAGS)
+    if profile_dir:
+        command.append("--user-data-dir=%s" % profile_dir)
+    command.append("--print-to-pdf=%s" % os.path.abspath(pdf_path))
+    command.append(Path(os.path.abspath(html_path)).as_uri())
+    return command
+
+
+def generate_pdf(
+    html_path: str,
+    pdf_path: Optional[str] = None,
+    browser: Optional[str] = None,
+    timeout: float = PDF_PRINT_TIMEOUT_S,
+) -> Dict[str, Any]:
+    """用本机 Chrome/Edge headless 把 HTML 打印成 PDF（方案 A）。
+
+    返回 ``{"ok": bool, "browser": ..., "pdf": ..., "error": ..., "command": [...]}``。
+    页尺寸由打印 CSS ``@page{size:1600px 1000px}`` 决定；``--no-pdf-header-footer``
+    去掉浏览器自带的页眉页脚。用临时 ``--user-data-dir`` 避免和用户正在运行的
+    Chrome 抢 Profile。
+    """
+    source = os.path.abspath(html_path)
+    target = os.path.abspath(pdf_path) if pdf_path else os.path.splitext(source)[0] + ".pdf"
+    info: Dict[str, Any] = {
+        "ok": False,
+        "browser": None,
+        "pdf": target,
+        "error": "",
+        "command": [],
+    }
+    if not os.path.isfile(source):
+        info["error"] = "html-missing"
+        return info
+    chosen = find_pdf_browser(browser)
+    if not chosen:
+        info["error"] = "no-browser"
+        return info
+    info["browser"] = chosen
+    try:
+        with tempfile.TemporaryDirectory(prefix="flightlog-pdf-") as profile_dir:
+            command = pdf_print_command(chosen, source, target, profile_dir)
+            info["command"] = command
+            try:
+                os.remove(target)
+            except OSError:
+                pass
+            try:
+                subprocess.run(
+                    command,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=timeout,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                info["error"] = "timeout"
+                return info
+            except OSError as exc:
+                info["error"] = "spawn-failed: %s" % exc
+                return info
+    except OSError as exc:  # 临时目录建不出来
+        info["error"] = "tempdir-failed: %s" % exc
+        return info
+    # Chrome 偶发在进程返回后才 flush 落盘：最多再等 5 s
+    for _ in range(50):
+        if os.path.isfile(target) and os.path.getsize(target) > 1024:
+            break
+        time.sleep(0.1)
+    ok = os.path.isfile(target) and os.path.getsize(target) > 1024
+    if ok:
+        try:
+            with open(target, "rb") as handle:
+                ok = handle.read(5) == b"%PDF-"
+        except OSError:
+            ok = False
+    info["ok"] = ok
+    if ok:
+        info["bytes"] = os.path.getsize(target)
+    elif not info["error"]:
+        info["error"] = "bad-pdf"
+    return info
+
+
+def inject_pdf_data_attr(html_text: str, pdf_name: str) -> str:
+    """把预生成 PDF 的相对文件名写进 ``<body data-pdf="...">``。
+
+    只改 **document body 标签**（用 ``<body...>`` 的第一个匹配），不能误改
+    JS 注释 / 字符串里出现的 ``<body data-pdf="...">`` 文本。
+    """
+    if not pdf_name:
+        return html_text
+    escaped = html.escape(pdf_name, quote=True)
+    match = re.search(r"<body(?P<attrs>[^>]*)>", html_text)
+    if not match:
+        return html_text
+    attrs = match.group("attrs") or ""
+    if re.search(r"\bdata-pdf\s*=", attrs):
+        new_attrs = re.sub(
+            r'\bdata-pdf\s*=\s*"[^"]*"', 'data-pdf="%s"' % escaped, attrs, count=1
+        )
+    else:
+        new_attrs = attrs + ' data-pdf="%s"' % escaped
+    return html_text[: match.start()] + "<body%s>" % new_attrs + html_text[match.end():]
+
+
+def _pdf_vendor_libs() -> Optional[Tuple[str, str]]:
+    """解码/校验内联 PDF 库（jsPDF UMD + html2canvas），失败返回 ``None``。"""
+    if _PDF_VENDOR is None:
+        return None
+    try:
+        jspdf = base64.b64decode(_PDF_VENDOR.JSPDF_B64)
+        html2canvas = base64.b64decode(_PDF_VENDOR.HTML2CANVAS_B64)
+    except Exception:
+        return None
+    expected = (
+        (jspdf, _PDF_VENDOR.JSPDF_BYTES, _PDF_VENDOR.JSPDF_SHA256),
+        (html2canvas, _PDF_VENDOR.HTML2CANVAS_BYTES, _PDF_VENDOR.HTML2CANVAS_SHA256),
+    )
+    for payload, size, digest in expected:
+        if len(payload) != int(size):
+            return None
+        if hashlib.sha256(payload).hexdigest() != digest:
+            return None
+    try:
+        return jspdf.decode("utf-8"), html2canvas.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def pdf_vendor_ready() -> bool:
+    """方案 B 的内联库是否可用（解码 + 长度 + sha256 校验通过）。"""
+    return _pdf_vendor_libs() is not None
+
+
+def pdf_fallback_script() -> str:
+    """方案 B 的内联 ``<script>`` 块（jsPDF + html2canvas，离线、无外链）。"""
+    libs = _pdf_vendor_libs()
+    if libs is None:
+        return ""
+    jspdf, html2canvas = libs
+
+    def safe(js: str) -> str:
+        return js.replace("</script", "<\\/script")
+
+    version = getattr(_PDF_VENDOR, "JSPDF_VERSION", "")
+    h2c_version = getattr(_PDF_VENDOR, "HTML2CANVAS_VERSION", "")
+    return (
+        '<script data-pdf-vendor="jspdf" data-pdf-vendor-version="%s">%s</script>\n'
+        '<script data-pdf-vendor="html2canvas" data-pdf-vendor-version="%s">%s</script>\n'
+        % (html.escape(str(version)), safe(jspdf),
+           html.escape(str(h2c_version)), safe(html2canvas))
+    )
+
+
+def inject_pdf_fallback(html_text: str) -> str:
+    """方案 B：把内联 jsPDF/html2canvas 注入 HTML（同时打 ``data-pdf-fallback`` 标记）。
+
+    ``write_report`` 对每份报告都调用（不再只在预生成失败时）：``file://`` 下
+    Chromium 拦 ``<a download>``，只有浏览器内逐页渲染才能真下载 PDF。
+    """
+    block = pdf_fallback_script()
+    if not block:
+        return html_text
+    marker = "<script>window.__FLIGHTLOG__="
+    body_marked = html_text
+    if "<body>" in body_marked:
+        body_marked = body_marked.replace("<body>", '<body data-pdf-fallback="inline">', 1)
+    index = body_marked.find(marker)
+    if index < 0:
+        return body_marked
+    return body_marked[:index] + block + body_marked[index:]
+
+
+def _pdf_enabled(pdf: Optional[bool]) -> bool:
+    """``pdf=None`` 自动（受 FLIGHTLOG_NO_PDF 控制），``True`` 强制、``False`` 关闭。"""
+    if pdf is False:
+        return False
+    if pdf is None and pdf_disabled():
+        return False
+    return True
+
+
 def write_report(
     model: LogModel,
     out_path: str,
     title: Optional[str] = None,
     theme: Optional[str] = None,
     limits: Optional[SpeedLimits] = None,
+    pdf: Optional[bool] = None,
+    status: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """渲染并写盘（UTF-8，自动建目录），返回绝对路径。"""
+    """渲染并写盘（UTF-8，自动建目录），返回绝对路径。
+
+    方案 B（内联 jsPDF + html2canvas）**始终**注入报告：Chromium 在 ``file://``
+    页面里会拦截 ``<a download>``，只有浏览器内逐页渲染才能真下载 PDF。``pdf``
+    只控制「要不要再预生成方案 A 的 PDF」：
+
+    * ``None``（默认）= 自动：先试方案 A（本机 Edge/Chrome headless 预生成同名
+      ``.pdf``，成功则写 ``<body data-pdf="...">``，http 场景直接下载）；找不到
+      浏览器 / 失败不影响报告——file:// 下按钮照样在浏览器内生成；
+    * ``True`` = 强制尝试方案 A（失败仍退 B）；
+    * ``False`` = 跳过方案 A（selftest / 调试用），B 的库仍然内联。
+
+    ``status`` 非空时填入本次的报告状态（html / pdf / mode / browser / error），
+    供 ``launch.py`` / ``__main__.py`` 打印「PDF 已生成 / 回退浏览器内生成」。
+    """
     out_path = os.path.abspath(out_path)
     directory = os.path.dirname(out_path)
     if directory:
         os.makedirs(directory, exist_ok=True)
     content = render_report(model, title=title, theme=theme, limits=limits)
-    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(content)
+    # 始终内联方案 B：file:// 双击打开时也能真下载 report.pdf（不再只在 A 失败时注入）
+    content = inject_pdf_fallback(content)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+
+    info: Dict[str, Any] = {
+        "html": out_path,
+        "pdf": None,
+        "mode": "html-only",
+        "browser": None,
+        "error": None,
+    }
+    if _pdf_enabled(pdf):
+        pdf_path = os.path.splitext(out_path)[0] + ".pdf"
+        browser = find_pdf_browser()
+        result = generate_pdf(out_path, pdf_path, browser=browser)
+        info["browser"] = result.get("browser")
+        if result.get("ok"):
+            info["pdf"] = pdf_path
+            info["mode"] = "prebuilt"
+            content = inject_pdf_data_attr(content, os.path.basename(pdf_path))
+            with open(out_path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(content)
+        else:
+            # 预生成失败不影响 file:// 下载：vendor 已在页面里，按钮走浏览器内生成。
+            info["error"] = result.get("error")
+            info["mode"] = "inline" if pdf_vendor_ready() else "print"
+    if status is not None:
+        status.clear()
+        status.update(info)
     return out_path
