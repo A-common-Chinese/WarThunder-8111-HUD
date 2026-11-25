@@ -1756,6 +1756,169 @@ public static partial class Program
             if (gapRecPath != null) { try { File.Delete(gapRecPath); } catch { } }
         }
 
+        // ---- 全 0 快照（8111 冻结帧）：判定纯函数 + 连续去抖 + 记录端真的跳过 ----
+        // 背景：8111 掉线/冻结时会回 valid=true、inflight=false、数值全 0 的帧。写进 jsonl 后
+        // FlightLog 报告里会出现冲向 0 的 V 形陡降（t≈31.8 s / 101.6 s）。以下断言覆盖：
+        // 判定边界（防误杀）、单帧去抖（防误杀单帧抖动）、连续确认（跳过 + gap 照写）。
+        var zeroT0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        TelemetrySnapshot FrozenSnap(double t) => new()
+        {
+            Valid = true, InFlight = false, VehicleType = "selftest-zero",
+            ElapsedSeconds = t, TimestampUtc = zeroT0.AddSeconds(t),
+        };
+        // 真实停在地面：IAS/TAS/Mach/Vy/AoA 都是 0，但高度/油量/航向/Ny 是真实值。
+        var groundSnap = new TelemetrySnapshot
+        {
+            Valid = true, InFlight = false, VehicleType = "selftest-zero",
+            ElapsedSeconds = 10, TimestampUtc = zeroT0.AddSeconds(10),
+            IasKmh = 0, TasKmh = 0, Mach = 0, AltM = 25, VyMs = 0, AoaDeg = 0, AosDeg = 0,
+            NyG = 1.0, RollRateDegS = 0, HeadingDeg = 90, FuelKg = 480, Fuel0Kg = 500,
+            PitchDeg = 0.5, BankDeg = 0, RadioAltM = 25,
+        };
+        Check("zero snapshot needs valid + on-ground + all key values zero",
+            ZeroSnapshot.IsZeroSnapshot(FrozenSnap(0))
+            // 空中全 0 不在判定范围（8111 冻结帧的签名是 inflight=false）
+            && !ZeroSnapshot.IsZeroSnapshot(new TelemetrySnapshot { Valid = true, InFlight = true })
+            // 无效帧本来就不写样本，不需要也不应该被判成「全 0」
+            && !ZeroSnapshot.IsZeroSnapshot(new TelemetrySnapshot { Valid = false, InFlight = false })
+            // 机型提供原生姿态时，显式 0 也算全 0
+            && ZeroSnapshot.IsZeroSnapshot(new TelemetrySnapshot
+            {
+                Valid = true, InFlight = false, PitchDeg = 0, BankDeg = 0,
+                TurnRateDegS = 0, RadioAltM = 0,
+            }));
+        Check("real on-ground sample is not a zero snapshot",
+            !ZeroSnapshot.IsZeroSnapshot(groundSnap)
+            && !ZeroSnapshot.IsZeroSnapshot(new TelemetrySnapshot
+            {
+                Valid = true, InFlight = false, AltM = 0, HeadingDeg = 90, FuelKg = 480,
+            })
+            && !ZeroSnapshot.IsZeroSnapshot(new TelemetrySnapshot
+            {
+                Valid = true, InFlight = false, NyG = 1.0,
+            }));
+        Check("zero snapshot log lines keep the documented shape",
+            ZeroSnapshot.FirstSkipLogLine == "record: skip zero snapshot"
+            && ZeroSnapshot.SkipSummaryLogLine(7) == "record: skip zero x7"
+            && ZeroSnapshot.ConfirmAfter == 2);
+
+        // 跳过日志去重 + 5 s 限流（用假 tick 驱动，不依赖真实时钟）：
+        // 首条只打一次 → 窗口内静默 → 超过 5 s 打一条汇总，汇总数 = 窗口内累计跳过条数。
+        ResetZeroSnapshotGuard();
+        Check("zero snapshot skip log is deduped and throttled to one line per 5 s",
+            ConsumeZeroSkipLog(2, 1000) == "record: skip zero snapshot"
+            && ConsumeZeroSkipLog(1, 3000) is null                   // 5 s 窗口内不再打
+            && ConsumeZeroSkipLog(3, 6000) == "record: skip zero x4" // 窗口累计 2+1+3 内已打 2
+            && ConsumeZeroSkipLog(1, 7000) is null
+            && ConsumeZeroSkipLog(2, 12000) == "record: skip zero x3");
+        ResetZeroSnapshotGuard();
+
+        // 连续去抖状态机：单帧全 0 只 Hold（调用方缓冲，正常帧来了补写），连续 2 帧才 Skip。
+        var zeroFilter = new ZeroSnapshotFilter();
+        Check("zero snapshot filter debounces a single all-zero frame",
+            zeroFilter.Offer(groundSnap, out _) == ZeroSnapshotVerdict.Write
+            && zeroFilter.Offer(FrozenSnap(0), out int heldSkipped) == ZeroSnapshotVerdict.Hold
+            && heldSkipped == 0
+            && zeroFilter.Streak == 1
+            && zeroFilter.Offer(groundSnap, out int recoveredSkipped) == ZeroSnapshotVerdict.Write
+            && recoveredSkipped == 0
+            && zeroFilter.Streak == 0
+            && zeroFilter.SkippedTotal == 0);
+        var zeroFilter2 = new ZeroSnapshotFilter();
+        Check("zero snapshot filter confirms consecutive all-zero frames",
+            zeroFilter2.Offer(FrozenSnap(0), out _) == ZeroSnapshotVerdict.Hold
+            // 确认的那一下把缓冲里的第一帧一起算掉
+            && zeroFilter2.Offer(FrozenSnap(1), out int firstConfirm) == ZeroSnapshotVerdict.Skip
+            && firstConfirm == 2
+            && zeroFilter2.Offer(FrozenSnap(2), out int nextSkip) == ZeroSnapshotVerdict.Skip
+            && nextSkip == 1
+            && zeroFilter2.SkippedTotal == 3
+            && zeroFilter2.Offer(groundSnap, out _) == ZeroSnapshotVerdict.Write
+            && zeroFilter2.Streak == 0 && zeroFilter2.SkippedTotal == 3);
+
+        // 记录端到端：真实 → 连续 3 帧全 0 → 真实。全 0 一帧都不进文件，gap 照写。
+        string? zeroRecPath = null;
+        try
+        {
+            var zeroCfg = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var zeroBase = DateTime.UtcNow;
+            TelemetrySnapshot RealSnap(double t) => new()
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest-zero",
+                ElapsedSeconds = t, TimestampUtc = zeroBase.AddSeconds(t),
+                IasKmh = 700, TasKmh = 720, AltM = 3000, VyMs = 1, NyG = 1.1,
+                HeadingDeg = 90, FuelKg = 900, Fuel0Kg = 1000,
+            };
+            TelemetrySnapshot FrozenSnapAt(double t) => new()
+            {
+                Valid = true, InFlight = false, VehicleType = "selftest-zero",
+                ElapsedSeconds = t, TimestampUtc = zeroBase.AddSeconds(t),
+            };
+            UpdateFlightRecording(zeroCfg, RealSnap(0), true);
+            zeroRecPath = flightRecorder?.FilePath;
+            UpdateFlightRecording(zeroCfg, FrozenSnapAt(1.0), true);   // 全 0 #1 → 缓冲
+            UpdateFlightRecording(zeroCfg, FrozenSnapAt(1.5), true);   // 全 0 #2 → 确认跳过
+            UpdateFlightRecording(zeroCfg, FrozenSnapAt(2.0), true);   // 全 0 #3 → 跳过
+            UpdateFlightRecording(zeroCfg, RealSnap(5.0), true);       // 距上一条已写样本 5 s → gap
+            UpdateFlightRecording(new HudConfig { RecordEnabled = false }, RealSnap(5.0), true);
+            var zeroLines = zeroRecPath is null ? Array.Empty<string>() : File.ReadAllLines(zeroRecPath);
+            var zeroSamples = zeroLines.Where(l => l.Contains("\"type\":\"sample\"")).ToArray();
+            var zeroGaps = zeroLines.Where(l => l.Contains("\"type\":\"event\"")
+                                               && l.Contains("\"kind\":\"gap\"")).ToArray();
+            Check("recording skips confirmed all-zero snapshots but still writes the gap",
+                zeroRecPath is not null
+                && zeroSamples.Length == 2
+                && zeroSamples.All(l => !l.Contains("\"ias_kmh\":0"))
+                && zeroGaps.Length == 1 && zeroGaps[0].Contains("\"gap\":5"));
+        }
+        finally
+        {
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (zeroRecPath != null) { try { File.Delete(zeroRecPath); } catch { } }
+        }
+
+        // 单帧全 0 不能误杀：缓冲起来，下一帧正常就按原时间戳补写，样本一条不少、不写 gap。
+        string? singleZeroPath = null;
+        try
+        {
+            var singleCfg = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var singleBase = DateTime.UtcNow;
+            TelemetrySnapshot RealSnap2(double t) => new()
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest-zero",
+                ElapsedSeconds = t, TimestampUtc = singleBase.AddSeconds(t),
+                IasKmh = 700, TasKmh = 720, AltM = 3000, VyMs = 1, NyG = 1.1,
+                HeadingDeg = 90, FuelKg = 900, Fuel0Kg = 1000,
+            };
+            UpdateFlightRecording(singleCfg, RealSnap2(0), true);
+            singleZeroPath = flightRecorder?.FilePath;
+            UpdateFlightRecording(singleCfg, new TelemetrySnapshot
+            {
+                Valid = true, InFlight = false, VehicleType = "selftest-zero",
+                ElapsedSeconds = 0.5, TimestampUtc = singleBase.AddSeconds(0.5),
+            }, true);                                                    // 单帧全 0 → 缓冲
+            UpdateFlightRecording(singleCfg, RealSnap2(1.0), true);      // 正常帧 → 补写缓冲帧
+            UpdateFlightRecording(new HudConfig { RecordEnabled = false }, RealSnap2(1.0), true);
+            var singleLines = singleZeroPath is null ? Array.Empty<string>() : File.ReadAllLines(singleZeroPath);
+            var singleSamples = singleLines.Where(l => l.Contains("\"type\":\"sample\"")).ToArray();
+            var singleGaps = singleLines.Count(l => l.Contains("\"type\":\"event\"")
+                                                    && l.Contains("\"kind\":\"gap\""));
+            Check("recording keeps a single all-zero frame (debounce, no data loss)",
+                singleZeroPath is not null
+                && singleSamples.Length == 3
+                && singleSamples.Count(l => l.Contains("\"ias_kmh\":0")) == 1
+                && singleGaps == 0);
+        }
+        finally
+        {
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (singleZeroPath != null) { try { File.Delete(singleZeroPath); } catch { } }
+        }
+
         // ---- 8111 轮询：专用线程 + 延迟汇总行（回环假 8111，不依赖游戏）----
         // 局限：这是最小的 HTTP/1.1 回环服务器，只证明「线程模型 + 计时 + 汇总行格式」；
         // 不覆盖游戏侧真实负载，也不覆盖 8111 单线程服务端的排队特性。

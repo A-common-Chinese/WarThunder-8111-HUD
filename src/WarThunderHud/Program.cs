@@ -3319,6 +3319,7 @@ public static partial class Program
                 recDeathLogged = false;
                 recHudmsgDeathUtc = default;
                 recDeathTicks = 0;
+                ResetZeroSnapshotGuard();
                 Console.WriteLine("recording stopped (toggle off)");
             }
             return;
@@ -3337,6 +3338,7 @@ public static partial class Program
             recDeathLogged = false;
             recHudmsgDeathUtc = default;
             recDeathTicks = 0;
+            ResetZeroSnapshotGuard();
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
@@ -3400,15 +3402,32 @@ public static partial class Program
             if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
             if (snap.Valid && inBattle)
             {
-                // 数据中断（>1 s）单独记一条 gap 事件：轮询线程停过 / 8111 断过。
-                // 样本照写 —— FlightLog 既能看到曲线，也能在中断处看到 gap 标记。
-                if (SampleGapSeconds(recLastSampleUtc, snap.TimestampUtc) is double gapS)
+                // ★ 全 0 快照（8111 掉线/冻结时 valid=true、inflight=false、数值全 0）不写样本：
+                // 写进去会在报告里变成冲向 0 的 V 形陡降。判定/去抖见 Telemetry/ZeroSnapshot.cs。
+                // 单帧全 0 只缓冲（去抖）：下一帧正常就补写回去，别把单帧抖动误杀成数据丢失。
+                switch (recZeroFilter.Offer(snap, out int zeroSkipped))
                 {
-                    flightRecorder.Event("gap", null, snap.TimestampUtc, null, gapS);
-                    Console.WriteLine(GapLogLine(gapS, snap.ElapsedSeconds));
+                    case ZeroSnapshotVerdict.Hold:
+                        recZeroHeldSnap = snap;
+                        recZeroHeldAtt = lastAttitude;
+                        break;
+                    case ZeroSnapshotVerdict.Skip:
+                        // 确认冻结：缓冲的那一帧一起丢掉，跳过的样本不作为 gap 基准。
+                        recZeroHeldSnap = null;
+                        if (ConsumeZeroSkipLog(zeroSkipped, nowTicks) is { } skipLine)
+                            Console.WriteLine(skipLine);
+                        break;
+                    default:
+                        // 单帧误判的补偿：先按原时间戳补写缓冲的那条，再写当前帧。
+                        if (recZeroHeldSnap is { } heldSnap)
+                        {
+                            var heldAtt = recZeroHeldAtt;
+                            recZeroHeldSnap = null;
+                            WriteRecordSample(cfg, heldSnap, heldAtt);
+                        }
+                        WriteRecordSample(cfg, snap, lastAttitude);
+                        break;
                 }
-                recLastSampleUtc = snap.TimestampUtc;
-                flightRecorder.Add(snap, lastAttitude, EffectiveRadioAltM(snap, cfg));
             }
         }
 
@@ -3422,6 +3441,8 @@ public static partial class Program
             recLastPacketTicks = 0;
             recLastSampleUtc = null;
             recOutSince = 0;
+            // 缓冲中的单帧全 0 直接丢掉：没有下一帧可确认，写进去反而会在文件末尾多一个 0 点。
+            ResetZeroSnapshotGuard();
             Console.WriteLine(idleOut
                 ? "recording stopped (out of battle for 60 s)"
                 : "recording stopped (no telemetry)");
@@ -3445,6 +3466,60 @@ public static partial class Program
     /// <summary>数据中断日志行。样例：<c>record gap 2.66s at sample t=41.20</c></summary>
     internal static string GapLogLine(double gapS, double sampleT)
         => string.Create(CultureInfo.InvariantCulture, $"record gap {gapS:F2}s at sample t={sampleT:F2}");
+
+    /// <summary>
+    /// 写一条记录样本：先补 gap 事件（相邻**已写**样本间隔 &gt;1 s），再落样本。
+    /// 抽成方法是因为「单帧全 0 缓冲后按原时间戳补写」要复用完全相同的 gap 语义：
+    /// 跳过一段全 0 快照期间 recLastSampleUtc 不前进，所以下一条真实样本间隔 &gt;1 s 时
+    /// 照旧写 gap —— 那正是数据中断。
+    /// </summary>
+    private static void WriteRecordSample(HudConfig cfg, TelemetrySnapshot snap, AttitudeSolution att)
+    {
+        if (flightRecorder is not { } rec) return;
+        if (SampleGapSeconds(recLastSampleUtc, snap.TimestampUtc) is double gapS)
+        {
+            rec.Event("gap", null, snap.TimestampUtc, null, gapS);
+            Console.WriteLine(GapLogLine(gapS, snap.ElapsedSeconds));
+        }
+        recLastSampleUtc = snap.TimestampUtc;
+        rec.Add(snap, att, EffectiveRadioAltM(snap, cfg));
+    }
+
+    /// <summary>
+    /// 全 0 跳过日志（去重 + 限流）：返回本轮要打的行，不需要打就返回 <c>null</c>。
+    /// 第一次跳过打 <c>record: skip zero snapshot</c>；
+    /// 之后每 <see cref="ZeroSnapshot.SummaryIntervalMs"/> 最多一条
+    /// <c>record: skip zero xN</c>（N = 这个 5 s 窗口里跳过的条数）。
+    /// 纯计时参数化是为了自检能用假 tick 断言「首条 → 5 s 内静默 → 汇总」。
+    /// </summary>
+    private static string? ConsumeZeroSkipLog(int skippedNow, long nowTicks)
+    {
+        if (skippedNow <= 0) return null;
+        recZeroSinceLog += skippedNow;
+        if (!recZeroLoggedOnce)
+        {
+            recZeroLoggedOnce = true;
+            recZeroLastLogTicks = nowTicks;
+            recZeroSinceLog = 0;
+            return ZeroSnapshot.FirstSkipLogLine;
+        }
+        if (nowTicks - recZeroLastLogTicks < ZeroSnapshot.SummaryIntervalMs) return null;
+        recZeroLastLogTicks = nowTicks;
+        string line = ZeroSnapshot.SkipSummaryLogLine(recZeroSinceLog);
+        recZeroSinceLog = 0;
+        return line;
+    }
+
+    /// <summary>开始/结束一次记录时清空全 0 去抖与日志状态（避免上一局的连续计数串到下一局）。</summary>
+    private static void ResetZeroSnapshotGuard()
+    {
+        recZeroFilter.Reset();
+        recZeroHeldSnap = null;
+        recZeroHeldAtt = default;
+        recZeroLoggedOnce = false;
+        recZeroSinceLog = 0;
+        recZeroLastLogTicks = 0;
+    }
 
     /// <summary>雷达高度原始值按设置换算成米：0 = 米，1 = 英尺（座舱单位随机型）。</summary>
     internal static double? EffectiveRadioAltM(TelemetrySnapshot s, HudConfig c)
@@ -3695,6 +3770,14 @@ public static partial class Program
     private static bool recDeathLogged;       // 本次死亡是否已写 death
     private static DateTime recHudmsgDeathUtc; // /hudmsg 捕获到的死亡时间（默认值 = 没有）
     private static long recDeathTicks;         // 写 death 的时刻，用于延迟写 spawn
+
+    // ★ 全 0 快照过滤（8111 冻结帧）：连续去抖 + 单帧缓冲。只在 recGate 里推进。
+    private static readonly ZeroSnapshotFilter recZeroFilter = new();
+    private static TelemetrySnapshot? recZeroHeldSnap;  // 第一帧全 0：先缓冲，下一帧正常就补写
+    private static AttitudeSolution recZeroHeldAtt;     // 缓冲帧当时的姿态解（补写要原样落盘）
+    private static bool recZeroLoggedOnce;              // 是否已打过首条 skip 日志
+    private static long recZeroLastLogTicks;            // 上一条 skip 汇总的时刻（TickCount64）
+    private static int recZeroSinceLog;                 // 距上一条汇总跳过的条数
 
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)

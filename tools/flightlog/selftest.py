@@ -45,6 +45,7 @@
 from __future__ import annotations
 
 import contextlib
+import colorsys
 import datetime as _dt
 import io
 import json
@@ -71,6 +72,7 @@ from flightlog.report import (  # noqa: E402
     ANNOTATION_NAMES,
     DEFAULT_THEME,
     GAP_HOLE_S,
+    LINE_STYLES,
     PATH_GAP_S,
     PLOT_LEFT,
     PLOT_RIGHT,
@@ -103,6 +105,7 @@ from flightlog.report import (  # noqa: E402
     annotation_name,
     compute_annotations,
     get_theme,
+    line_style,
     load_speed_limits,
     manual_speed_limits,
     render_report,
@@ -186,7 +189,6 @@ def _old_sample(t: float, epoch0: float, **extra):
         "aoa_deg": 3.0,
         "aos_deg": 0.0,
         "ny_g": 1.0,
-        "roll_rate_dps": 0.0,
         "hdg_deg": 180.0,
         "has_hdg": True,
         "att_src": "Unavailable",
@@ -666,13 +668,14 @@ def test_report_themes(tmp: Path) -> None:
         check("--radius:%s" % theme.radius in html, "%s：圆角变量来自主题配置" % label)
         check("--font-ui:" in html and "--font-title:" in html and "--font-num:" in html,
               "%s：输出三套系统字体栈（UI/标题/数字）" % label)
-        check("background:%s" % theme.chart["ias"] in html,
+        check('stroke="%s"' % theme.chart["ias"] in html,
               "%s：图表曲线颜色取自主题调色板" % label)
         check('stroke="%s"' % theme.chart["border"] in html,
               "%s：图表边框颜色取自主题调色板" % label)
         check('stroke="%s"' % theme.chart["grid"] in html,
               "%s：网格颜色取自主题调色板" % label)
-        check("主题 %s" % theme.label in html, "%s：页眉标注当前主题名" % label)
+        check("主题 %s" % theme.label not in html,
+              "%s：页眉不再显示当前主题名" % label)
         if key != "mfd":
             check("--bg:%s" % THEMES["mfd"].bg not in html,
                   "%s：不再残留旧默认主题的深色背景变量" % label)
@@ -757,6 +760,213 @@ def test_report_themes(tmp: Path) -> None:
     check(mfd_code == 0 and mfd_out.is_file(),
           "--mfd-json 与 --theme 同时给：正常导出（主题被忽略，不报错）")
     check("已忽略" in mfd_err.getvalue(), "--mfd-json 模式提示 --theme 已忽略")
+
+
+# ---------------------------------------------------------------------------
+# [20] 曲线辨识度：速度页 4 条线 / 姿态页 3 条线（颜色 + dash 双编码）
+# ---------------------------------------------------------------------------
+
+#: 速度页/姿态页每条线的期望 dash / 线宽。唯一真源是 ``report.LINE_STYLES``；
+#: 这里再写一份期望值，是为了「改了配置但和设计稿不一致」时能立刻报错。
+_SPEED_LINE_EXPECT = (
+    ("ias", None, "2.2"),
+    ("tas", "8 4", "2.0"),
+    ("mach", "2 3", "1.8"),
+    ("avg_speed", "4 4", "1.4"),
+)
+_ATTITUDE_LINE_EXPECT = (
+    ("pitch", None, "2.2"),
+    ("bank", "8 4", "2.0"),
+    ("roll", "2 3", "1.8"),
+)
+
+
+def _page_section(html: str, page_id: str) -> str:
+    """截取 ``<section ... id="page-xxx">...</section>``（页面里没有嵌套 section）。"""
+    match = re.search(
+        r'<section class="page[^"]*" id="%s".*?</section>' % re.escape(page_id),
+        html,
+        re.S,
+    )
+    return match.group(0) if match else ""
+
+
+def _active_view(page_html: str) -> str:
+    """截取当前默认架次的 ``.flight-view.active``（多架次页里只看默认那套图）。"""
+    marker = 'class="flight-view active"'
+    start = page_html.find(marker)
+    if start < 0:
+        return page_html
+    start = page_html.rfind("<div", 0, start)
+    nxt = page_html.find('class="flight-view', start + len(marker))
+    return page_html[start : nxt if nxt > 0 else len(page_html)]
+
+
+def _tag_attr(tag: str, name: str):
+    match = re.search(r'\b%s="([^"]*)"' % re.escape(name), tag)
+    return match.group(1) if match else None
+
+
+def _legend_swatches(view_html: str):
+    """图例线段 ``[(stroke, stroke-width, stroke-dasharray)]``，按图例顺序。"""
+    legend = re.search(r'<div class="legend"[^>]*>(.*?)</div>', view_html, re.S)
+    if not legend:
+        return []
+    return [
+        (_tag_attr(tag, "stroke"), _tag_attr(tag, "stroke-width"),
+         _tag_attr(tag, "stroke-dasharray"))
+        for tag in re.findall(r"<line\b[^>]*/>", legend.group(1))
+    ]
+
+
+def _svg_curve_styles(view_html: str):
+    """SVG 里数据曲线（path）+ 平均速度线（line.avg-line）的 ``[(stroke, width, dash)]``。"""
+    svg = re.search(r'<svg id="svg-[^"]+".*?</svg>', view_html, re.S)
+    if not svg:
+        return []
+    styles = []
+    for tag in re.findall(r"<path\b[^>]*/>", svg.group(0)):
+        # 只要数据曲线：断口桥也有 stroke，但没有 stroke-linejoin
+        if _tag_attr(tag, "fill") != "none" or not _tag_attr(tag, "stroke-linejoin"):
+            continue
+        styles.append(
+            (_tag_attr(tag, "stroke"), _tag_attr(tag, "stroke-width"),
+             _tag_attr(tag, "stroke-dasharray"))
+        )
+    for tag in re.findall(r'<line\b[^>]*\bclass="avg-line"[^>]*/>', svg.group(0)):
+        styles.append(
+            (_tag_attr(tag, "stroke"), _tag_attr(tag, "stroke-width"),
+             _tag_attr(tag, "stroke-dasharray"))
+        )
+    return styles
+
+
+def _hls(hex_color: str):
+    value = (hex_color or "").lstrip("#")
+    if len(value) == 8:
+        value = value[:6]
+    rgb = tuple(int(value[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+    hue, light, sat = colorsys.rgb_to_hls(*rgb)
+    return hue * 360.0, light, sat
+
+
+def _colors_distinct(left: str, right: str) -> bool:
+    """两种颜色能否不只靠明度区分：同色相的两条饱和色不算（必须色相不同）。"""
+    h1, l1, s1 = _hls(left)
+    h2, l2, s2 = _hls(right)
+    if s1 >= 0.22 and s2 >= 0.22:
+        gap = abs(h1 - h2)
+        return min(gap, 360.0 - gap) >= 25.0
+    if s1 >= 0.22 or s2 >= 0.22:
+        return True  # 一条彩色、一条中性灰，天然可分
+    return abs(l1 - l2) >= 0.30
+
+
+def test_line_legibility(tmp: Path) -> None:
+    """文案替换 + 速度/姿态曲线「颜色 + 线型」双编码 + 图例与曲线一致。"""
+    print("\n[20] 文案 + 速度/姿态曲线辨识度（颜色 + dash 双编码，6 套主题）")
+    jsonl = tmp / "lines.jsonl"
+    if not jsonl.exists():
+        build_full_log(jsonl)
+    model = P.analyze(str(jsonl))
+    html = render_report(model)
+
+    # ---- 1) 三处文案：旧文本已删除、新文本落在对应页 ----
+    old_texts = (
+        "气压高度 + 雷达高度（虚线，有数据才画）",
+        "Es = 高度 + 速度² / 2g（米），面积填充",
+        "绿色 = 获得能量（爬升或加速），红色 = 损失能量（m/s）",
+    )
+    new_texts = (
+        "气压高度 （实线）+ 雷达高度（虚线）",
+        "Es = 高度 + 速度² / 2g（米）",
+        "绿色 = 获得能量，红色 = 损失能量（m/s）",
+    )
+    for text in old_texts:
+        check(text not in html, "旧文案已删除：%s" % text)
+    for text in new_texts:
+        check(text in html, "新文案已生效：%s" % text)
+    check(new_texts[0] in _page_section(html, "page-altitude"),
+          "第 3 页（高度）说明 = 新文案")
+    check(new_texts[1] in _page_section(html, "page-energy"),
+          "第 4 页（比能量）说明 = 新文案")
+    check(new_texts[2] in _page_section(html, "page-energy_rate"),
+          "第 5 页（能量变化率）说明 = 新文案")
+
+    # ---- 2) 线型集中定义（dash / width 与设计一致，且每页唯一）----
+    for kind, expect in (("速度页", _SPEED_LINE_EXPECT), ("姿态页", _ATTITUDE_LINE_EXPECT)):
+        for key, dash, width in expect:
+            style = line_style(key)
+            check(style["dash"] == dash and ("%s" % style["width"]) == width,
+                  "%s：LINE_STYLES[%s] = dash %s / width %s"
+                  % (kind, key, dash, width))
+        check(len({dash for _k, dash, _w in expect}) == len(expect),
+              "%s：%d 条线的 dash 两两不同" % (kind, len(expect)))
+        check(len({width for _k, _d, width in expect}) == len(expect),
+              "%s：%d 条线的线宽也不重复（额外编码）" % (kind, len(expect)))
+
+    # ---- 3) 6 套主题：颜色两两可分 + 图例与曲线一致 ----
+    speed_keys = [key for key, _dash, _w in _SPEED_LINE_EXPECT]
+    attitude_keys = [key for key, _dash, _w in _ATTITUDE_LINE_EXPECT]
+    for key in THEME_KEYS:
+        theme = THEMES[key]
+        label = "#%s %s" % (key, theme.label)
+        theme_html = html if key == DEFAULT_THEME else render_report(model, theme=key)
+        speed_page = _active_view(_page_section(theme_html, "page-speed"))
+        attitude_page = _active_view(_page_section(theme_html, "page-attitude"))
+
+        speed_expected = [
+            (theme.chart[k], "%s" % LINE_STYLES[k]["width"], LINE_STYLES[k]["dash"])
+            for k in speed_keys
+        ]
+        attitude_expected = [
+            (theme.chart[k], "%s" % LINE_STYLES[k]["width"], LINE_STYLES[k]["dash"])
+            for k in attitude_keys
+        ]
+        check(_legend_swatches(speed_page) == speed_expected,
+              "%s：速度页图例 = 4 条线的颜色/dash/线宽" % label)
+        check(_legend_swatches(attitude_page) == attitude_expected,
+              "%s：姿态页图例 = 3 条线的颜色/dash/线宽" % label)
+        speed_curves = _svg_curve_styles(speed_page)
+        attitude_curves = _svg_curve_styles(attitude_page)
+        check(all(item in speed_curves for item in speed_expected[:3]),
+              "%s：速度页 3 条实测曲线的 stroke/width/dash 与图例一致" % label)
+        check(all(item in attitude_curves for item in attitude_expected),
+              "%s：姿态页 3 条曲线（pitch/bank/roll）与图例一致" % label)
+        avg_style = line_style("avg_speed")
+        check((theme.chart["avg_speed"], "%s" % avg_style["width"], avg_style["dash"])
+              in speed_curves,
+              "%s：平均速度线用中性灰 + 短虚线" % label)
+        speed_colors = [theme.chart[k] for k in speed_keys]
+        attitude_colors = [theme.chart[k] for k in attitude_keys]
+        check(len(set(speed_colors)) == 4
+              and all(_colors_distinct(a, b)
+                      for i, a in enumerate(speed_colors) for b in speed_colors[i + 1:]),
+              "%s：速度页 4 条线颜色两两可分（不只靠明度）" % label)
+        check(len(set(attitude_colors)) == 3
+              and all(_colors_distinct(a, b)
+                      for i, a in enumerate(attitude_colors) for b in attitude_colors[i + 1:]),
+              "%s：姿态页 3 条线颜色两两可分（不只靠明度）" % label)
+        attitude_section = _page_section(theme_html, "page-attitude")
+        check("右轴" in attitude_section and "°/s" in attitude_section,
+              "%s：姿态页标注 Roll rate 在右轴（°/s）" % label)
+        check("Roll rate 滚转率" in attitude_section,
+              "%s：姿态页标题/图例包含 Roll rate" % label)
+
+        # ---- 打印态（blueprint）：颜色换墨色，线型（dash）继续区分 ----
+        if key == "blueprint":
+            for line_key in speed_keys + attitude_keys:
+                old_color = theme.chart[line_key]
+                ink = theme.print_chart.get(line_key)
+                check(bool(ink) and ('[stroke="%s"]{stroke:%s' % (old_color, ink))
+                      in theme_html,
+                      "blueprint 打印态：%s 换成墨色 %s（靠 dash 区分）"
+                      % (line_key, ink))
+            check('stroke-dasharray="8 4"' in theme_html
+                  and 'stroke-dasharray="2 3"' in theme_html
+                  and 'stroke-dasharray="4 4"' in theme_html,
+                  "blueprint 打印态：长虚线/点线/短虚线都保留在 SVG 属性里")
+
 
 
 def test_cli(tmp: Path) -> None:
@@ -2108,8 +2318,9 @@ def test_kill_events(tmp: Path) -> None:
 
     # ---- MFD JSON：只增 target 字段，schema 仍 1 ----
     payload = MF.build_mfd_payload(model)
-    check(payload["schema"] == 1 and payload["tool_version"] == "0.5.2",
-          "MFD schema 仍 1，tool_version = 0.5.2")
+    check(payload["schema"] == 1 and payload["tool_version"] == MF.MFD_TOOL_VERSION,
+          "MFD schema 仍 1，tool_version = %s（跟随 MFD_TOOL_VERSION）"
+          % MF.MFD_TOOL_VERSION)
     mfd_kills = [event for event in payload["events"] if event["kind"] == "kill"]
     spawn_event = next(event for event in payload["events"] if event["kind"] == "spawn")
     check(len(mfd_kills) == 2 and mfd_kills[0].get("target") == "=FdX= Target",
@@ -2483,6 +2694,7 @@ def main() -> int:
         test_average_helpers()
         test_avg_report_html(tmp)
         test_report_themes(tmp)
+        test_line_legibility(tmp)
         test_blueprint_report(tmp)
         test_annotations()
         test_kill_events(tmp)

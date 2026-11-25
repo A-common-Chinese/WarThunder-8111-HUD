@@ -74,12 +74,12 @@ NUMERIC_SAMPLE_FIELDS = (
     ("ny_g", "ny"),
     ("pitch_deg", "pitch"),
     ("bank_deg", "bank"),
+    ("roll_rate_dps", "roll"),
 )
 
 #: 允许出现在 sample 里的其它数值字段（只是解析出来备用，不进入图表）
 EXTRA_NUMERIC_FIELDS = (
     "aos_deg",
-    "roll_rate_dps",
     "hdg_deg",
     "gear_pct",
     "flaps_pct",

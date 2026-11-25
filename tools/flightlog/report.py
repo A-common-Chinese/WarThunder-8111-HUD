@@ -363,6 +363,7 @@ THEMES: Dict[str, Theme] = {
             "ias": "#4aa3ff",
             "tas": "#ffb347",
             "mach": "#d97bff",
+            "avg_speed": "#93a4b8",
             "alt": "#46d39a",
             "ralt": "#2f9e75",
             "es": "#ffd166",
@@ -372,7 +373,8 @@ THEMES: Dict[str, Theme] = {
             "aoa": "#f472b6",
             "ny": "#fbbf24",
             "pitch": "#60a5fa",
-            "bank": "#a78bfa",
+            "bank": "#ffb347",
+            "roll": "#ff5c5c",
             "death": "#ff5c5c",
             "spawn": "#4ade80",
             "vehicle_change": "#60a5fa",
@@ -480,6 +482,7 @@ THEMES: Dict[str, Theme] = {
             "ias": "#4cc9f0",
             "tas": "#ffb703",
             "mach": "#c77dff",
+            "avg_speed": "#8aa4b2",
             "alt": "#43d9ad",
             "ralt": "#2a9d8f",
             "es": "#ffd166",
@@ -489,7 +492,8 @@ THEMES: Dict[str, Theme] = {
             "aoa": "#ff9ebb",
             "ny": "#f9c74f",
             "pitch": "#8ecae6",
-            "bank": "#b388ff",
+            "bank": "#ffb703",
+            "roll": "#ef476f",
             "death": "#ef476f",
             "spawn": "#70e4a0",
             "vehicle_change": "#4cc9f0",
@@ -601,7 +605,8 @@ header h1,.page-title{letter-spacing:1.2px;font-weight:600}
         chart={
             "ias": "#1c1c1c",
             "tas": "#c8551a",
-            "mach": "#7a6a50",
+            "mach": "#6a3fa0",
+            "avg_speed": "#8a8578",
             "alt": "#2f4a3a",
             "ralt": "#6b7f63",
             "es": "#c8551a",
@@ -610,8 +615,9 @@ header h1,.page-title{letter-spacing:1.2px;font-weight:600}
             "vy": "#2b4e66",
             "aoa": "#7a3e5c",
             "ny": "#8a5a2b",
-            "pitch": "#4a453a",
-            "bank": "#7a6a50",
+            "pitch": "#1f4fa8",
+            "bank": "#b5651d",
+            "roll": "#a3193f",
             "death": "#a31d1d",
             "spawn": "#2f6b3a",
             "vehicle_change": "#2b4e66",
@@ -748,9 +754,10 @@ header{background:#fff!important;border-bottom:2px solid #111!important}
         ok="#9fbf6a",
         line="#5a6748",
         chart={
-            "ias": "#ead9a0",
+            "ias": "#cfe8f2",
             "tas": "#d9a441",
             "mach": "#b9d18a",
+            "avg_speed": "#a9a48a",
             "alt": "#9fbf6a",
             "ralt": "#6e8b54",
             "es": "#e0c060",
@@ -759,8 +766,9 @@ header{background:#fff!important;border-bottom:2px solid #111!important}
             "vy": "#a9c7c1",
             "aoa": "#d98f7a",
             "ny": "#e8b04a",
-            "pitch": "#c9bc9a",
-            "bank": "#a9b8d0",
+            "pitch": "#9fc0d8",
+            "bank": "#e8b04a",
+            "roll": "#e06a5a",
             "death": "#e06a5a",
             "spawn": "#d98f7a",
             "vehicle_change": "#d9a441",
@@ -879,6 +887,7 @@ header{background:#2f3a2a!important}
             "ias": "#2563eb",
             "tas": "#b45309",
             "mach": "#7c3aed",
+            "avg_speed": "#6b7280",
             "alt": "#059669",
             "ralt": "#0d9488",
             "es": "#2563eb",
@@ -887,8 +896,9 @@ header{background:#2f3a2a!important}
             "vy": "#0891b2",
             "aoa": "#db2777",
             "ny": "#a16207",
-            "pitch": "#3b82f6",
-            "bank": "#8b5cf6",
+            "pitch": "#1d4ed8",
+            "bank": "#d97706",
+            "roll": "#dc2626",
             "death": "#dc2626",
             "spawn": "#16a34a",
             "vehicle_change": "#3b82f6",
@@ -1006,9 +1016,10 @@ header{background:#fff!important}
         ok="#7EE0B8",
         line="#8FC6E8",
         chart={
-            "ias": "#E6F4FF",
-            "tas": "#9CC8E6",
-            "mach": "#8FD3FF",
+            "ias": "#5FE3FF",
+            "tas": "#FFC24A",
+            "mach": "#E39BFF",
+            "avg_speed": "#A9B8C4",
             "alt": "#E6F4FF",
             "ralt": "#9CC8E6",
             "es": "#8FD3FF",
@@ -1017,8 +1028,9 @@ header{background:#fff!important}
             "vy": "#A8DAFF",
             "aoa": "#FFD166",
             "ny": "#CFE9FC",
-            "pitch": "#E6F4FF",
-            "bank": "#9CC8E6",
+            "pitch": "#7CC7FF",
+            "bank": "#FFB347",
+            "roll": "#FF7AA2",
             "death": "#FF5A3C",
             "spawn": "#7EE0B8",
             "vehicle_change": "#8FD3FF",
@@ -1113,8 +1125,9 @@ header{background:#fff!important}
         print_css=BLUEPRINT_PRINT_CSS,
         print_chart={
             "ias": "#2B2418",
-            "tas": "#6B5B41",
+            "tas": "#5C4F3A",
             "mach": "#4A3D2A",
+            "avg_speed": "#8A8578",
             "alt": "#2B2418",
             "ralt": "#6B5B41",
             "es": "#3A3226",
@@ -1123,8 +1136,9 @@ header{background:#fff!important}
             "vy": "#3A4A5A",
             "aoa": "#7A3E5C",
             "ny": "#3A3226",
-            "pitch": "#4A453A",
-            "bank": "#6B5B41",
+            "pitch": "#2B4E66",
+            "bank": "#7A5A2B",
+            "roll": "#A8322B",
             "death": "#A8322B",
             "spawn": "#2F6B3A",
             "vehicle_change": "#2B4E66",
@@ -1162,6 +1176,36 @@ EVENT_COLORS: Dict[str, str] = {
     "kill": COLORS["kill"],
     "end": COLORS["other"],
 }
+
+#: **曲线线型（dash / width）集中定义**。这是「语义」而不是「主题」：同一页上的每条线
+#: 都必须「颜色 + 线型」双编码，所以 dash/线宽对所有主题固定，颜色才在各主题的
+#: ``Theme.chart`` 里分别定义（``ias`` / ``tas`` / ``mach`` / ``avg_speed`` /
+#: ``pitch`` / ``bank`` / ``roll``）。
+#:
+#: * ``dash=None`` = 实线；其余值是 SVG ``stroke-dasharray``（单位 px）；
+#: * 速度页：IAS 实线 / TAS 长虚线 / Mach 点线 / 平均速度 短虚线 + 中性灰；
+#: * 姿态页：Pitch 实线（左轴）/ Bank 长虚线 / Roll rate 点线（右轴，与 Bank 共轴）；
+#: * 打印态（blueprint 打印）颜色换成墨色，靠这里的 dash 继续区分。
+LINE_STYLES: Dict[str, Dict[str, Any]] = {
+    "ias": {"dash": None, "width": 2.2},
+    "tas": {"dash": "8 4", "width": 2.0},
+    "mach": {"dash": "2 3", "width": 1.8},
+    "avg_speed": {"dash": "4 4", "width": 1.4},
+    "pitch": {"dash": None, "width": 2.2},
+    "bank": {"dash": "8 4", "width": 2.0},
+    "roll": {"dash": "2 3", "width": 1.8},
+}
+
+#: ``_series()`` 里 ``dash=True`` 的旧写法等价于这个 dash（雷达高度等次要曲线）。
+DEFAULT_DASH = "5 4"
+
+
+def line_style(key: str) -> Dict[str, Any]:
+    """取某条曲线的线型配置（dash / width）；未登记 = 实线 1.7 px。"""
+    style = LINE_STYLES.get(key)
+    if style is None:
+        return {"dash": None, "width": 1.7}
+    return {"dash": style.get("dash"), "width": style.get("width", 1.7)}
 
 
 def get_theme(name: Optional[str] = None) -> Theme:
@@ -2287,10 +2331,27 @@ class _XAxis:
 
 
 def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
-            decimals: int = 1, dash: bool = False, width: float = 1.7,
+            decimals: int = 1, dash: Optional[Union[bool, str]] = None,
+            width: Optional[float] = None,
             clip: Optional[str] = None, fill: Optional[str] = None,
             tooltip: bool = True, signed: bool = False,
             tooltip_label: Optional[str] = None) -> Dict[str, Any]:
+    """一条曲线的定义。
+
+    ``dash`` / ``width`` 省略时取 :data:`LINE_STYLES` 里按 ``key`` 登记的线型
+    （速度页 IAS/TAS/Mach/平均速度、姿态页 Pitch/Bank/Roll 已集中登记）；
+    ``dash=True`` 兼容旧写法（= :data:`DEFAULT_DASH`），字符串则按 SVG
+    ``stroke-dasharray`` 原样使用。
+    """
+    style = line_style(key)
+    if dash is None:
+        pattern = style["dash"]
+    elif dash is True:
+        pattern = DEFAULT_DASH
+    elif dash is False:
+        pattern = None
+    else:
+        pattern = str(dash)
     return {
         "key": key,
         "label": label,
@@ -2298,8 +2359,8 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
         "unit": unit,
         "axis": axis,
         "decimals": decimals,
-        "dash": dash,
-        "width": width,
+        "dash": pattern,
+        "width": style["width"] if width is None else width,
         "clip": clip,
         "fill": fill,
         "tooltip": tooltip,
@@ -2322,13 +2383,13 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
             "series": [
                 _series("ias", "IAS 指示空速", COLORS["ias"], "km/h", decimals=0),
                 _series("tas", "TAS 真空速", COLORS["tas"], "km/h", decimals=0),
-                _series("mach", "Mach", COLORS["mach"], "", axis="right", decimals=2, width=1.2),
+                _series("mach", "Mach", COLORS["mach"], "", axis="right", decimals=2),
             ],
         },
         {
             "key": "altitude",
             "title": "高度",
-            "subtitle": "气压高度 + 雷达高度（虚线，有数据才画）",
+            "subtitle": "气压高度 （实线）+ 雷达高度（虚线）",
             "height": height,
             "left_unit": "m",
             "series": [
@@ -2339,7 +2400,7 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "energy",
             "title": "比能量高度 Es",
-            "subtitle": "Es = 高度 + 速度² / 2g（米），面积填充",
+            "subtitle": "Es = 高度 + 速度² / 2g（米）",
             "height": height,
             "left_unit": "m",
             "series": [
@@ -2349,7 +2410,7 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "energy_rate",
             "title": "能量变化率 dEs/dt",
-            "subtitle": "绿色 = 获得能量（爬升或加速），红色 = 损失能量（m/s）",
+            "subtitle": "绿色 = 获得能量，红色 = 损失能量（m/s）",
             "height": height,
             "left_unit": "m/s",
             "series": [
@@ -2387,14 +2448,15 @@ def _flight_panel_specs() -> List[Dict[str, Any]]:
         {
             "key": "attitude",
             "title": "姿态",
-            "subtitle": "Pitch 俯仰（左轴 °）+ Bank 滚转（右轴 °）",
+            "subtitle": "Pitch 俯仰（左轴 °）+ Bank 滚转 / Roll rate 滚转率（右轴）",
             "height": height,
             "left_unit": "°",
-            "right_unit": "°",
+            "right_unit": "° / °/s",
             "series": [
-                _series("pitch", "Pitch 俯仰", COLORS["pitch"], "°", decimals=1, width=1.6),
-                _series("bank", "Bank 滚转", COLORS["bank"], "°", axis="right", decimals=1,
-                        width=1.2),
+                _series("pitch", "Pitch 俯仰", COLORS["pitch"], "°", decimals=1),
+                _series("bank", "Bank 滚转", COLORS["bank"], "°", axis="right", decimals=1),
+                _series("roll", "Roll rate 滚转率", COLORS["roll"], "°/s",
+                        axis="right", decimals=1),
             ],
         },
     ]
@@ -2493,7 +2555,8 @@ def _svg_series(
 
     color = defn["color"]
     width = defn.get("width", 1.7)
-    dash = ' stroke-dasharray="5 4"' if defn.get("dash") else ""
+    dash_pattern = defn.get("dash")
+    dash = ' stroke-dasharray="%s"' % dash_pattern if dash_pattern else ""
     parts: List[str] = []
 
     for index, segment in enumerate(segments):
@@ -2854,12 +2917,12 @@ def _svg_avg_overlay(
                 COLORS["avg_edge"],
             )
         )
-    # 平均 IAS / 平均 TAS（左轴）与平均 Mach（右轴）的水平虚线
-    for key, axis, dash in (
-        ("ias", left, "8 5"),
-        ("tas", left, "8 5"),
-        ("mach", right, "2 5"),
-    ):
+    # 平均 IAS / 平均 TAS（左轴）与平均 Mach（右轴）的水平虚线。
+    # 三条平均线统一用「中性灰 + 短虚线」的 avg_speed 线型：它们不是数据曲线，
+    # 只表示统计区间的均值，靠位置 + 上方读数区分，不再和三条实测曲线抢颜色。
+    avg_style = line_style("avg_speed")
+    avg_dash = ' stroke-dasharray="%s"' % avg_style["dash"] if avg_style["dash"] else ""
+    for key, axis in (("ias", left), ("tas", left), ("mach", right)):
         value = avg.get(key)
         if value is None or axis is None:
             continue
@@ -2868,8 +2931,7 @@ def _svg_avg_overlay(
             continue
         parts.append(
             '<line id="avg-%s-%s" class="avg-line" data-avg-line="%s" x1="%s" y1="%s"'
-            ' x2="%s" y2="%s" stroke="%s" stroke-width="1.5" stroke-dasharray="%s"'
-            ' opacity="0.85"/>'
+            ' x2="%s" y2="%s" stroke="%s" stroke-width="%s"%s opacity="0.9"/>'
             % (
                 key,
                 chart_id,
@@ -2878,11 +2940,36 @@ def _svg_avg_overlay(
                 _fmt_coord(py),
                 _fmt_coord(PLOT_RIGHT),
                 _fmt_coord(py),
-                COLORS[key],
-                dash,
+                COLORS["avg_speed"],
+                avg_style["width"],
+                avg_dash,
             )
         )
     return "".join(parts)
+
+
+def _line_swatch(color: str, style: Dict[str, Any], css_class: str = "lg-line") -> str:
+    """图例里的小线段：内联 SVG，颜色 / 线宽 / dash 与图上曲线**完全一致**。
+
+    以前用 ``<i style="background:...">`` 只能画实色块（虚线靠 CSS 渐变近似），
+    图例看不出虚实；这里直接复用 SVG 的 ``stroke-dasharray``，屏幕与打印都一致。
+    """
+    dash = style.get("dash")
+    dash_attr = ' stroke-dasharray="%s"' % dash if dash else ""
+    return (
+        '<svg class="%s" width="24" height="8" viewBox="0 0 24 8" aria-hidden="true"'
+        ' focusable="false"><line x1="1" y1="4" x2="23" y2="4" stroke="%s"'
+        ' stroke-width="%s"%s stroke-linecap="round"/></svg>'
+        % (css_class, color, style.get("width", 1.7), dash_attr)
+    )
+
+
+def _series_swatch(defn: Dict[str, Any]) -> str:
+    """按曲线定义画图例线段（颜色 + 线宽 + dash）。"""
+    return _line_swatch(
+        defn["color"],
+        {"dash": defn.get("dash"), "width": defn.get("width", 1.7)},
+    )
 
 
 def _wobble_ring(cx: float, cy: float, rx: float, ry: float, phase: float = 0.0,
@@ -3403,15 +3490,15 @@ def _render_chart(
 
     legend_parts: List[str] = []
     for defn in defs:
-        dash = ' class="dashed"' if defn.get("dash") else ""
         legend_parts.append(
-            '<span class="lg"><i style="background:%s"%s></i>%s</span>'
-            % (defn["color"], dash, html.escape(defn["label"]))
+            '<span class="lg">%s<span class="lg-t">%s</span></span>'
+            % (_series_swatch(defn), html.escape(defn["label"]))
         )
     if avg is not None:
         legend_parts.append(
-            '<span class="lg avg-legend"><i class="avgdash"></i>'
-            "平均速度（水平虚线，数值见上方；底纹 = 统计区间）</span>"
+            '<span class="lg avg-legend">%s'
+            '<span class="lg-t">平均速度（水平虚线，数值见上方；底纹 = 统计区间）</span></span>'
+            % _line_swatch(COLORS["avg_speed"], line_style("avg_speed"))
         )
 
     # 批注对照表：图上只有 ① IAS_MAX，这里给出「缩写 + 全称 + 值 + 时间」。
@@ -4206,14 +4293,14 @@ def _avg_bar_html(flight_payload: Dict[str, Any]) -> str:
     t1 = float(flight_payload["t1"])
     flight_index = int(flight_payload["index"])
     channels = (("ias", "IAS", "km/h", 1), ("tas", "TAS", "km/h", 1), ("mach", "Mach", "", 2))
+    avg_swatch = _line_swatch(COLORS["avg_speed"], line_style("avg_speed"))
     value_parts: List[str] = []
     for key, label, unit, digits in channels:
         unit_text = (" · " + unit) if unit else ""
         value_parts.append(
-            '<div class="avg-val"><span class="avg-k"><i class="avgdash"'
-            ' style="color:%s"></i>平均 %s%s</span>'
+            '<div class="avg-val"><span class="avg-k">%s平均 %s%s</span>'
             '<b data-avg-val="%s">%s</b></div>'
-            % (COLORS[key], label, unit_text, key, _fmt_fixed(avg.get(key), digits))
+            % (avg_swatch, label, unit_text, key, _fmt_fixed(avg.get(key), digits))
         )
     range_start = avg.get("range_start", t0) if avg else t0
     range_end = avg.get("range_end", t1) if avg else t1
@@ -5539,6 +5626,7 @@ main{position:relative;flex:1 1 auto;min-height:0}
   margin:2px 0 3px;
 }
 .lg{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.lg svg.lg-line{display:inline-block;width:24px;height:8px;flex:0 0 auto;overflow:visible;vertical-align:middle}
 .lg i{display:inline-block;width:15px;height:3px;border-radius:2px}
 .lg i.dashed{
   background-image:linear-gradient(90deg,var(--dash-fg) 0 60%,transparent 60% 100%)!important;
@@ -6617,7 +6705,6 @@ def render_report(
         )
     meta_bits.append("采样 %s" % _html_escape(meta.get("rate") or "?"))
     meta_bits.append("生成于 %s" % _html_escape(model.summary.get("generated_utc", "")))
-    meta_bits.append("主题 %s" % _html_escape(theme_obj.label))
     for item in payload.get("vne") or []:
         meta_bits.append(
             "限速 %s %s km/h" % (_html_escape(item["vehicle"]), _html_escape(_fmt_number(item["vne"], 0)))
