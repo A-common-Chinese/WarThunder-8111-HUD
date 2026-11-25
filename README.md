@@ -8,7 +8,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-当前版本 **v0.4.37**（正式版；编队/数据链仍为 beta） · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **最新版本以 [Releases](../../releases) 为准**（版本号不再写死在 README 里） · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -196,8 +196,19 @@ no packet interception, no automation.
 
 ## 安装
 
-从 [Releases](../../releases) 下载 `WtHud.exe`（或 zip），解压到**任意独立目录**
-（不要放在游戏根目录 —— 启动器会删除第三方 exe），**双击运行**即可，无需安装 .NET。
+从 [Releases](../../releases) 下载并解压到**任意独立目录**（不要放在游戏根目录 —— 启动器会删除第三方 exe）：
+
+| 下载包 | 内容 |
+|---|---|
+| `WtHud-<版本>-hud-win-x64.zip` | **HUD 本体**（`WtHud.exe`），只玩 HUD 下这个就够 |
+| `WtHud-<版本>-tools.zip` | 日志分析 `FlightLog.exe` + 回放转换 `wrpl-acmi.exe`（需要日志分析/回放导入时再下，与 HUD 解压到同一目录） |
+
+**双击运行**即可，无需安装 .NET。
+
+**近期更新（v0.5.x）**：完整 PDF 复盘报告（封面 + 10 页页码）、飞行日志分析器 FlightLog（`.wrpl` 回放导入）、MFD 内置分析、数据中断可视化（`gap` 事件 + 贝塞尔桥）、击落事件、曲线手动显示/隐藏。详见 [版本历史](CHANGELOG.md) 与 [Releases](../../releases)。
+
+**源码**（许可证合规）：`wrpl-acmi`（AGPL-3.0，未修改）见上游 tag `acmi-2.60.0.21-2026.11.02` 与源码快照链接；
+`FlightLog` 源码见本仓库 [`flightlog-source` 分支](../../tree/flightlog-source/tools/flightlog)。
 
 - 首次运行会在同目录生成 `hud-config.json`
 - 运行时长不限，**连按两次 `F11`** 退出（单次按不会退出，防误触）
@@ -371,7 +382,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 **Read-only by design**: no injection, no memory reads, no file modification, no packet
 interception, no automation. It never draws enemy positions (no ESP).
 
-Current version **v0.4.37** (stable; formation/data link still beta) · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **The latest version is always the [Releases](../../releases) page** (no version string hard-coded in the README) · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 > **The interface defaults to Chinese.** Press `F1` → `LANGUAGE` to switch the panel, the HUD and
 > the alerts to English — step-by-step with a screenshot under
@@ -546,9 +557,14 @@ airbrake indication is driven by the key instead of the noisy telemetry value.
 
 ## Install
 
-Download `WtHud.exe` (or the zip) from [Releases](../../releases) and unpack it into **any standalone
-folder** (not the game directory — the launcher deletes third-party executables). Run it; no .NET
-installation is required.
+Download from [Releases](../../releases) and unpack into **any standalone directory** (not the game directory — the launcher deletes third-party executables):
+
+| Package | Contents |
+|---|---|
+| `WtHud-<version>-hud-win-x64.zip` | **HUD only** (`WtHud.exe`) |
+| `WtHud-<version>-tools.zip` | Log analyzer `FlightLog.exe` + replay converter `wrpl-acmi.exe` (take it too if you want log analysis / replay import; extract into the same folder) |
+
+**Double-click** to run; .NET is not required.
 
 - First run writes `hud-config.json` next to the exe
 - Press `F11` twice to exit (a single press is ignored to avoid accidents)
