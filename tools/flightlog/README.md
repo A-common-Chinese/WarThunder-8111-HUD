@@ -88,6 +88,9 @@ python selftest.py
 | `--summary` | 只打印统计 JSON（若同时给 `--out` 也会写 HTML） |
 | `--png PATH` | 额外生成 PNG 预览（Pillow 可选，缺库时跳过并提示） |
 | `--title TEXT` | HTML 页面标题 |
+| `--theme NAME` | HTML 美术主题：`blueprint` / `glass` / `manual` / `tactical` / `clean` / `mfd`（默认 `blueprint` = A 工程蓝图）；只影响 HTML，`--mfd-json` 下忽略 |
+| `--vne-kmh KMH` | 手动指定限速（Vne IAS, km/h）用于「限速预警」批注；默认自动读 FlightLog.exe 同目录的 `hud-config.json` / `airframes.json` |
+| `--hud-dir DIR` | 指定 `hud-config.json` / `airframes.json` 所在目录（开发时指向 WtHud 发布目录；默认 exe 同目录） |
 | `--gap SEC` | 相邻样本间隔超过多少秒切新架次，默认 `30` |
 | `--list` | **（回放）** 只列出玩家，不生成 HTML |
 | `--player NAME` | **（回放）** 选玩家，可重复 / 逗号分隔 / 也可用 1 起的序号 |
@@ -267,6 +270,56 @@ powershell -ExecutionPolicy Bypass -File .\fetch_wrpl_acmi.ps1
 纯函数 `parse.average_speed(samples, t1, t2)` 负责这段计算：返回
 `{"ias","tas","mach","samples","duration_s","range_start","range_end",...}`，
 区间内没有样本时返回 `None`（自检里直接断言它）。
+
+### 美术主题（`--theme`）
+
+报告配色抽成了 `report.py` 顶部的 `THEMES` 配置（`Theme` dataclass：背景 / 面板 /
+正文 / 次要文字 / 主色 / 辅色 / 告警 / 网格 / 字体栈 / 圆角 / 图表调色板 / 页眉样式 /
+打印墨色替换 / 专属 CSS），统一用 CSS 变量输出；图表曲线颜色、网格、事件线、统计卡
+都从同一份主题配置取，不再散落硬编码。
+
+| `--theme` | 风格 | 适合 |
+| --- | --- | --- |
+| `blueprint`（默认） | **A 工程蓝图**：深蓝图纸底 + 坐标纸网格 + 每页图框/图号（`FIG. 0n · 标题`）+ 页脚 `SHEET n/9` + 右下角标题栏；红色审阅标记，打印成米色档案纸 | 复盘 / 打印 |
+| `mfd` | 深色座舱 MFD 荧光，保留旧版观感 | 想维持旧观感 |
+| `glass` | 玻璃座舱 EFIS：深底 + 青蓝主色 + 琥珀告警 + 细青网格 + 等宽数字 | 座舱感 |
+| `manual` | 军机维护手册：暖纸底 + 墨色正文 + 衬线标题 + 图号/页脚 | 打印归档 |
+| `tactical` | 战术复盘：橄榄绿 + 卡其 + 沙色文字，半透明胶片面板 + 内联 SVG 噪点 | 战报复盘 |
+| `clean` | 浅色分析仪表盘：白卡片 + 蓝色强调 + 圆角阴影 | 白天看 / 分享 |
+
+* 字体只用系统栈（`Segoe UI` / `Microsoft YaHei UI` / `Consolas` /
+  `Source Han Serif SC` / `SimSun`），不引用任何外部字体；
+* 所有主题都保留翻页、架次 / 玩家切换、悬停十字线、平均速度控件、事件线；
+* 打印：`@media print` 对全部主题生效，`manual` / `clean` 打印时背景固定为白色；
+  `blueprint` 打印为白/米底档案纸 + 逐页分页 + 手绘红圈；
+* `--theme` 只影响 HTML 报告；与 `--mfd-json` 同时给时忽略主题，并在 stderr 提示；
+* 对比预览见 `out/themes/themes-compare.png`，`out/themes/theme-*.html` 是可直接
+  双击打开的单文件主题预览；A 工程蓝图 / C 档案袋方向的参考样机在 `out/previews/`。
+
+### 审阅批注与保存（A 工程蓝图）
+
+* 屏幕：每页最多 2 条自动批注（速度 = 最大 IAS + 首次超过该机限速；高度 = 最低气压
+  高度；Es = 最低点 + 2 s 滑动平均 dEs/dt 最负的断崖起点；迎角/过载 = 最大过载；
+  姿态不批注）。时间相近（<10 s）的批注自动合并。屏幕上是红色十字/方框 + 浅色标注条，
+  打印/PDF 换成手绘双圈 + 打字机短注；关闭批注后只剩曲线、坐标、事件竖线。
+* **图上只写缩写 code**：`① IAS_MAX` / `② VNE` / `ALT_MIN` / `ES_MIN` / `ES_DROP` /
+  `G_MAX` / `DEATH`（编号沿用 ①②③…，合并批注写成 `① IAS_MAX+VNE`）。完整中文名、
+  数值、时间在图下的**批注对照表（legend）**里：
+  `① IAS_MAX 最大指示空速 · 1215 km/h · T+04:32`。
+  - 屏幕 / PDF 每页图表下方一行紧凑 legend（可换行）；
+  - PNG 复盘卡的 `ANALYST REMARKS · 分析员注记` 就是 legend：每行
+    `① IAS_MAX — 最大指示空速 1215 km/h · T+04:32`，两列排布、不压曲线；
+  - 事件 `DEATH` 也进 legend（能量页排在批注之后、概览缩略图单独 ①）；
+  - 关闭「保留批注」时图上标记与 legend 一起隐藏。
+* 死亡/坠毁竖线每页保留，只在概览页与比能量页加圈。
+* 页眉「保存」打开**保存设置**二级页：`PDF 完整版`（9 页、逐页分页、档案纸）
+  / `PNG 单张复盘卡`（1600×1000，档案袋风格），`保留批注` 默认开。
+  PNG 由生成报告时内嵌的 SVG 卡片经 `XMLSerializer → canvas → toDataURL` 导出，
+  文件名 `debrief-<日志名>-<时间>.png`，不依赖任何外部库。
+* 限速读取：与 `FlightLog.exe` 同目录的 `hud-config.json`
+  （`perVehicleOverrides[机型].row.overspeedIas`）→ `airframes.json`
+  （`[机型].overspeedIas`）→ 全局 `overspeedKmh`；读不到 / 机型无记录就跳过该批注，
+  也可用 `--vne-kmh` 手动覆盖。
 
 ### "自包含"的含义
 

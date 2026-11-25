@@ -22,9 +22,19 @@
 10. 速度页的**平均速度 / 可手动设置计算范围**：平均函数（闭区间、边界、空区间、缺字段）、
    控件条/数值容器/区间底纹/平均虚线的 HTML 结构；
 11. CLI ``--summary`` / ``--out`` 可用。
-12. MFD 导出（``--mfd-json``）：开关语义（两种用法）、stdout 纯 JSON、schema/字段集合、
+12. 美术主题（``--theme``）：6 套主题的 CSS 变量/字体栈/图表调色板来自配置、
+    HTML 自包含、默认是 ``blueprint``（A 工程蓝图）、未知主题报错、``--mfd-json`` 下忽略主题。
+13. MFD 导出（``--mfd-json``）：开关语义（两种用法）、stdout 纯 JSON、schema/字段集合、
     点数上限、缺失 ``null``，以及平均值的「死亡前 10 s 窗口排除 + 只在死亡前 30 s 窗口内
     生效的 MAD 3σ 尖峰过滤」（合成数据核对：窗口内尖峰剔除、窗口外低速段保留、无死亡不过滤）。
+14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET n/9/标题栏、打印分页 CSS、
+    保存设置二级页（PDF/PNG + 保留批注开关）、内嵌 PNG 复盘卡 SVG 与 canvas 导出钩子。
+15. 审阅批注规则：速度（最大 IAS + 首次超限速）、高度（最低气压高度）、Es（最低点 +
+    2 s 滑动平均 dEs/dt 最负的断崖起点）、迎角/过载（最大过载）、姿态不批注、
+    时间相近（<10 s）合并、每页 ≤2 条。
+16. 限速读取：与 FlightLog.exe 同目录的 hud-config.json / airframes.json
+    （perVehicleOverrides → airframes → 全局 overspeedKmh），缺文件/坏 JSON 不报错，
+    ``--vne-kmh`` 手动覆盖。
 """
 
 from __future__ import annotations
@@ -51,7 +61,30 @@ from flightlog import replay as R  # noqa: E402
 from flightlog import acmi as A  # noqa: E402
 from flightlog import mfd as MF  # noqa: E402
 from flightlog.__main__ import main as cli_main  # noqa: E402
-from flightlog.report import render_report  # noqa: E402
+from flightlog.report import (  # noqa: E402
+    ANNOTATION_CODES,
+    ANNOTATION_NAMES,
+    DEFAULT_THEME,
+    THEMES,
+    THEME_KEYS,
+    SpeedLimits,
+    _annotation_card_line,
+    _annotation_code_label,
+    _annotation_legend_line,
+    _annotation_mark_text,
+    _annotation_text,
+    _death_legend_line,
+    _es_cliff,
+    _moving_average,
+    _tc_text,
+    annotation_code,
+    annotation_name,
+    compute_annotations,
+    get_theme,
+    load_speed_limits,
+    manual_speed_limits,
+    render_report,
+)
 
 FAILURES = []
 CHECKS = 0
@@ -579,6 +612,129 @@ def test_avg_report_html(tmp: Path) -> None:
     check(html.count('class="flight-view') == 24, "各页架次视图数量未受影响")
     check('id="page-altitude"' in html and 'id="page-attitude"' in html,
           "其它数据页仍正常生成")
+
+
+def test_report_themes(tmp: Path) -> None:
+    """多套美术主题：配置层、CSS 变量、SVG 调色板、CLI --theme、自包含。"""
+    jsonl = tmp / "themes.jsonl"
+    build_full_log(jsonl)
+    model = P.analyze(str(jsonl))
+
+    check(DEFAULT_THEME == "blueprint", "默认主题 = blueprint（A 工程蓝图）")
+    check(set(THEMES) == set(THEME_KEYS) and len(THEMES) == 6,
+          "6 套主题与 --theme choices 一致（%s）" % " / ".join(THEME_KEYS))
+    check(get_theme(None).key == "blueprint" and get_theme("glass").key == "glass",
+          "get_theme(None) 回退默认 blueprint，get_theme(name) 取指定主题")
+
+    default_html = render_report(model)
+    check('data-theme="blueprint"' in default_html,
+          "不传 theme 时 HTML 标记 data-theme=\"blueprint\"")
+    check("--bg:#0B2A4A" in default_html, "默认主题背景变量 = 蓝图深蓝 #0B2A4A")
+    base_pages = default_html.count('<section class="page')
+
+    for key in THEME_KEYS:
+        theme = THEMES[key]
+        label = "#%s %s" % (key, theme.label)
+        html = render_report(model, theme=key)
+        check('data-theme="%s"' % key in html, "%s：<html data-theme> 正确" % label)
+        check("--bg:%s" % theme.bg in html, "%s：:root 背景变量来自主题配置" % label)
+        check("--panel:%s" % theme.panel in html, "%s：:root 面板变量来自主题配置" % label)
+        check("--text:%s" % theme.text in html, "%s：:root 正文变量来自主题配置" % label)
+        check("--accent:%s" % theme.accent in html, "%s：:root 主色变量来自主题配置" % label)
+        check("--radius:%s" % theme.radius in html, "%s：圆角变量来自主题配置" % label)
+        check("--font-ui:" in html and "--font-title:" in html and "--font-num:" in html,
+              "%s：输出三套系统字体栈（UI/标题/数字）" % label)
+        check("background:%s" % theme.chart["ias"] in html,
+              "%s：图表曲线颜色取自主题调色板" % label)
+        check('stroke="%s"' % theme.chart["border"] in html,
+              "%s：图表边框颜色取自主题调色板" % label)
+        check('stroke="%s"' % theme.chart["grid"] in html,
+              "%s：网格颜色取自主题调色板" % label)
+        check("主题 %s" % theme.label in html, "%s：页眉标注当前主题名" % label)
+        if key != "mfd":
+            check("--bg:%s" % THEMES["mfd"].bg not in html,
+                  "%s：不再残留旧默认主题的深色背景变量" % label)
+        if key != "blueprint":
+            check("--bg:%s" % THEMES["blueprint"].bg not in html,
+                  "%s：不再残留蓝图背景变量" % label)
+        check(html.count('<section class="page') == base_pages,
+              "%s：页数不变（%d 页）" % (label, base_pages))
+        check(".page.active{display:flex}" in html and
+              ".flight-view.active{display:flex}" in html,
+              "%s：保留翻页 / 架次切换 CSS" % label)
+        check('id="avgbar-speed"' in html and "function initAverage" in html,
+              "%s：保留平均速度控件与逻辑" % label)
+        check('data-nav="next"' in html and 'data-flight-btn="' in html,
+              "%s：保留翻页按钮与架次切换器" % label)
+        check('id="avg-band-f1-speed"' in html and '"crosshair"' in html,
+              "%s：保留平均速度图层与主题化十字线颜色" % label)
+        check("@media print" in html, "%s：含 @media print" % label)
+        if key in ("manual", "clean"):
+            check("--print-bg:#ffffff" in html,
+                  "%s：打印时背景固定为白色（可打印）" % label)
+        check(
+            "<script src" not in html
+            and "<link" not in html
+            and "<img" not in html
+            and "@import" not in html
+            and 'src="http' not in html
+            and 'href="http' not in html,
+            "%s：单文件自包含（无外链脚本/样式/图片）" % label,
+        )
+
+    try:
+        render_report(model, theme="neon")
+    except ValueError as exc:
+        check("neon" in str(exc) and "glass" in str(exc),
+              "未知主题抛 ValueError 并列出可选主题")
+    else:
+        check(False, "未知主题应抛 ValueError")
+
+    # ---- CLI --theme ----
+    out_glass = tmp / "theme-glass.html"
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = cli_main([str(jsonl), "--out", str(out_glass), "--theme", "glass"])
+    check(code == 0 and out_glass.is_file(), "CLI --theme glass 生成 HTML 且退出码 0")
+    glass_text = out_glass.read_text(encoding="utf-8")
+    check('data-theme="glass"' in glass_text and "--bg:#0b0f14" in glass_text,
+          "CLI --theme glass 真正切换到 glass 配置")
+    check("Consolas" in glass_text, "glass 主题数字使用等宽字体栈")
+
+    out_default = tmp / "theme-default.html"
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = cli_main([str(jsonl), "--out", str(out_default)])
+    check(code == 0 and 'data-theme="blueprint"' in out_default.read_text(encoding="utf-8"),
+          "CLI 不给 --theme 时默认输出 blueprint")
+
+    help_buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(help_buffer):
+            cli_main(["--help"])
+    except SystemExit as exc:
+        check(exc.code == 0, "--help 退出码 0")
+    help_text = help_buffer.getvalue()
+    check("--theme" in help_text and "tactical" in help_text and "mfd" in help_text,
+          "--help 列出 --theme 与全部主题名")
+
+    bad_err = io.StringIO()
+    bad_code = None
+    try:
+        with contextlib.redirect_stderr(bad_err):
+            cli_main([str(jsonl), "--out", str(tmp / "bad-theme.html"), "--theme", "neon"])
+    except SystemExit as exc:
+        bad_code = exc.code
+    check(bad_code == 2 and "--theme" in bad_err.getvalue(),
+          "非法 --theme 被 argparse 拒绝（退出码 2）")
+
+    mfd_out = tmp / "themes-mfd.json"
+    mfd_err = io.StringIO()
+    with contextlib.redirect_stderr(mfd_err):
+        mfd_code = cli_main(
+            [str(jsonl), "--mfd-json", "--theme", "glass", "--out", str(mfd_out)]
+        )
+    check(mfd_code == 0 and mfd_out.is_file(),
+          "--mfd-json 与 --theme 同时给：正常导出（主题被忽略，不报错）")
+    check("已忽略" in mfd_err.getvalue(), "--mfd-json 模式提示 --theme 已忽略")
 
 
 def test_cli(tmp: Path) -> None:
@@ -1519,6 +1675,394 @@ def test_replay_cli(tmp: Path) -> None:
           "JSONL 上给 --player → 提示只对回放有效")
 
 
+def _blueprint_svg_block(html: str, svg_id: str) -> str:
+    match = re.search(r'<svg [^>]*id="%s".*?</svg>' % re.escape(svg_id), html, re.S)
+    return match.group(0) if match else ""
+
+
+def test_blueprint_report(tmp: Path) -> None:
+    """A 工程蓝图：默认主题 / 图框图号页脚 / 保存二级页 / 内嵌复盘卡 / 打印 CSS。"""
+    print("\n[8] A 工程蓝图：图框 / 图号 / 保存设置页 / PNG 复盘卡 / 打印分页")
+    path = tmp / "blueprint.jsonl"
+    if not path.exists():
+        build_full_log(path)
+    model = P.analyze(str(path))
+    html = render_report(model)
+
+    # ---- 默认主题 + 蓝图语言 ----
+    check('data-theme="blueprint"' in html, "默认主题是 blueprint")
+    check(".bp-chrome{" in html and ".bp-grid{" in html,
+          "蓝图 CSS 含 chrome（图框层 / 坐标纸网格）")
+    check(".bp-sheet{" in html and ".bp-tb{" in html,
+          "蓝图 CSS 含页脚 SHEET 与标题栏样式")
+    check('content:"FIG. " counter(fig,decimal-leading-zero)' in html,
+          "图号由 CSS counter 生成（每页 FIG. 0n · 标题）")
+    check(html.count('class="bp-chrome"') == 9, "9 页各有图框 chrome（%d）" % html.count('class="bp-chrome"'))
+    for index in range(1, 10):
+        check("SHEET %02d/09" % index in html, "页脚 SHEET %02d/09" % index)
+    title_block = re.search(r'<span class="bp-tb">.*?</span></div>', html, re.S)
+    block_text = title_block.group(0) if title_block else ""
+    check("WTHUD FLIGHT LOG" in block_text and "ACFT" in block_text,
+          "右下角标题栏含项目 / 机型字段")
+    check("DATE" in block_text and "REV" in block_text and "DWG NO." in block_text,
+          "标题栏含日期 / REV / 图号字段")
+    check(html.count('class="page-title"') == 9, "9 个页面标题（图号挂在其前面）")
+
+    # ---- 保存二级页 ----
+    check('id="btn-save"' in html and 'class="header-save"' in html, "页眉有「保存」按钮")
+    check('id="save-modal"' in html and 'aria-modal="true"' in html,
+          "保存设置是模态二级页（不是 alert）")
+    check("保存设置" in html and "PDF 完整版" in html and "PNG 单张复盘卡" in html,
+          "保存设置页有两种输出类型")
+    check('name="save-kind" value="pdf" checked' in html, "默认选中 PDF 完整版")
+    check('name="save-kind" value="png"' in html, "可选 PNG 单张复盘卡")
+    check('id="save-annot" checked' in html, "「保留批注」默认勾选")
+    check("保留批注" in html and "取消" in html and "生成" in html,
+          "保存设置页有保留批注开关与生成/取消按钮")
+
+    # ---- PNG 复盘卡（内嵌 SVG + canvas 导出） ----
+    check('id="debrief-svg-annotated"' in html and 'id="debrief-svg-clean"' in html,
+          "内嵌两份复盘卡 SVG（带批注 / 无批注）")
+    annotated = _blueprint_svg_block(html, "debrief-svg-annotated")
+    clean = _blueprint_svg_block(html, "debrief-svg-clean")
+    check('viewBox="0 0 1600 1000"' in annotated, "复盘卡 1600×1000")
+    check("COMBAT FLIGHT DEBRIEF" in annotated, "复盘卡标题（档案袋风格）")
+    check("DEBRIEF" in annotated and "REVIEWED" in annotated, "复盘卡有印章")
+    check('class="ann-crayon"' in annotated, "带批注卡有手绘红圈")
+    check('class="ann-crayon"' not in clean, "无批注卡没有红圈")
+    check("CLEAN COPY" in clean, "无批注卡标注 CLEAN COPY")
+    check("MAX IAS" in annotated and "13.79" in annotated or "MAX IAS" in annotated,
+          "复盘卡含关键数据")
+    check('class="ann-type"' in annotated, "带批注卡有打字机注释")
+    check("ANALYST REMARKS" in annotated, "带批注卡有分析员注记")
+    check('data-prefix="debrief-' in html, "复盘卡带下载文件名前缀 debrief-<日志名>-")
+    check("XMLSerializer" in html and 'toDataURL("image/png")' in html,
+          "内联 JS 用 SVG → canvas → PNG（无外部库）")
+    check("__exportDebrief" in html and "__saveState" in html,
+          "内联 JS 暴露导出/保存状态钩子（便于自动化验证）")
+    check("function renderDebriefCanvas" in html and "function exportDebriefPNG" in html,
+          "PNG 导出实现（canvas + a[download]）在页面内联")
+
+    # ---- 批注（屏幕十字/方框；打印手绘圈） ----
+    speed = _blueprint_svg_block(html, "svg-f1-speed")
+    altitude = _blueprint_svg_block(html, "svg-f1-altitude")
+    energy = _blueprint_svg_block(html, "svg-f1-energy")
+    attitude = _blueprint_svg_block(html, "svg-f1-attitude")
+    aoa = _blueprint_svg_block(html, "svg-f1-aoa_ny")
+    check('class="ann ann-screen"' in speed, "速度页有屏幕审阅标记")
+    check('class="ann ann-screen"' in altitude, "高度页有屏幕审阅标记")
+    check('class="ann ann-screen"' in energy, "Es 页有屏幕审阅标记")
+    check('class="ann ann-screen"' in aoa, "迎角/过载页有屏幕审阅标记")
+    check('class="ann ann-screen"' not in attitude, "姿态页不批注")
+    check('class="ann ann-print"' in speed and 'class="ann-crayon"' in speed,
+          "打印层有手绘双圈")
+    check("ann-screen" in energy and "DEATH" in energy, "能量页保留死亡圈")
+    check(speed.count('class="ann ann-screen"') <= 2, "速度页屏幕批注 ≤2 条")
+    check(energy.count('class="ann ann-screen"') <= 3, "能量页批注 ≤2 条 + 死亡圈 1")
+    check('class="ann-box"' in speed and 'class="ann-ink"' in speed,
+          "屏幕标注条用浅底 + 深色字（中文可读）")
+
+    # ---- 图面只写「编号 + 缩写」；完整说明进图下 legend（对照表） ----
+    inks = re.findall(r'<text class="ann-ink"[^>]*>([^<]*)</text>', speed)
+    check(bool(inks) and all(re.match(r"^[①-⑩] [A-Z_]+(\+[A-Z_]+)?$", text) for text in inks),
+          "速度页图面只写「编号 + 缩写」（%s）" % inks)
+    check(all("T+" not in text and "km/h" not in text for text in inks),
+          "速度页图面批注不再带数值 / 时间")
+    check("① IAS_MAX" in speed and 'class="ann-type"' in speed,
+          "打印层（手绘圈旁）也只写 ① IAS_MAX")
+    speed_page = re.search(r'<section class="page[^"]*" id="page-speed".*?</section>', html, re.S)
+    speed_page = speed_page.group(0) if speed_page else ""
+    energy_page = re.search(r'<section class="page[^"]*" id="page-energy".*?</section>', html, re.S)
+    energy_page = energy_page.group(0) if energy_page else ""
+    attitude_page = re.search(r'<section class="page[^"]*" id="page-attitude".*?</section>', html, re.S)
+    attitude_page = attitude_page.group(0) if attitude_page else ""
+    check('class="ann-legend"' in speed_page, "速度页图下有批注对照表（legend）")
+    check('<span class="ai-h">批注对照</span>' in speed_page, "对照表带「批注对照」小标题")
+    check("① IAS_MAX 最大指示空速 · 684 km/h · T+00:10" in speed_page,
+          "速度页 legend 行 = 缩写 + 全称 + 值 + 时间")
+    check(speed_page.count('class="ann ann-screen"') == speed_page.count('<span class="ai">'),
+          "速度页 legend 行数 = 图面批注数")
+    check("ES_MIN" in energy_page and "DEATH" in energy_page,
+          "能量页 legend 含 ES_MIN / DEATH（合成数据 dEs/dt 不为负，无 ES_DROP）")
+    check(energy_page.count('class="ann ann-screen"') == energy_page.count('<span class="ai">'),
+          "能量页 legend 行数 = 图面批注 + 死亡圈")
+    check('class="ann-legend"' not in attitude_page, "姿态页不批注 → 不输出对照表")
+    check("body.no-annot .ann-legend{display:none!important}" in html,
+          "关闭「保留批注」时图上标记与 legend 一起隐藏（CSS）")
+    check(bool(re.search(r"[①-⑩] IAS_MAX", annotated)) and "— 最大指示空速" in annotated,
+          "复盘卡图面只写「编号 + 缩写」，ANALYST REMARKS 改为 legend 行（缩写 + 全称 + 值 + 时间）")
+    check("— 最大过载" in annotated and "— 死亡" in annotated,
+          "复盘卡 legend 覆盖过载与死亡")
+    check("DEATH — 死亡" in annotated, "复盘卡 legend 含 DEATH 行")
+    check("①" not in clean and "ANALYST REMARKS" not in clean,
+          "关闭批注时复盘卡图面与 legend 一起隐藏")
+    check("无批注对照表" in clean, "无批注卡写明「无批注对照表」")
+
+    # ---- 打印 CSS：C 档案袋纸张 + 逐页分页 + 批注开关 ----
+    check("@page{size:1600px 1000px" in html, "打印页尺寸 1600×1000")
+    check("page-break-after:always" in html, "每页 page-break-after:always")
+    check(".ann-screen{display:none!important}" in html, "打印时隐藏屏幕标记")
+    check(".ann-print{display:inline!important}" in html, "打印时显示手绘圈层")
+    check("body.no-annot .ann-print{display:none!important}" in html,
+          "关闭批注时打印层整层隐藏")
+    check("background:#F6F1E3!important" in html, "打印纸张为米色档案纸")
+    check("--print-bg:#F6F1E3" in html, "打印背景变量为米色")
+
+    # ---- 其它主题不受影响 ----
+    glass = render_report(model, theme="glass")
+    check('class="bp-chrome"' not in glass, "glass 主题不注入蓝图图框")
+    check('id="debrief-svg-annotated"' in glass, "复盘卡导出对所有主题可用")
+
+
+def test_annotations() -> None:
+    """批注规则：最大 IAS / 限速预警 / 最低高度 / Es 最低点 + 断崖 / 最大过载 / 合并。"""
+    print("\n[9] 审阅批注规则（自动计算 / 合并 / 每页上限）")
+
+    def synthetic(spike_t: float = 55.0) -> "P.Flight":
+        step = 0.2
+        times = [round(index * step, 3) for index in range(301)]
+        ias, alt, es, ny = [], [], [], []
+        for t in times:
+            value = 300.0 + 5.0 * t
+            if abs(t - spike_t) < 1e-9:
+                value = 800.0
+            ias.append(value)
+            alt.append(1100.0 - 5.0 * t)
+            energy = 1100.0 - 5.0 * t
+            # 30–35 s 掉 600 m，之后保持低能量（Es 最低点在记录末尾）
+            energy -= 120.0 * min(5.0, max(0.0, t - 30.0))
+            es.append(energy)
+            ny.append(1.0 + 4.0 * max(0.0, 1.0 - abs(t - 40.0) / 2.0))
+        des = [None] + [(es[i] - es[i - 1]) / step for i in range(1, len(es))]
+        return P.Flight(
+            index=1,
+            reason="test",
+            vehicle="test_jet",
+            start_t=0.0,
+            end_t=60.0,
+            series={"t": times, "ias": ias, "alt": alt, "es": es, "des": des, "ny": ny},
+        )
+
+    flight = synthetic(spike_t=55.0)
+    annotations = compute_annotations(flight, vne_kmh=500.0)
+    check(set(annotations) == {"speed", "altitude", "energy", "aoa_ny"},
+          "批注页集合 = 速度/高度/Es/迎角过载（无姿态页）")
+    speed = annotations["speed"]
+    check(len(speed) == 2, "速度页 2 条：最大 IAS + 限速预警")
+    check(speed[0]["kind"] == "max_ias" and speed[0]["value"] == 800.0,
+          "最大 IAS = 800 @ T+%02d:%04.1f" % (int(speed[0]["t"] // 60), speed[0]["t"] % 60))
+    check(abs(speed[0]["t"] - 55.0) < 0.25, "最大 IAS 时间 ≈55 s")
+    check(speed[1]["kind"] == "vne" and speed[1]["value"] > 500.0,
+          "限速预警取首次超过 500 km/h 的样本")
+    check(abs(speed[1]["t"] - 40.2) < 0.25 and speed[1]["ref"] == 500.0,
+          "限速首次触发时间 ≈40.2 s，记录限速 500")
+    check("限速预警" in _annotation_text(speed[1]), "限速批注文字含「限速预警」")
+
+    altitude = annotations["altitude"]
+    check(len(altitude) == 1 and altitude[0]["kind"] == "min_alt",
+          "高度页 1 条：最低气压高度")
+    check(altitude[0]["value"] == 800.0 and abs(altitude[0]["t"] - 60.0) < 0.25,
+          "最低气压高度 = 800 m @ 60 s")
+
+    energy = annotations["energy"]
+    check(len(energy) == 2, "Es 页 2 条：最低点 + 断崖")
+    es_min = next(item for item in energy if item["kind"] == "es_min")
+    cliff = next(item for item in energy if item["kind"] == "es_cliff")
+    check(es_min["value"] == 200.0 and abs(es_min["t"] - 60.0) < 0.25,
+          "Es 最低点 = 200 m @ 60 s")
+    check(28.0 <= cliff["t"] <= 31.0,
+          "Es 断崖标在下跌段起点（%.1f s，≈30 s）" % cliff["t"])
+    check(cliff["rate"] < -100.0, "断崖速率为明显负值（%.0f m/s）" % cliff["rate"])
+    check(840.0 <= cliff["value"] <= 980.0,
+          "断崖起点取该处 Es 值（%.0f m，≈900）" % cliff["value"])
+
+    aoa = annotations["aoa_ny"]
+    check(len(aoa) == 1 and aoa[0]["kind"] == "max_ny", "迎角/过载页 1 条：最大过载")
+    check(abs(aoa[0]["value"] - 5.0) < 1e-9 and abs(aoa[0]["t"] - 40.0) < 0.25,
+          "最大过载 = 5 g @ 40 s")
+    check(all(len(items) <= 2 for items in annotations.values()),
+          "每页批注 ≤2 条（死亡圈另算）")
+
+    merged = compute_annotations(synthetic(spike_t=46.0), vne_kmh=500.0)["speed"]
+    check(len(merged) == 1 and merged[0]["merged"] is True,
+          "时间相近（<10 s）的速度批注合并成 1 条")
+    check(abs(merged[0]["t"] - 40.2) < 0.25, "合并后锚点取更早的时间（≈40.2 s）")
+    check(len(merged[0]["parts"]) == 2,
+          "合并批注保留两段文字（%s）" % " / ".join(merged[0]["parts"]))
+
+    without_vne = compute_annotations(flight)["speed"]
+    check(len(without_vne) == 1 and without_vne[0]["kind"] == "max_ias",
+          "没有限速数据时只标最大 IAS（跳过限速预警）")
+
+    empty_flight = P.Flight(index=2, reason="test", vehicle=None, start_t=0.0,
+                            end_t=1.0, series={"t": []})
+    check(compute_annotations(empty_flight) == {}, "没有样本时不算批注（不报错）")
+
+    check(_tc_text(0.0) == "T+00:00.0" and _tc_text(61.5) == "T+01:01.5",
+          "任务时间码格式 T+mm:ss.d")
+    check(_tc_text(59.99) == "T+01:00.0", "时间码四舍五入到 60.0 时进位到下一分钟")
+    check(_tc_text(125.0, tenths=False) == "T+02:05", "整秒时间码 T+mm:ss")
+    smoothed = _moving_average([1.0, 2.0, 3.0, None, 5.0], 1)
+    check(smoothed[1] == 2.0 and smoothed[4] == 5.0 and smoothed[3] == 4.0,
+          "2 s 滑动平均忽略 None（%s）" % smoothed)
+    check(_es_cliff([0.0, 1.0, 2.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]) is None,
+          "dEs/dt 全是 0 时没有断崖（返回 None）")
+
+    # ---- 图上缩写 code（图面只写 ① CODE，全称 / 值 / 时间进 legend） ----
+    check(
+        ANNOTATION_CODES["max_ias"] == "IAS_MAX"
+        and ANNOTATION_CODES["vne"] == "VNE"
+        and ANNOTATION_CODES["min_alt"] == "ALT_MIN"
+        and ANNOTATION_CODES["es_min"] == "ES_MIN"
+        and ANNOTATION_CODES["es_cliff"] == "ES_DROP"
+        and ANNOTATION_CODES["max_g"] == "G_MAX"
+        and ANNOTATION_CODES["death"] == "DEATH",
+        "批注 code 映射：IAS_MAX / VNE / ALT_MIN / ES_MIN / ES_DROP / G_MAX / DEATH",
+    )
+    check(annotation_code("max_ny") == "G_MAX" and annotation_code("max_g") == "G_MAX",
+          "最大过载（数据 kind=max_ny）也映射到 G_MAX")
+    check(annotation_code("no_such_kind") == "NO_SUCH_KIND", "未知 kind 用大写兜底")
+    check(annotation_name("IAS_MAX") == "最大指示空速"
+          and annotation_name("ES_DROP") == "Es 断崖",
+          "code → 中文全称")
+    check(set(ANNOTATION_NAMES) == set(ANNOTATION_CODES.values()),
+          "每个 code 都有中文全称（%d 个）" % len(ANNOTATION_NAMES))
+    check(speed[0]["code"] == "IAS_MAX" and speed[0]["name"] == "最大指示空速",
+          "批注数据模型带 code / name 字段")
+    check(speed[1]["code"] == "VNE", "限速预警批注 code = VNE")
+    check(aoa[0]["code"] == "G_MAX", "最大过载批注 code = G_MAX")
+    check(_annotation_mark_text(speed[0]) == "IAS_MAX",
+          "图上标记只写缩写（%s）" % _annotation_mark_text(speed[0]))
+    check(
+        "T+" not in _annotation_mark_text(speed[0])
+        and "km/h" not in _annotation_mark_text(speed[0])
+        and "800" not in _annotation_mark_text(speed[0]),
+        "图上标记不带数值 / 时间",
+    )
+    check(
+        _annotation_legend_line(speed[0], 0) == "① IAS_MAX 最大指示空速 · 800 km/h · T+00:55",
+        "屏幕/PDF legend 行：%s" % _annotation_legend_line(speed[0], 0),
+    )
+    check(
+        _annotation_card_line(speed[0], 0) == "① IAS_MAX — 最大指示空速 800 km/h · T+00:55",
+        "复盘卡 legend 行：%s" % _annotation_card_line(speed[0], 0),
+    )
+    vne_line = _annotation_legend_line(speed[1], 1)
+    check("限速预警 · >500 km/h" in vne_line and vne_line.endswith("· T+00:40"),
+          "vne legend 行带阈值 + 整秒时间：%s" % vne_line)
+    check(_annotation_code_label(altitude[0]) == "ALT_MIN"
+          and _annotation_code_label(es_min) == "ES_MIN"
+          and _annotation_code_label(cliff) == "ES_DROP",
+          "高度 / Es 最低点 / Es 断崖 code = ALT_MIN / ES_MIN / ES_DROP")
+    cliff_line = _annotation_legend_line(cliff, 1)
+    check("Es 断崖 · -" in cliff_line and "m/s" in cliff_line,
+          "断崖 legend 行带 dEs/dt 速率：%s" % cliff_line)
+    death_line = _death_legend_line({"t": 395.4, "note": "数据终止"}, 2)
+    check(death_line == "③ DEATH 死亡 · 395.4 s · T+06:35（数据终止）",
+          "DEATH legend 行：%s" % death_line)
+    check(_annotation_code_label(merged[0]) == "VNE+IAS_MAX",
+          "合并批注的 code 标签 = VNE+IAS_MAX（%s）" % _annotation_code_label(merged[0]))
+    merged_line = _annotation_legend_line(merged[0], 0)
+    check("限速预警 · >500 km/h" in merged_line and "最大指示空速 · 800 km/h" in merged_line,
+          "合并批注 legend 行列出全部成员：%s" % merged_line)
+    check(len(merged[0]["members"]) == 2, "合并批注数据模型保留 2 个成员（供 legend 用）")
+
+
+def test_speed_limits(tmp: Path) -> None:
+    """限速读取：hud-config perVehicleOverrides → airframes → 全局 overspeedKmh。"""
+    print("\n[10] 限速读取（hud-config.json / airframes.json / --vne-kmh）")
+    hud = tmp / "hudcfg"
+    hud.mkdir(exist_ok=True)
+    (hud / "hud-config.json").write_text(
+        json.dumps(
+            {
+                "overspeedKmh": 1400,
+                "perVehicleOverrides": {
+                    "Test_Jet": {"row.overspeedIas": 1111},
+                    "zero_jet": {"row.overspeedIas": 0},
+                    "second_jet": {"overspeedIas": 999},"f_15ex": {"row.overspeedIas": 1234},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (hud / "airframes.json").write_text(
+        json.dumps(
+            {
+                "test_jet": {"overspeedIas": 1200},
+                "air_jet": {"overspeedIas": 900},
+                "zero_jet": {"overspeedIas": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    limits = load_speed_limits(str(hud))
+    check(isinstance(limits, SpeedLimits), "load_speed_limits 返回 SpeedLimits")
+    check(limits.hud_dir == str(hud), "读到配置目录")
+    check(limits.vne_for("TEST_JET")[0] == 1111.0, "机型大小写不敏感")
+    check("perVehicleOverrides" in limits.vne_for("test_jet")[1],
+          "perVehicleOverrides 优先于 airframes.json（来源正确）")
+    check(limits.vne_for("air_jet")[0] == 900.0, "airframes.json 的 per-aircraft 限速可用")
+    check("airframes.json" in limits.vne_for("air_jet")[1], "airframes 来源标注正确")
+    check(limits.vne_for("second_jet")[0] == 999.0, "兼容无 row. 前缀的 overspeedIas")
+    check(limits.vne_for("zero_jet")[0] == 1400.0, "0 视为没记录，回落到全局 overspeedKmh")
+    check(limits.vne_for("no_such_jet")[0] == 1400.0, "机型没记录时用全局限速（HUD 语义）")
+    check(limits.vne_for(None)[0] == 1400.0, "机型未知时用全局限速")
+
+    missing = load_speed_limits(str(tmp / "no-such-dir"))
+    check(missing.is_empty() and missing.vne_for("x") == (None, ""),
+          "读不到 hud-config.json → 跳过限速批注（不报错）")
+
+    broken = tmp / "broken-hud"
+    broken.mkdir(exist_ok=True)
+    (broken / "hud-config.json").write_text("{not json", encoding="utf-8")
+    broken_limits = load_speed_limits(str(broken))
+    check(broken_limits.is_empty(), "坏 JSON 不崩溃，限速表为空")
+    check(any("hud-config.json" in note for note in broken_limits.notes),
+          "坏 JSON 在 notes 里说明")
+
+    manual = manual_speed_limits(1200)
+    check(manual.manual and manual.vne_for("anything")[0] == 1200.0,
+          "--vne-kmh 手动覆盖所有机型")
+    check(manual_speed_limits(-5).is_empty(), "非法 --vne-kmh 被忽略")
+
+    # 渲染：低限速会触发限速预警批注
+    jsonl = tmp / "limits.jsonl"
+    if not jsonl.exists():
+        build_full_log(jsonl)
+    model = P.analyze(str(jsonl))
+    html = render_report(model, limits=manual_speed_limits(200))
+    check("限速预警" in html, "限速触发后速度页出现「限速预警」批注")
+    speed_block = _blueprint_svg_block(html, "svg-f1-speed")
+    check(speed_block.count('class="ann ann-screen"') <= 2, "速度页批注仍 ≤2 条")
+    no_limits = render_report(model)
+    check("限速预警" not in no_limits, "不传限速表时不出现限速预警")
+
+    # CLI：--vne-kmh / --hud-dir / --help
+    out_vne = tmp / "cli-vne.html"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        code = cli_main([str(jsonl), "--out", str(out_vne), "--vne-kmh", "200"])
+    check(code == 0 and out_vne.is_file(), "CLI --vne-kmh 正常生成")
+    check("限速预警" in out_vne.read_text(encoding="utf-8"),
+          "CLI --vne-kmh 覆盖真正影响批注")
+    out_hud = tmp / "cli-hud.html"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        code = cli_main([str(jsonl), "--out", str(out_hud), "--hud-dir", str(hud)])
+    hud_html = out_hud.read_text(encoding="utf-8")
+    check(code == 0 and "限速 f_15ex 1234 km/h" in hud_html,
+          "CLI --hud-dir 读到临时配置里的机型限速 1234")
+    check("1345" not in hud_html, "CLI --hud-dir 不混入真实发布目录的限速")
+    help_text = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(help_text):
+            cli_main(["--help"])
+    except SystemExit:
+        pass
+    check("--vne-kmh" in help_text.getvalue() and "--hud-dir" in help_text.getvalue(),
+          "--help 列出 --vne-kmh / --hud-dir")
+    check("blueprint" in help_text.getvalue(), "--help 列出默认主题 blueprint")
+
+
 def main() -> int:
     print("=" * 72)
     print("WtHud flightlog 自检（合成样本，纯标准库）")
@@ -1531,6 +2075,10 @@ def main() -> int:
         test_report_html(tmp)
         test_average_helpers()
         test_avg_report_html(tmp)
+        test_report_themes(tmp)
+        test_blueprint_report(tmp)
+        test_annotations()
+        test_speed_limits(tmp)
         test_cli(tmp)
         test_mfd_helpers()
         test_mfd_payload(tmp)

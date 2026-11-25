@@ -16,9 +16,22 @@
 * 图表全部用内联 SVG 在 Python 侧画好，**浏览器禁用脚本也能看到全部图**；
 * 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
 * 事件（死亡 / 复活 / 换机型）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
+* **6 套美术主题**（``--theme blueprint|glass|manual|tactical|clean|mfd``，
+  默认 ``blueprint`` = A 工程蓝图：深蓝图纸底 + 坐标纸网格 + 每页图框/图号
+  （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9`` + 右下角标题栏）；
+  配色集中在 :data:`THEMES` 里，通过 CSS 变量输出，图表曲线/网格/事件线/统计卡
+  全部取自同一份主题配置；
+* **审阅批注**：按日志自动计算每页最多 2 条（速度页 = 最大 IAS + 限速预警；高度页 =
+  最低气压高度；Es 页 = Es 最低点 + 2 s 滑动平均 dEs/dt 最负的断崖起点；迎角/过载页 =
+  最大过载；姿态页不批注；死亡/坠毁竖线每页保留，只在概览/能量页加圈）。
+  屏幕 = 红色十字/方框 + 浅色标注条；打印/PDF = 手绘双圈 + 打字机短注；
+  时间相近（<10 s）的批注自动合并；
+* **保存二级页**：页眉「保存」→「保存设置」模态：PDF 完整版 / PNG 单张复盘卡、
+  保留批注开关。PNG 复盘卡 = 生成报告时 Python 画好的内嵌 SVG（档案袋风格），
+  JS 序列化 SVG → canvas → PNG 下载，不引任何外部库；
 * 不依赖任何外部资源（无 CDN / 图片 / 第三方 JS），离线双击即看。
 
-坐标/颜色/面板配置都集中在文件开头的常量里，方便调整。
+坐标/面板配置集中在文件开头的常量里；配色与字体栈见 ``THEMES``。
 """
 
 from __future__ import annotations
@@ -27,6 +40,9 @@ import html
 import json
 import math
 import os
+import re
+import sys
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .parse import EVENT_LABELS, Flight, LogModel, average_speed
@@ -60,37 +76,1699 @@ THUMB_CHART_H = 470.0
 #: 全局总览页每张堆叠图的高度
 GLOBAL_CHART_H = 200.0
 
-COLORS = {
-    "ias": "#4aa3ff",
-    "tas": "#ffb347",
-    "mach": "#d97bff",
-    "alt": "#46d39a",
-    "ralt": "#2f9e75",
-    "es": "#ffd166",
-    "des_pos": "#48d597",
-    "des_neg": "#ff6b6b",
-    "vy": "#7dd3fc",
-    "aoa": "#f472b6",
-    "ny": "#fbbf24",
-    "pitch": "#60a5fa",
-    "bank": "#a78bfa",
-    "death": "#ff5c5c",
-    "spawn": "#4ade80",
-    "vehicle_change": "#60a5fa",
-    "other": "#93a4b8",
-    "grid": "#ffffff12",
-    "axis": "#8fa1b3",
-    # 平均速度统计区间的底纹（中性浅蓝，避免和三条曲线颜色混淆）
-    "avg_band": "#6ea8ff",
-    "avg_edge": "#9dc4ff",
+#: 默认主题 = A 工程蓝图（用户选定的形态）。
+DEFAULT_THEME = "blueprint"
+
+
+def _alpha(color: str, suffix: str) -> str:
+    """给 ``#RRGGBB`` 追加 alpha（``#RRGGBBAA``）；其它写法原样返回。"""
+    if len(color) == 7 and color.startswith("#"):
+        return color + suffix
+    return color
+
+
+# ---------------------------------------------------------------------------
+# 审阅批注参数
+# ---------------------------------------------------------------------------
+
+#: 同一页上两条批注的时间差小于该值（秒）时合并成一条。
+ANNOTATION_MERGE_S = 10.0
+#: 每页最多几条批注（合并后仍受此上限约束）。
+ANNOTATION_MAX_PER_PAGE = 2
+#: Es 断崖：dEs/dt 的滑动平均窗口（秒）。
+ANNOTATION_SMOOTH_S = 2.0
+
+#: 蓝图主题的结构样式（网格 / 图框 / 图号 / 页脚 / 标题栏 / 保存设置页）。
+BLUEPRINT_CSS = """
+/* ===== A 工程蓝图：深蓝图纸 / 坐标纸网格 / 图框 / 图号 / 标题栏 ===== */
+body{
+  background:
+    radial-gradient(ellipse at 50% 38%,#0e365e 0%,#0B2A4A 46%,#061c33 100%) fixed;
+}
+header{
+  background:linear-gradient(180deg,#0c3054,#092646);
+  border-bottom:1.5px solid #8fc6e8b3;
+  box-shadow:inset 0 -1px 0 #8fc6e82e;
+  padding:10px 26px 8px;
+}
+header h1{font-family:var(--font-title);font-size:21px;font-weight:700;letter-spacing:1.8px}
+header h1::before{
+  content:"WT-FL · ";font-family:var(--font-num);font-size:11px;font-weight:400;
+  letter-spacing:.2em;color:var(--muted);vertical-align:middle;margin-right:6px;
+}
+.subline{font-family:var(--font-num);letter-spacing:.05em;font-size:11.5px}
+.subline code{background:#0e3a63;border:1px solid #8fc6e84d;letter-spacing:.04em}
+.flights .flabel{font-family:var(--font-num);letter-spacing:.14em}
+.fbtn,.fselect{border-radius:var(--radius-xs)}
+.fbtn{font-family:var(--font-num);letter-spacing:.08em;background:#0e3557;
+  border-color:#8fc6e873;color:#cfe6f8}
+.fbtn:hover{border-color:#e6f4ff;color:#fff;background:#14476f}
+.fbtn.active{background:#F2EBD8;border-color:#f2ebd8;color:#0a2540;font-weight:700}
+.header-save{background:#F2EBD8;color:#0A2540;border-color:#F2EBD8;font-weight:700;
+  letter-spacing:.18em;padding:4px 18px}
+.header-save:hover{background:#fff;border-color:#fff;color:#0A2540}
+.page{padding:32px 34px 46px}
+.page::before{content:"";position:absolute;inset:10px;border:1.4px solid #8fc6e8b3;
+  pointer-events:none;z-index:0}
+.page::after{content:"";position:absolute;inset:15px;border:.6px solid #8fc6e880;
+  pointer-events:none;z-index:0}
+.page>*{position:relative;z-index:1}
+.page-head{border-bottom:1px solid #8fc6e84d;padding-bottom:4px;align-items:baseline}
+.page-title{font-family:var(--font-title);font-size:18px;font-weight:700;letter-spacing:1.2px}
+.page-title::before{content:"FIG. " counter(fig,decimal-leading-zero) " · ";
+  font-family:var(--font-num);font-weight:400;font-size:12.5px;letter-spacing:.1em;
+  color:var(--muted)}
+.page-sub{font-family:var(--font-num);font-size:11.5px;letter-spacing:.05em}
+.page-right{font-family:var(--font-num);font-size:11.5px;letter-spacing:.08em}
+body{counter-reset:fig}
+section.page{counter-increment:fig}
+.chart-wrap{border:1px solid #8fc6e84d;background:linear-gradient(180deg,#0a2744,#0b2a4a)}
+.chart-svg text{letter-spacing:.07em}
+.card,.avgbar{background:#0c2e50;border-color:#8fc6e859;border-radius:var(--radius-sm)}
+.card .k,.card span{font-family:var(--font-num);letter-spacing:.08em}
+.card b{font-family:var(--font-num)}
+.badges span{background:#0d3357;border-color:#8fc6e859;font-family:var(--font-num);
+  letter-spacing:.06em}
+.legend{font-family:var(--font-num);letter-spacing:.05em}
+.pager{background:#08213a;border-top:1px solid #8fc6e859}
+.pbtn{font-family:var(--font-num);letter-spacing:.08em;background:#0d3357;
+  border-color:#8fc6e873}
+.pbtn:hover:not(:disabled){background:#14476f;border-color:#e6f4ff}
+.dot.active{background:#e6f4ff;box-shadow:0 0 0 3px #8fc6e83d}
+.hint,.side{font-family:var(--font-num)}
+.side{background:#0a2744e6;border-color:#8fc6e859}
+/* chrome：坐标纸网格 / 注册标记 / 页脚 / 右下角标题栏 */
+.bp-chrome{position:absolute;inset:0;pointer-events:none;z-index:0}
+.bp-grid{position:absolute;inset:0;
+  background:
+    repeating-linear-gradient(0deg,transparent 0 19px,#8fc6e80e 19px 20px),
+    repeating-linear-gradient(90deg,transparent 0 19px,#8fc6e80e 19px 20px),
+    repeating-linear-gradient(0deg,transparent 0 99px,#8fc6e81a 99px 100px),
+    repeating-linear-gradient(90deg,transparent 0 99px,#8fc6e81a 99px 100px)}
+.bp-reg{position:absolute;width:17px;height:17px;opacity:.85}
+.bp-reg::before,.bp-reg::after{content:"";position:absolute;background:#8fc6e8}
+.bp-reg::before{left:0;top:8px;width:17px;height:1px}
+.bp-reg::after{left:8px;top:0;width:1px;height:17px}
+.bp-reg.tl{left:24px;top:12px}.bp-reg.tr{right:24px;top:12px}
+.bp-reg.bl{left:24px;bottom:24px}.bp-reg.br{right:24px;bottom:24px}
+.bp-foot{position:absolute;left:34px;right:30px;bottom:14px;height:24px;
+  display:flex;align-items:stretch;justify-content:space-between;gap:10px;
+  font-family:var(--font-num);font-size:9px;letter-spacing:.16em;color:var(--muted)}
+.bp-sheet{display:flex;align-items:center;border:1px solid #8fc6e859;padding:0 9px;
+  color:#cfe6f8;white-space:nowrap}
+.bp-tb{display:flex;border:1px solid #8fc6e859;background:#08213a8c}
+.bp-tb span{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:1px 9px;
+  border-left:1px solid #8fc6e84d;min-width:0}
+.bp-tb span:first-child{border-left:0}
+.bp-tb em{font-style:normal;font-size:7px;letter-spacing:.18em;color:#7fa8c8}
+.bp-tb b{font-weight:400;font-size:9.5px;letter-spacing:.1em;color:#e6f4ff;white-space:nowrap}
+/* 保存设置（二级页 / 模态）——颜色由蓝图主题接管 */
+.save-dialog{background:linear-gradient(180deg,#0e3358,#0a2744);border:1.4px solid #8fc6e8b3;
+  box-shadow:0 0 0 6px #02101f66,0 30px 70px #000a;color:#e6f4ff}
+.save-head{border-bottom-color:#8fc6e859}
+.save-head b{font-family:var(--font-title);letter-spacing:2px}
+.save-head span{color:#9cc8e6}
+.save-group{border-color:#8fc6e84d;background:#0a274466}
+.save-label{color:#9cc8e6}
+.save-opt{border-color:#8fc6e84d}
+.save-opt i,.save-check i{color:#9cc8e6}
+.save-foot{border-top-color:#8fc6e859}
+.save-dialog .save-btn.ghost{background:transparent;color:#cfe6f8;border-color:#8fc6e873}
+.save-dialog .save-btn.ghost:hover{border-color:#e6f4ff;color:#fff;background:#14476f}
+"""
+
+#: 蓝图主题的打印样式：白/米底档案纸 + 图号/页脚 + 手绘红圈 + 逐页分页。
+BLUEPRINT_PRINT_CSS = """
+/* ===== 打印 / PDF：C 档案袋纸张风格（白/米底 + 图号 + 页脚 + 手绘圈注） ===== */
+@page{size:1600px 1000px;margin:0}
+html,body{height:auto!important;overflow:visible!important;background:#fff!important}
+body{
+  background:#fff!important;color:#2B2418!important;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact;
+}
+.app{height:auto;display:block}
+header{display:none!important}
+main{position:static;display:block;min-height:0}
+.page{
+  position:relative!important;inset:auto!important;display:flex!important;
+  flex-direction:column;width:1600px;height:1000px;padding:32px 34px 42px;
+  overflow:hidden;background:#F6F1E3!important;color:#2B2418!important;
+  page-break-after:always;break-after:page;border:0!important;
+}
+.page:last-child{page-break-after:auto;break-after:auto}
+.page::before{border-color:#8A734C!important}
+.page::after{border-color:#B7A483!important}
+.pager,.side,.hint,.header-save,.save-btn,.save-modal,#debrief-src,#tip{display:none!important}
+.nav-hint{display:none!important}
+html{
+  --bg:#F6F1E3;--panel:#FBF7EC;--panel2:#F2EBD8;--line:#B7A483;--line-strong:#8A734C;
+  --text:#2B2418;--muted:#6B5B41;--muted2:#6B5B41;--accent:#8E2A24;--accent2:#8A5A2B;
+  --danger:#A8322B;--ok:#2F6B3A;--header-bg:#F6F1E3;--header-border:#8A734C;
+  --subline-code-bg:#F2EBD8;--btn-bg:#F2EBD8;--btn-fg:#4A3D2A;--btn-border:#B7A483;
+  --btn-active-bg:#E8DCC0;--btn-active-fg:#2B2418;--chip-bg:#F2EBD8;--chip-border:#B7A483;
+  --chip-fg:#6B5B41;--chip-b:#2B2418;--card-bg:#FBF7EC;--card-border:#B7A483;
+  --note-bg:#F2EBD8;--note-border:#B7A483;--note-fg:#3A3023;--note-b:#2B2418;
+  --badge-bg:#FBF7EC;--badge-fg:#4A3D2A;--legend-fg:#4A3D2A;--chart-label-fg:#2B2418;
+  --input-bg:#FBF7EC;--avg-btn-bg:#8E2A24;--avg-btn-border:#6B211D;--avg-btn-fg:#fff;
+  --avg-btn-hover-bg:#6B211D;--ghost-fg:#4A3D2A;--avg-msg:#8E2A24;--avg-msg-warn:#A8322B;
+  --warn-bg:#F7ECD6;--warn-border:#C8A86A;--warn-fg:#6B431C;--pager-bg:#F6F1E3;
+  --dot:#C9BFa8;--dot-hover:#8A7A63;--dot-ring:#8E2A2433;--hint-fg:#8A8578;
+  --side-bg:#FBF7EC;--side-fg:#3A3023;--side-hover-bg:#F2EBD8;
+  --ann-box:#F2EBD8;--ann-ink:#8E2A24;--ann-mark:#B0362A;
+}
+.bp-grid{background:
+  repeating-linear-gradient(0deg,transparent 0 19px,#8A734C1f 19px 20px),
+  repeating-linear-gradient(90deg,transparent 0 19px,#8A734C1f 19px 20px),
+  repeating-linear-gradient(0deg,transparent 0 99px,#8A734C2e 99px 100px),
+  repeating-linear-gradient(90deg,transparent 0 99px,#8A734C2e 99px 100px)!important}
+.bp-foot{color:#6B5B41!important}
+.bp-sheet{border-color:#B7A483!important;color:#2B2418!important}
+.bp-tb{border-color:#B7A483!important;background:#FBF7EC!important}
+.bp-tb span{border-color:#B7A483!important}
+.bp-tb em{color:#8A734C!important}
+.bp-tb b{color:#2B2418!important}
+.bp-reg::before,.bp-reg::after{background:#8A734C!important}
+.page-head{border-bottom-color:#B7A483!important}
+.page-title::before{color:#8A734C!important}
+.chart-wrap{background:#FBF7EC!important;border-color:#B7A483!important}
+.card,.avgbar{background:#FBF7EC!important;border-color:#B7A483!important}
+.badges span{background:#FBF7EC!important;border-color:#B7A483!important;color:#4A3D2A!important}
+.legend,.page-sub,.page-right{color:#5C4F3A!important}
+.legend .lg i{filter:grayscale(1) brightness(.55)}
+.lg i.dashed{background-image:linear-gradient(90deg,#2B2418 0 60%,transparent 60% 100%)!important}
+.avgbar .avg-k,.avgbar .avg-meta,.avgbar .avg-title{color:#5C4F3A!important}
+.avgbar .avg-title b{color:#2B2418!important}
+.avg-ctl{display:none!important}
+/* 批注：屏幕层藏起来，只留手绘圈 + 打字机短注；图下批注对照表（legend）保留 */
+.ann-screen{display:none!important}
+.ann-print{display:inline!important}
+body.no-annot .ann-print{display:none!important}
+body.no-annot .ann-legend{display:none!important}
+.ann-legend{color:#5C4F3A!important;border-top-color:#B7A483!important;font-size:12px!important}
+.ann-legend .ai-h{color:#8A734C!important}
+"""
+
+
+@dataclass(frozen=True)
+class Theme:
+    """一套美术主题的完整配置。
+
+    字段分三组：
+
+    * **基础色板**：背景 / 面板 / 正文 / 次要文字 / 主色 / 辅色 / 告警 / 成功 / 分隔线；
+    * **字体与形状**：中文字体栈、标题字体栈、数字等宽栈、圆角；
+    * **图表调色板**：``chart`` 里的每个键都会写进模块级 :data:`COLORS`
+      （曲线、网格、事件线、平均速度区间都从这里取色，不再散落硬编码）。
+
+    其余细碎的 UI 颜色放在 ``css``（键名就是 CSS 变量名，不带 ``--``），
+    ``extra_css`` / ``print_css`` 追加主题专属的纹理与打印样式。
+    """
+
+    key: str
+    label: str
+    desc: str
+    mode: str
+    bg: str
+    panel: str
+    panel2: str
+    text: str
+    muted: str
+    accent: str
+    accent2: str
+    danger: str
+    ok: str
+    line: str
+    #: 图表调色板（键名会同步到模块级 ``COLORS``）
+    chart: Dict[str, str]
+    font_ui: str
+    font_title: str
+    font_num: str
+    radius: str
+    radius_sm: str
+    radius_xs: str
+    pill: str
+    #: 额外 CSS 变量（键名不带 ``--``）
+    css: Dict[str, str] = field(default_factory=dict)
+    #: 主题专属结构样式（纸纹 / 噪点 / 阴影 / 衬线标题……）
+    extra_css: str = ""
+    #: 主题专属打印覆盖（浅色主题在这里把背景钉成白色）
+    print_css: str = ""
+    #: 打印时的 SVG 颜色替换（暗色主题 → 纸上的墨色；只作用于 ``stroke``/``fill``
+    #: 属性值，屏幕样式不受影响）。键 = ``chart`` 的键，值 = 打印色。
+    print_chart: Dict[str, str] = field(default_factory=dict)
+
+
+THEMES: Dict[str, Theme] = {
+    # ------------------------------------------------------------------
+    # 1) mfd：保留原有的深色 MFD 绿色荧光风格（对照组，默认主题）
+    # ------------------------------------------------------------------
+    "mfd": Theme(
+        key="mfd",
+        label="MFD 荧光",
+        desc="深色座舱 MFD：冷蓝底 + 荧光绿/琥珀曲线，保留旧版观感。",
+        mode="dark",
+        bg="#0a0e13",
+        panel="#0f151d",
+        panel2="#121a24",
+        text="#dde6f0",
+        muted="#8ea1b4",
+        accent="#4aa3ff",
+        accent2="#ffb347",
+        danger="#ff5c5c",
+        ok="#4ade80",
+        line="#1e2a36",
+        chart={
+            "ias": "#4aa3ff",
+            "tas": "#ffb347",
+            "mach": "#d97bff",
+            "alt": "#46d39a",
+            "ralt": "#2f9e75",
+            "es": "#ffd166",
+            "des_pos": "#48d597",
+            "des_neg": "#ff6b6b",
+            "vy": "#7dd3fc",
+            "aoa": "#f472b6",
+            "ny": "#fbbf24",
+            "pitch": "#60a5fa",
+            "bank": "#a78bfa",
+            "death": "#ff5c5c",
+            "spawn": "#4ade80",
+            "vehicle_change": "#60a5fa",
+            "other": "#93a4b8",
+            "grid": "#ffffff12",
+            "grid_zero": "#ffffff2a",
+            "axis": "#8fa1b3",
+            "border": "#ffffff14",
+            "avg_band": "#6ea8ff",
+            "avg_edge": "#9dc4ff",
+            "invalid": "#9aa7b8",
+            "death_region": "#ff5c5c",
+            "vline": "#cbd5e1",
+            "crosshair": "#e6eef7",
+            "crosshair_stroke": "#0a0e13",
+        },
+        font_ui=(
+            '"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_title=(
+            '"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_num=(
+            '"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        radius="10px",
+        radius_sm="8px",
+        radius_xs="6px",
+        pill="999px",
+        css={
+            "header-bg": "linear-gradient(180deg,#0d141c,#0a0e13)",
+            "subline-code-bg": "#16202b",
+            "btn-fg": "#c3d2e1",
+            "btn-hover-fg": "#ffffff",
+            "btn-active-bg": "#12324f",
+            "btn-active-fg": "#ffffff",
+            "replay-fg": "#ffd79b",
+            "replay-b": "#ffcf7a",
+            "note-bg": "#1b2735",
+            "note-border": "#2f4a66",
+            "note-fg": "#bcd6ee",
+            "note-b": "#e6f1ff",
+            "pchip-bg": "#131c26",
+            "pchip-fg": "#9fb4c8",
+            "pchip-b": "#dbe7f3",
+            "badge-bg": "#141d27",
+            "badge-fg": "#bfcedd",
+            "legend-fg": "#b8c7d6",
+            "chart-label-fg": "#cfdcea",
+            "input-bg": "#121a24",
+            "avg-btn-bg": "#16406b",
+            "avg-btn-border": "#2b6aa8",
+            "avg-btn-fg": "#ffffff",
+            "avg-btn-hover-bg": "#1b4f84",
+            "ghost-fg": "#c3d2e1",
+            "avg-msg": "#ffd79b",
+            "avg-msg-warn": "#ffb4a8",
+            "warn-bg": "#2c2113",
+            "warn-border": "#6a4a1c",
+            "warn-fg": "#ffd79b",
+            "pager-bg": "#0b1118",
+            "dot": "#2b3c4f",
+            "dot-hover": "#5b7a99",
+            "dot-ring": "#4aa3ff2e",
+            "hint-fg": "#6d7f92",
+            "side-bg": "#0d151ef2",
+            "side-fg": "#bcd0e4",
+            "side-hover-bg": "#12324f",
+            "tip-bg": "#080c11f2",
+            "tip-border": "#2e4054",
+            "tip-shadow": "0 10px 30px #00000066",
+            "dash-fg": "#ffffff",
+            "avgdash-fg": "#cbd5e1",
+            "avg-dash": "#6d7f92",
+            "color-scheme": "dark",
+            "print-bg": "#0a0e13",
+            "print-fg": "#dde6f0",
+            "print-header-bg": "#0a0e13",
+        },
+    ),
+    # ------------------------------------------------------------------
+    # 2) glass：玻璃座舱 EFIS（深底青蓝 + 琥珀辅色 + 细青网格 + 等宽数字）
+    # ------------------------------------------------------------------
+    "glass": Theme(
+        key="glass",
+        label="玻璃座舱 EFIS",
+        desc="深空底 + 青蓝主色 + 琥珀告警色，细青网格、6px 圆角、等宽数字。",
+        mode="dark",
+        bg="#0b0f14",
+        panel="#121a22",
+        panel2="#0e1620",
+        text="#e6edf3",
+        muted="#9fb4c4",
+        accent="#4cc9f0",
+        accent2="#ffb703",
+        danger="#ef476f",
+        ok="#43d9ad",
+        line="#1d3440",
+        chart={
+            "ias": "#4cc9f0",
+            "tas": "#ffb703",
+            "mach": "#c77dff",
+            "alt": "#43d9ad",
+            "ralt": "#2a9d8f",
+            "es": "#ffd166",
+            "des_pos": "#57e389",
+            "des_neg": "#ef476f",
+            "vy": "#72efdd",
+            "aoa": "#ff9ebb",
+            "ny": "#f9c74f",
+            "pitch": "#8ecae6",
+            "bank": "#b388ff",
+            "death": "#ef476f",
+            "spawn": "#70e4a0",
+            "vehicle_change": "#4cc9f0",
+            "other": "#8aa4b2",
+            "grid": "#4cc9f01a",
+            "grid_zero": "#4cc9f040",
+            "axis": "#7fa6b5",
+            "border": "#4cc9f02e",
+            "avg_band": "#4cc9f0",
+            "avg_edge": "#a8e6ff",
+            "invalid": "#6c8ea0",
+            "death_region": "#ef476f",
+            "vline": "#a7c6d4",
+            "crosshair": "#e6edf3",
+            "crosshair_stroke": "#0b0f14",
+        },
+        font_ui=(
+            '"Segoe UI","Microsoft YaHei UI","Bahnschrift","DIN Alternate",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_title='"Bahnschrift","Segoe UI","Microsoft YaHei UI","Noto Sans CJK SC",sans-serif',
+        font_num='Consolas,"Cascadia Mono","SF Mono","Roboto Mono",monospace',
+        radius="6px",
+        radius_sm="4px",
+        radius_xs="4px",
+        pill="999px",
+        css={
+            "header-bg": "linear-gradient(180deg,#101a22,#0b0f14)",
+            "subline-code-bg": "#0e1620",
+            "btn-fg": "#cfe3ec",
+            "btn-hover-fg": "#ffffff",
+            "btn-active-bg": "#0e3a4a",
+            "btn-active-fg": "#e6f9ff",
+            "replay-fg": "#ffcf6b",
+            "replay-b": "#ffd98c",
+            "note-bg": "#0e1a24",
+            "note-border": "#2a4c5c",
+            "note-fg": "#cfe3ec",
+            "note-b": "#e6edf3",
+            "pchip-bg": "#0f1a23",
+            "pchip-fg": "#9fb4c4",
+            "pchip-b": "#e6edf3",
+            "badge-bg": "#0f1a23",
+            "badge-fg": "#b7c9d6",
+            "legend-fg": "#b7c9d6",
+            "chart-label-fg": "#e6edf3",
+            "input-bg": "#0e1620",
+            "avg-btn-bg": "#0e3a4a",
+            "avg-btn-border": "#2a6f86",
+            "avg-btn-fg": "#dff6ff",
+            "avg-btn-hover-bg": "#12506a",
+            "ghost-fg": "#cfe3ec",
+            "avg-msg": "#ffcf6b",
+            "avg-msg-warn": "#ff9aa5",
+            "warn-bg": "#1a1206",
+            "warn-border": "#7a5a00",
+            "warn-fg": "#ffcf6b",
+            "pager-bg": "#080c10",
+            "dot": "#1e3c48",
+            "dot-hover": "#4cc9f0",
+            "dot-ring": "#4cc9f03d",
+            "hint-fg": "#6f8794",
+            "side-bg": "#0b1218f2",
+            "side-fg": "#cfe3ec",
+            "side-hover-bg": "#0e3a4a",
+            "tip-bg": "#050a0ef2",
+            "tip-border": "#2a4c5c",
+            "tip-shadow": "0 10px 30px #00000080",
+            "dash-fg": "#e6edf3",
+            "avgdash-fg": "#9fb4c4",
+            "avg-dash": "#6f8794",
+            "color-scheme": "dark",
+            "print-bg": "#0b0f14",
+            "print-fg": "#e6edf3",
+            "print-header-bg": "#0b0f14",
+            "chart-bg": "radial-gradient(120% 90% at 50% 0%,#4cc9f00d,transparent 62%)",
+        },
+        extra_css="""
+header{box-shadow:inset 0 -1px 0 #4cc9f03d}
+.page-head{border-bottom:1px solid #4cc9f024;padding-bottom:3px}
+header h1,.page-title{letter-spacing:1.2px;font-weight:600}
+.card{border-left:2px solid var(--accent);box-shadow:inset 0 1px 0 #ffffff0a}
+.avgbar{box-shadow:inset 0 1px 0 #ffffff0a}
+.legend .lg i{box-shadow:0 0 6px #4cc9f033}
+.badges span{border-color:#4cc9f02e}
+.pager{box-shadow:0 -1px 0 #4cc9f01a}
+""",
+    ),
+    # ------------------------------------------------------------------
+    # 3) manual：军机维护手册（暖纸底 + 墨色 + 橙强调 + 衬线标题 + 纸纹）
+    # ------------------------------------------------------------------
+    "manual": Theme(
+        key="manual",
+        label="军机维护手册",
+        desc="暖纸底、墨色正文、衬线标题、橙色强调，细横线与图号页脚，可打印。",
+        mode="light",
+        bg="#f4f1e8",
+        panel="#faf7ee",
+        panel2="#efeade",
+        text="#1c1c1c",
+        muted="#5c574b",
+        accent="#c8551a",
+        accent2="#8a5a2b",
+        danger="#a31d1d",
+        ok="#2f6b3a",
+        line="#d9d2c0",
+        chart={
+            "ias": "#1c1c1c",
+            "tas": "#c8551a",
+            "mach": "#7a6a50",
+            "alt": "#2f4a3a",
+            "ralt": "#6b7f63",
+            "es": "#c8551a",
+            "des_pos": "#3c6e47",
+            "des_neg": "#a31d1d",
+            "vy": "#2b4e66",
+            "aoa": "#7a3e5c",
+            "ny": "#8a5a2b",
+            "pitch": "#4a453a",
+            "bank": "#7a6a50",
+            "death": "#a31d1d",
+            "spawn": "#2f6b3a",
+            "vehicle_change": "#2b4e66",
+            "other": "#5c574b",
+            "grid": "#1c1c1c1f",
+            "grid_zero": "#1c1c1c33",
+            "axis": "#4a453a",
+            "border": "#1c1c1c26",
+            "avg_band": "#c8551a",
+            "avg_edge": "#e08a50",
+            "invalid": "#8a8578",
+            "death_region": "#a31d1d",
+            "vline": "#8a7a63",
+            "crosshair": "#7a3b12",
+            "crosshair_stroke": "#f4f1e8",
+        },
+        font_ui=(
+            '"Microsoft YaHei UI","Microsoft YaHei",SimHei,"Segoe UI",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_title=(
+            '"Source Han Serif SC","Source Han Serif","Noto Serif CJK SC",'
+            'SimSun,"Songti SC",Georgia,serif'
+        ),
+        font_num='Consolas,"Courier New","SimSun",monospace',
+        radius="2px",
+        radius_sm="2px",
+        radius_xs="2px",
+        pill="2px",
+        css={
+            "header-bg": "linear-gradient(180deg,#faf7ee,#f4f1e8)",
+            "subline-code-bg": "#efeade",
+            "btn-fg": "#3a352b",
+            "btn-hover-fg": "#1c1c1c",
+            "btn-active-bg": "#f0dccb",
+            "btn-active-fg": "#8f3a10",
+            "replay-fg": "#8a5a2b",
+            "replay-b": "#6b431c",
+            "note-bg": "#efeade",
+            "note-border": "#c9bfa8",
+            "note-fg": "#3a352b",
+            "note-b": "#1c1c1c",
+            "pchip-bg": "#efeade",
+            "pchip-fg": "#5c574b",
+            "pchip-b": "#1c1c1c",
+            "badge-bg": "#efeade",
+            "badge-fg": "#3a352b",
+            "legend-fg": "#3a352b",
+            "chart-label-fg": "#1c1c1c",
+            "input-bg": "#faf7ee",
+            "avg-btn-bg": "#c8551a",
+            "avg-btn-border": "#a8440f",
+            "avg-btn-fg": "#ffffff",
+            "avg-btn-hover-bg": "#a8440f",
+            "ghost-fg": "#3a352b",
+            "avg-msg": "#a8440f",
+            "avg-msg-warn": "#a31d1d",
+            "warn-bg": "#f7ecd6",
+            "warn-border": "#c8a86a",
+            "warn-fg": "#6b431c",
+            "pager-bg": "#f4f1e8",
+            "dot": "#c9bfa8",
+            "dot-hover": "#8a7a63",
+            "dot-ring": "#c8551a33",
+            "hint-fg": "#8a8578",
+            "side-bg": "#faf7eef2",
+            "side-fg": "#3a352b",
+            "side-hover-bg": "#efeade",
+            "tip-bg": "#fffdf6f7",
+            "tip-border": "#c9bfa8",
+            "tip-shadow": "0 8px 20px #0000001f",
+            "dash-fg": "#1c1c1c",
+            "avgdash-fg": "#5c574b",
+            "avg-dash": "#8a8578",
+            "color-scheme": "light",
+            "print-bg": "#ffffff",
+            "print-fg": "#111111",
+            "print-header-bg": "#ffffff",
+        },
+        extra_css="""
+body{
+  background-color:#f4f1e8;
+  background-image:repeating-linear-gradient(0deg,#00000004 0 1px,transparent 1px 29px),
+    radial-gradient(120% 80% at 50% 0%,#ffffff66,transparent 55%);
+}
+header{border-bottom:3px double #1c1c1c}
+header h1{font-family:var(--font-title);font-weight:600;letter-spacing:.6px}
+.page-head{border-bottom:1px solid #1c1c1c;padding-bottom:3px;align-items:flex-end}
+.page-title{font-family:var(--font-title);font-weight:600;letter-spacing:.4px;font-size:17px}
+body{counter-reset:fig}
+section.page{counter-increment:fig}
+.page-title::before{content:"图 " counter(fig) " · ";font-family:var(--font-num);font-weight:400;
+  color:var(--muted);font-size:13px}
+.card{box-shadow:none;border-color:#cfc7b4;background:#faf7ee}
+.card b{font-family:var(--font-num)}
+.avgbar{border-color:#cfc7b4;background:#faf7ee;border-radius:2px}
+.legend{color:#3a352b}
+.badges span{background:#efeade;border-color:#cfc7b4}
+.pager{border-top:1px solid #1c1c1c}
+.hint{display:none}
+.pager::before{content:"WtHud 飞行日志分析 · 维护手册版";position:absolute;left:22px;
+  font-size:10.5px;color:#8a8578;letter-spacing:.6px}
+.pager::after{content:"仅供技术复盘参考";position:absolute;right:16px;
+  font-size:10.5px;color:#8a8578}
+.tip{border-radius:2px}
+.chart-wrap{border-bottom:1px solid #00000012}
+""",
+        print_css="""
+body{background:#fff!important;background-image:none!important;color:#111!important}
+header{background:#fff!important;border-bottom:2px solid #111!important}
+.page{border-top:1px solid #ccc!important}
+.card,.badges span,.avgbar{background:#fff!important;border-color:#bbb!important}
+.pager::before,.pager::after{content:none!important}
+""",
+    ),
+    # ------------------------------------------------------------------
+    # 4) tactical：战术复盘（橄榄绿 + 卡其 + 沙色文字 + 胶片噪点 + 等宽标题）
+    # ------------------------------------------------------------------
+    "tactical": Theme(
+        key="tactical",
+        label="战术复盘",
+        desc="橄榄绿底、卡其线条、沙色沙盘文字，半透明胶片图表面板 + 弱噪点，事件红调标注。",
+        mode="dark",
+        bg="#2f3a2a",
+        panel="#37432f",
+        panel2="#404d36",
+        text="#e6dcc0",
+        muted="#c2b797",
+        accent="#c9bc9a",
+        accent2="#d9a441",
+        danger="#e06a5a",
+        ok="#9fbf6a",
+        line="#5a6748",
+        chart={
+            "ias": "#ead9a0",
+            "tas": "#d9a441",
+            "mach": "#b9d18a",
+            "alt": "#9fbf6a",
+            "ralt": "#6e8b54",
+            "es": "#e0c060",
+            "des_pos": "#a8c86a",
+            "des_neg": "#e06a5a",
+            "vy": "#a9c7c1",
+            "aoa": "#d98f7a",
+            "ny": "#e8b04a",
+            "pitch": "#c9bc9a",
+            "bank": "#a9b8d0",
+            "death": "#e06a5a",
+            "spawn": "#d98f7a",
+            "vehicle_change": "#d9a441",
+            "other": "#c9bc9a",
+            "grid": "#c9bc9a1f",
+            "grid_zero": "#c9bc9a3d",
+            "axis": "#c9bc9a",
+            "border": "#c9bc9a2e",
+            "avg_band": "#c9bc9a",
+            "avg_edge": "#e6dcc0",
+            "invalid": "#8a8a6f",
+            "death_region": "#e06a5a",
+            "vline": "#d8cba6",
+            "crosshair": "#f0e6c8",
+            "crosshair_stroke": "#2f3a2a",
+        },
+        font_ui='"Microsoft YaHei UI","Segoe UI","Noto Sans CJK SC",sans-serif',
+        font_title='Consolas,"Cascadia Mono","Courier New","Microsoft YaHei UI",monospace',
+        font_num='Consolas,"Cascadia Mono","Courier New",monospace',
+        radius="3px",
+        radius_sm="2px",
+        radius_xs="2px",
+        pill="3px",
+        css={
+            "header-bg": "linear-gradient(180deg,#37432f,#2f3a2a)",
+            "subline-code-bg": "#404d36",
+            "btn-fg": "#d8cba6",
+            "btn-hover-fg": "#f2e8c8",
+            "btn-active-bg": "#4a4530",
+            "btn-active-fg": "#f2e8c8",
+            "replay-fg": "#e8b04a",
+            "replay-b": "#f0c060",
+            "note-bg": "#3d4933",
+            "note-border": "#6e7a54",
+            "note-fg": "#e6dcc0",
+            "note-b": "#f2e8c8",
+            "pchip-bg": "#3a4631",
+            "pchip-fg": "#b3a887",
+            "pchip-b": "#f2e8c8",
+            "badge-bg": "#3a4631",
+            "badge-fg": "#d8cba6",
+            "legend-fg": "#d8cba6",
+            "chart-label-fg": "#f2e8c8",
+            "input-bg": "#3a4631",
+            "avg-btn-bg": "#4a4530",
+            "avg-btn-border": "#8a7c4e",
+            "avg-btn-fg": "#f2e8c8",
+            "avg-btn-hover-bg": "#5a5338",
+            "ghost-fg": "#d8cba6",
+            "avg-msg": "#e8b04a",
+            "avg-msg-warn": "#e06a5a",
+            "warn-bg": "#463a26",
+            "warn-border": "#8a6a34",
+            "warn-fg": "#e8b04a",
+            "pager-bg": "#2a3426",
+            "dot": "#5a6748",
+            "dot-hover": "#c9bc9a",
+            "dot-ring": "#c9bc9a40",
+            "hint-fg": "#8f8a6f",
+            "side-bg": "#2f3a2af0",
+            "side-fg": "#e6dcc0",
+            "side-hover-bg": "#4a4530",
+            "tip-bg": "#20281cef",
+            "tip-border": "#6e7a54",
+            "tip-shadow": "0 10px 26px #00000099",
+            "dash-fg": "#f2e8c8",
+            "avgdash-fg": "#d8cba6",
+            "avg-dash": "#8f8a6f",
+            "color-scheme": "dark",
+            "print-bg": "#2f3a2a",
+            "print-fg": "#e6dcc0",
+            "print-header-bg": "#2f3a2a",
+            "chart-bg": "rgba(233,223,190,0.045)",
+            "chart-ring": "inset 0 0 0 1px #c9bc9a33",
+        },
+        extra_css="""
+body{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23n)' opacity='0.055'/></svg>")}
+header{border-bottom:2px solid #c9bc9a4d;box-shadow:inset 0 -1px 0 #00000033}
+header h1,.page-title{font-family:var(--font-title);letter-spacing:2px;font-weight:600}
+.page-title{font-size:15px}
+.page-head{border-bottom:1px dashed #c9bc9a33;padding-bottom:3px}
+.card{background:rgba(201,188,154,.07);border:1px solid #c9bc9a40;border-left:2px solid #c9bc9a66}
+.card b{font-family:var(--font-num);color:#f2e8c8}
+.avgbar{background:rgba(201,188,154,.06)}
+.badges span{background:rgba(201,188,154,.08);border-color:#c9bc9a33}
+.chart-wrap{padding:2px}
+.tip{border-radius:2px}
+""",
+        print_css="""
+body{background:#2f3a2a!important;background-image:none!important}
+header{background:#2f3a2a!important}
+.card{background:rgba(201,188,154,.09)!important}
+""",
+    ),
+    # ------------------------------------------------------------------
+    # 5) clean：浅色分析仪表盘（白卡片 + 蓝色强调 + 阴影，可读性优先）
+    # ------------------------------------------------------------------
+    "clean": Theme(
+        key="clean",
+        label="浅色分析仪表盘",
+        desc="白/浅灰卡片、蓝色强调、圆角阴影，白天看最省眼，可打印。",
+        mode="light",
+        bg="#f5f7fa",
+        panel="#ffffff",
+        panel2="#f1f4f9",
+        text="#1f2937",
+        muted="#6b7280",
+        accent="#2563eb",
+        accent2="#f59e0b",
+        danger="#dc2626",
+        ok="#059669",
+        line="#e5e7eb",
+        chart={
+            "ias": "#2563eb",
+            "tas": "#b45309",
+            "mach": "#7c3aed",
+            "alt": "#059669",
+            "ralt": "#0d9488",
+            "es": "#2563eb",
+            "des_pos": "#16a34a",
+            "des_neg": "#dc2626",
+            "vy": "#0891b2",
+            "aoa": "#db2777",
+            "ny": "#a16207",
+            "pitch": "#3b82f6",
+            "bank": "#8b5cf6",
+            "death": "#dc2626",
+            "spawn": "#16a34a",
+            "vehicle_change": "#3b82f6",
+            "other": "#6b7280",
+            "grid": "#1f293714",
+            "grid_zero": "#1f293733",
+            "axis": "#6b7280",
+            "border": "#1f29371f",
+            "avg_band": "#2563eb",
+            "avg_edge": "#60a5fa",
+            "invalid": "#6b7280",
+            "death_region": "#dc2626",
+            "vline": "#64748b",
+            "crosshair": "#1f2937",
+            "crosshair_stroke": "#ffffff",
+        },
+        font_ui=(
+            '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_title=(
+            '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_num='"Segoe UI","Microsoft YaHei UI",sans-serif',
+        radius="12px",
+        radius_sm="10px",
+        radius_xs="8px",
+        pill="999px",
+        css={
+            "header-bg": "#ffffff",
+            "subline-code-bg": "#f1f4f9",
+            "btn-fg": "#374151",
+            "btn-hover-fg": "#111827",
+            "btn-active-bg": "#dbeafe",
+            "btn-active-fg": "#1d4ed8",
+            "replay-fg": "#b45309",
+            "replay-b": "#92400e",
+            "note-bg": "#f1f5ff",
+            "note-border": "#bfdbfe",
+            "note-fg": "#1e3a8a",
+            "note-b": "#1e3a8a",
+            "pchip-bg": "#f3f4f6",
+            "pchip-fg": "#4b5563",
+            "pchip-b": "#111827",
+            "badge-bg": "#f3f4f6",
+            "badge-fg": "#4b5563",
+            "legend-fg": "#4b5563",
+            "chart-label-fg": "#111827",
+            "input-bg": "#ffffff",
+            "avg-btn-bg": "#2563eb",
+            "avg-btn-border": "#1d4ed8",
+            "avg-btn-fg": "#ffffff",
+            "avg-btn-hover-bg": "#1d4ed8",
+            "ghost-fg": "#374151",
+            "avg-msg": "#b45309",
+            "avg-msg-warn": "#b91c1c",
+            "warn-bg": "#fffbeb",
+            "warn-border": "#fcd34d",
+            "warn-fg": "#92400e",
+            "card-bg": "#ffffff",
+            "card-border": "#e5e7eb",
+            "card-shadow": "0 1px 2px #0f172a0f",
+            "pager-bg": "#ffffff",
+            "dot": "#cbd5e1",
+            "dot-hover": "#64748b",
+            "dot-ring": "#2563eb26",
+            "hint-fg": "#94a3b8",
+            "side-bg": "#fffffff2",
+            "side-fg": "#374151",
+            "side-hover-bg": "#eff6ff",
+            "tip-bg": "#fffffff7",
+            "tip-border": "#e5e7eb",
+            "tip-shadow": "0 12px 28px #0f172a26",
+            "dash-fg": "#1f2937",
+            "avgdash-fg": "#6b7280",
+            "avg-dash": "#94a3b8",
+            "color-scheme": "light",
+            "print-bg": "#ffffff",
+            "print-fg": "#111111",
+            "print-header-bg": "#ffffff",
+        },
+        extra_css="""
+header{box-shadow:0 1px 3px #0f172a0f}
+.page-head{border-bottom:1px solid #eef2f7;padding-bottom:3px}
+.card{box-shadow:var(--card-shadow)}
+.avgbar{box-shadow:0 1px 2px #0f172a0d}
+.pager{box-shadow:0 -1px 2px #0f172a0a}
+""",
+        print_css="""
+body{background:#fff!important}
+header{background:#fff!important}
+.card,.avgbar{box-shadow:none!important}
+""",
+    ),
+    # ------------------------------------------------------------------
+    # 6) blueprint：A 工程蓝图（默认）——深蓝图纸 / 坐标纸网格 / 图框 / 图号 /
+    #    页脚 SHEET n/9 / 右下角标题栏；红色审阅标记，打印为白/米底档案纸。
+    # ------------------------------------------------------------------
+    "blueprint": Theme(
+        key="blueprint",
+        label="工程蓝图",
+        desc="深蓝图纸底 + 坐标纸网格 + 图框/图号/标题栏，红色审阅标记；打印为白/米底档案纸。",
+        mode="dark",
+        bg="#0B2A4A",
+        panel="#0D3157",
+        panel2="#0E3A63",
+        text="#E6F4FF",
+        muted="#9CC8E6",
+        accent="#8FC6E8",
+        accent2="#FFD166",
+        danger="#FF5A3C",
+        ok="#7EE0B8",
+        line="#8FC6E8",
+        chart={
+            "ias": "#E6F4FF",
+            "tas": "#9CC8E6",
+            "mach": "#8FD3FF",
+            "alt": "#E6F4FF",
+            "ralt": "#9CC8E6",
+            "es": "#8FD3FF",
+            "des_pos": "#7EE0B8",
+            "des_neg": "#FF8A70",
+            "vy": "#A8DAFF",
+            "aoa": "#FFD166",
+            "ny": "#CFE9FC",
+            "pitch": "#E6F4FF",
+            "bank": "#9CC8E6",
+            "death": "#FF5A3C",
+            "spawn": "#7EE0B8",
+            "vehicle_change": "#8FD3FF",
+            "other": "#9CC8E6",
+            "grid": "#8FC6E81A",
+            "grid_zero": "#8FC6E840",
+            "axis": "#9CC8E6",
+            "border": "#8FC6E866",
+            "avg_band": "#8FD3FF",
+            "avg_edge": "#CFE9FC",
+            "invalid": "#6E93B5",
+            "death_region": "#FF5A3C",
+            "vline": "#CFE9FC",
+            "crosshair": "#E6F4FF",
+            "crosshair_stroke": "#0B2A4A",
+        },
+        font_ui=(
+            '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",'
+            '"Noto Sans CJK SC",sans-serif'
+        ),
+        font_title=(
+            '"Bahnschrift SemiCondensed","Bahnschrift","Arial Narrow",'
+            '"Microsoft YaHei UI","Microsoft YaHei",sans-serif'
+        ),
+        font_num='Consolas,"Cascadia Mono","Courier New",monospace',
+        radius="0px",
+        radius_sm="0px",
+        radius_xs="0px",
+        pill="0px",
+        css={
+            "header-bg": "linear-gradient(180deg,#0c3054,#092646)",
+            "header-border": "#8fc6e8b3",
+            "subline-code-bg": "#0e3a63",
+            "btn-fg": "#cfe6f8",
+            "btn-hover-fg": "#ffffff",
+            "btn-active-bg": "#F2EBD8",
+            "btn-active-fg": "#0A2540",
+            "replay-fg": "#FFD166",
+            "replay-b": "#FFE3A3",
+            "note-bg": "#0e3a63",
+            "note-border": "#8fc6e859",
+            "note-fg": "#d8ecfd",
+            "note-b": "#ffffff",
+            "pchip-bg": "#0d3357",
+            "pchip-fg": "#9CC8E6",
+            "pchip-b": "#E6F4FF",
+            "badge-bg": "#0d3357",
+            "badge-fg": "#cfe6f8",
+            "legend-fg": "#cfe6f8",
+            "chart-label-fg": "#E6F4FF",
+            "input-bg": "#0e3a63",
+            "avg-btn-bg": "#F2EBD8",
+            "avg-btn-border": "#F2EBD8",
+            "avg-btn-fg": "#0A2540",
+            "avg-btn-hover-bg": "#ffffff",
+            "ghost-fg": "#cfe6f8",
+            "avg-msg": "#FFD166",
+            "avg-msg-warn": "#FF8A70",
+            "warn-bg": "#123a53",
+            "warn-border": "#FFD166",
+            "warn-fg": "#FFE3A3",
+            "card-bg": "#0c2e50",
+            "card-border": "#8fc6e859",
+            "pager-bg": "#08213a",
+            "pager-border": "#8fc6e859",
+            "dot": "#25517a",
+            "dot-hover": "#8fc6e8",
+            "dot-ring": "#8fc6e83d",
+            "hint-fg": "#7fa8c8",
+            "side-bg": "#0a2744e6",
+            "side-fg": "#cfe6f8",
+            "side-hover-bg": "#14476f",
+            "tip-bg": "#08213af7",
+            "tip-border": "#8fc6e88c",
+            "tip-fg": "#E6F4FF",
+            "tip-strong": "#ffffff",
+            "tip-shadow": "0 10px 30px #00000099",
+            "dash-fg": "#E6F4FF",
+            "avgdash-fg": "#9CC8E6",
+            "avg-dash": "#7fa8c8",
+            "color-scheme": "dark",
+            "print-bg": "#F6F1E3",
+            "print-fg": "#2B2418",
+            "print-header-bg": "#F6F1E3",
+            "ann-box": "#DCEBF5",
+            "ann-ink": "#0A2540",
+            "ann-mark": "#FF5A3C",
+        },
+        extra_css=BLUEPRINT_CSS,
+        print_css=BLUEPRINT_PRINT_CSS,
+        print_chart={
+            "ias": "#2B2418",
+            "tas": "#6B5B41",
+            "mach": "#4A3D2A",
+            "alt": "#2B2418",
+            "ralt": "#6B5B41",
+            "es": "#3A3226",
+            "des_pos": "#2F6B3A",
+            "des_neg": "#A8322B",
+            "vy": "#3A4A5A",
+            "aoa": "#7A3E5C",
+            "ny": "#3A3226",
+            "pitch": "#4A453A",
+            "bank": "#6B5B41",
+            "death": "#A8322B",
+            "spawn": "#2F6B3A",
+            "vehicle_change": "#2B4E66",
+            "other": "#6B5B41",
+            "grid": "#DCD0B6",
+            "grid_zero": "#C3B294",
+            "axis": "#6B5B41",
+            "border": "#B7A483",
+            "avg_band": "#B0362A",
+            "avg_edge": "#B0362A",
+            "invalid": "#B7A483",
+            "death_region": "#A8322B",
+            "vline": "#A8967A",
+            "crosshair": "#2B2418",
+        },
+    ),
 }
 
-EVENT_COLORS = {
+#: 主题顺序（CLI ``--theme`` 的 choices 与对比预览的顺序都按这个来）。
+THEME_KEYS: Tuple[str, ...] = ("blueprint", "glass", "manual", "tactical", "clean", "mfd")
+
+#: 当前生效主题（``render_report`` 会在渲染前应用；主题只影响颜色配置，不影响数据结构）。
+ACTIVE_THEME: Theme = THEMES[DEFAULT_THEME]
+
+#: 图表调色板（可变字典：渲染每个主题前由 :func:`_apply_theme` 原地更新）。
+#: 面板配置 / SVG 在**调用时**读它，所以不需要把主题参数一路传进每个画图函数。
+COLORS: Dict[str, str] = dict(THEMES[DEFAULT_THEME].chart)
+
+EVENT_COLORS: Dict[str, str] = {
     "death": COLORS["death"],
     "spawn": COLORS["spawn"],
     "vehicle_change": COLORS["vehicle_change"],
     "end": COLORS["other"],
 }
+
+
+def get_theme(name: Optional[str] = None) -> Theme:
+    """按名字取主题；``None`` / 空串取默认主题；未知主题抛 ``ValueError``。"""
+    key = (name or "").strip().lower() or DEFAULT_THEME
+    theme = THEMES.get(key)
+    if theme is None:
+        raise ValueError(
+            "未知主题 %r；可选：%s" % (name, " / ".join(THEME_KEYS))
+        )
+    return theme
+
+
+def _apply_theme(theme: Theme) -> Theme:
+    """把主题的图表调色板写进模块级 ``COLORS`` / ``EVENT_COLORS``。
+
+    ``report.py`` 里所有 SVG 片段都在调用时读 ``COLORS``，因此渲染入口
+    （:func:`render_report`）先应用主题即可；不需要把主题对象层层传参。
+    这是单进程渲染，不做并发保护。
+    """
+    global ACTIVE_THEME
+    ACTIVE_THEME = theme
+    COLORS.clear()
+    COLORS.update(theme.chart)
+    EVENT_COLORS.update(
+        {
+            "death": COLORS["death"],
+            "spawn": COLORS["spawn"],
+            "vehicle_change": COLORS["vehicle_change"],
+            "end": COLORS["other"],
+        }
+    )
+    return theme
+
+
+# ---------------------------------------------------------------------------
+# 限速（Vne）读取：与 HUD 告警同一套语义
+# ---------------------------------------------------------------------------
+#: 解析优先级（镜像 ``wt-hud/src/WarThunderHud/Hud/EffectiveSettings.cs`` + ``SettingScopes``）：
+#:
+#: 1. ``hud-config.json`` 的 ``perVehicleOverrides[vehicle]["row.overspeedIas"]``
+#: 2. ``airframes.json`` 的 ``[vehicle].overspeedIas``
+#: 3. ``hud-config.json`` 的全局 ``overspeedKmh``
+#:
+#: 值 <= 0 视为"没有记录"，继续往下找；两个文件都读不到时返回空
+#: :class:`SpeedLimits`（渲染时跳过限速批注，不报错）。
+
+
+def _read_json_object(path: str) -> Optional[Dict[str, Any]]:
+    """读一个 JSON 对象；文件缺失 / 坏 JSON / 顶层不是对象时返回 ``None``。"""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _positive_float(value: Any) -> Optional[float]:
+    """``>0`` 的有限数字；其余（None / 0 / 负数 / 布尔 / 字符串）返回 ``None``。"""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
+
+
+@dataclass(frozen=True)
+class SpeedLimits:
+    """按机型解析出的限速（Vne IAS，km/h）与来源说明。"""
+
+    #: 小写机型 → (限速 km/h, 来源说明)
+    by_vehicle: Dict[str, Tuple[float, str]] = field(default_factory=dict)
+    #: ``hud-config.json`` 的全局 ``overspeedKmh``（没有就是 ``None``）
+    global_vne_kmh: Optional[float] = None
+    #: 读到的配置目录（诊断用）
+    hud_dir: str = ""
+    #: 是否由 ``--vne-kmh`` 手动指定
+    manual: bool = False
+    #: 读取过程中的提示（缺文件 / 坏 JSON）
+    notes: Tuple[str, ...] = ()
+
+    def vne_for(self, vehicle: Optional[str]) -> Tuple[Optional[float], str]:
+        """取某机型的限速；返回 ``(km/h, 来源)``，没有记录时 ``(None, "")``。"""
+        key = (vehicle or "").strip().lower()
+        if key and key in self.by_vehicle:
+            return self.by_vehicle[key]
+        if self.global_vne_kmh is not None:
+            return self.global_vne_kmh, "hud-config.json 全局 overspeedKmh"
+        return None, ""
+
+    def is_empty(self) -> bool:
+        return not self.by_vehicle and self.global_vne_kmh is None
+
+
+def manual_speed_limits(vne_kmh: float) -> SpeedLimits:
+    """``--vne-kmh`` 手动指定：所有机型都用这个值。"""
+    value = _positive_float(vne_kmh)
+    if value is None:
+        return SpeedLimits(notes=("--vne-kmh 不是正数，已忽略",))
+    return SpeedLimits(
+        global_vne_kmh=value,
+        manual=True,
+        notes=("--vne-kmh 手动指定 %.0f km/h" % value,),
+    )
+
+
+def _hud_config_candidates(hud_dir: Optional[str] = None) -> List[str]:
+    """候选配置目录：参数指定 → exe 目录（冻结时）→ 本工具目录 → 其父目录。"""
+    dirs: List[str] = []
+    if hud_dir:
+        dirs.append(hud_dir)
+    if getattr(sys, "frozen", False):
+        dirs.append(os.path.dirname(os.path.abspath(sys.executable)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    dirs.append(here)
+    dirs.append(os.path.dirname(here))
+    out: List[str] = []
+    seen = set()
+    for directory in dirs:
+        directory = os.path.abspath(directory)
+        if directory in seen or not os.path.isdir(directory):
+            continue
+        seen.add(directory)
+        out.append(directory)
+    return out
+
+
+def load_speed_limits(hud_dir: Optional[str] = None) -> SpeedLimits:
+    """读与 FlightLog.exe 同目录的 ``hud-config.json`` / ``airframes.json``。
+
+    * 先把 ``airframes.json`` 的 per-aircraft ``overspeedIas`` 当基础表；
+    * 再用 ``hud-config.json`` 的 ``perVehicleOverrides`` 覆盖（优先级更高）；
+    * 全局 ``overspeedKmh`` 作为兜底（机型没记录时按 HUD 语义使用它）。
+
+    任何一步读不到都只是跳过（写进 ``notes``），不会抛异常。
+    """
+    notes: List[str] = []
+    chosen = ""
+    for directory in _hud_config_candidates(hud_dir):
+        if os.path.isfile(os.path.join(directory, "hud-config.json")):
+            chosen = directory
+            break
+    if not chosen:
+        return SpeedLimits(notes=("未找到 hud-config.json（限速批注跳过）",))
+
+    by_vehicle: Dict[str, Tuple[float, str]] = {}
+
+    airframes = _read_json_object(os.path.join(chosen, "airframes.json"))
+    if airframes is None:
+        notes.append("airframes.json 缺失或无法解析（只用 hud-config.json）")
+    else:
+        for vehicle, profile in airframes.items():
+            if not isinstance(profile, dict):
+                continue
+            value = _positive_float(profile.get("overspeedIas"))
+            if value is not None:
+                by_vehicle[str(vehicle).strip().lower()] = (
+                    value,
+                    "airframes.json[%s].overspeedIas" % vehicle,
+                )
+
+    config = _read_json_object(os.path.join(chosen, "hud-config.json"))
+    global_vne: Optional[float] = None
+    if config is None:
+        notes.append("hud-config.json 无法解析（只用 airframes.json）")
+    else:
+        global_vne = _positive_float(config.get("overspeedKmh"))
+        if global_vne is None:
+            global_vne = _positive_float(config.get("overspeedIas"))
+        overrides = config.get("perVehicleOverrides")
+        if isinstance(overrides, dict):
+            for vehicle, mapping in overrides.items():
+                if not isinstance(mapping, dict):
+                    continue
+                value = _positive_float(mapping.get("row.overspeedIas"))
+                if value is None:
+                    value = _positive_float(mapping.get("overspeedIas"))
+                if value is None:
+                    continue
+                by_vehicle[str(vehicle).strip().lower()] = (
+                    value,
+                    "hud-config.json perVehicleOverrides[%s].row.overspeedIas" % vehicle,
+                )
+    return SpeedLimits(
+        by_vehicle=by_vehicle,
+        global_vne_kmh=global_vne,
+        hud_dir=chosen,
+        notes=tuple(notes),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 审阅批注：自动计算每页要圈的点（屏幕 = 十字/方框；打印 = 手绘双圈）
+# ---------------------------------------------------------------------------
+
+
+def _tc_text(seconds: float, tenths: bool = True) -> str:
+    """任务时间码 ``T+mm:ss.d``。"""
+    value = max(0.0, float(seconds))
+    minutes = int(value // 60)
+    rest = value - minutes * 60
+    if tenths:
+        if rest >= 59.95:
+            minutes += 1
+            rest = 0.0
+        text = "%04.1f" % rest
+    else:
+        whole = int(round(rest))
+        if whole >= 60:
+            minutes += 1
+            whole -= 60
+        text = "%02d" % whole
+    return "T+%02d:%s" % (minutes, text)
+
+
+def _series_max(values: Sequence[Optional[float]]) -> Tuple[int, float]:
+    """``(argmax, max)``；没有有效值时 ``(-1, 0.0)``。"""
+    best = -1
+    best_value = 0.0
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        if best < 0 or value > best_value:
+            best = index
+            best_value = float(value)
+    return best, best_value
+
+
+def _series_min(values: Sequence[Optional[float]]) -> Tuple[int, float]:
+    """``(argmin, min)``；没有有效值时 ``(-1, 0.0)``。"""
+    best = -1
+    best_value = 0.0
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        if best < 0 or value < best_value:
+            best = index
+            best_value = float(value)
+    return best, best_value
+
+
+def _median_step(times: Sequence[float]) -> float:
+    diffs = [times[i + 1] - times[i] for i in range(len(times) - 1) if times[i + 1] > times[i]]
+    if not diffs:
+        return 0.0
+    diffs.sort()
+    return diffs[len(diffs) // 2]
+
+
+def _moving_average(values: Sequence[Optional[float]], half: int) -> List[Optional[float]]:
+    """居中滑动平均（窗口 ``2*half+1``），``None`` 不参与。"""
+    if not values:
+        return []
+    half = max(1, int(half))
+    prefix_sum = [0.0]
+    prefix_cnt = [0]
+    for value in values:
+        if value is None:
+            prefix_sum.append(prefix_sum[-1])
+            prefix_cnt.append(prefix_cnt[-1])
+        else:
+            prefix_sum.append(prefix_sum[-1] + float(value))
+            prefix_cnt.append(prefix_cnt[-1] + 1)
+    out: List[Optional[float]] = []
+    total = len(values)
+    for index in range(total):
+        lo = max(0, index - half)
+        hi = min(total, index + half + 1)
+        count = prefix_cnt[hi] - prefix_cnt[lo]
+        out.append((prefix_sum[hi] - prefix_sum[lo]) / count if count else None)
+    return out
+
+
+def _es_cliff(times: Sequence[float], des: Sequence[Optional[float]],
+              es: Sequence[Optional[float]]) -> Optional[Dict[str, Any]]:
+    """Es 断崖：2 秒滑动平均的 dEs/dt 最负值，返回该段的起点。
+
+    起点 = 从最负点往回走、直到滑动平均不再单调下降的那个局部高点
+    （即"开始掉能量"的时刻）。找不到下降段时返回 ``None``。
+    """
+    if len(times) < 3 or not des:
+        return None
+    step = _median_step(times) or 1.0
+    half = max(1, int(round(ANNOTATION_SMOOTH_S / (2.0 * step))))
+    smoothed = _moving_average(des, half)
+    best_index = -1
+    best_rate = 0.0
+    for index, value in enumerate(smoothed):
+        if value is None:
+            continue
+        if best_index < 0 or value < best_rate:
+            best_index = index
+            best_rate = float(value)
+    if best_index < 0 or best_rate >= 0:
+        return None
+    # 「该段起点」：从最负点往回走，直到 2 s 平滑后的 dEs/dt 不再陡
+    # （绝对值跌到最负值的 8% 以内）——即断崖开始的位置；最多回看 30 s。
+    threshold = abs(best_rate) * 0.08
+    max_gap = max(4.0 * step, 0.2)  # 容忍个别丢样本，不因小缺口中断回看
+    index = best_index
+    while index > 0:
+        prev = smoothed[index - 1]
+        if prev is None or abs(prev) < threshold:
+            break
+        if times[index] - times[index - 1] > max_gap:
+            break
+        if times[best_index] - times[index] > 30.0:
+            break
+        index -= 1
+    start_index = index
+    start_value = es[start_index] if start_index < len(es) else None
+    return {
+        "t": times[start_index],
+        "value": start_value,
+        "rate": best_rate,
+        "bottom_t": times[best_index],
+    }
+
+
+#: 图上「缩写 code」：图面只写编号 + code（``① IAS_MAX``），全称 / 数值 / 时间
+#: 放到图下方的对照表（legend）里，图面不再又长又挤。
+#:
+#: 最大过载在批注数据里的 ``kind`` 一直是 ``max_ny``（计算规则不动），
+#: 这里与 ``max_g`` 一起映射到同一个 ``G_MAX``。
+ANNOTATION_CODES: Dict[str, str] = {
+    "max_ias": "IAS_MAX",
+    "vne": "VNE",
+    "min_alt": "ALT_MIN",
+    "es_min": "ES_MIN",
+    "es_cliff": "ES_DROP",
+    "max_g": "G_MAX",
+    "max_ny": "G_MAX",
+    "death": "DEATH",
+}
+
+#: code → 完整中文名（legend 每行「缩写 + 全称」用）
+ANNOTATION_NAMES: Dict[str, str] = {
+    "IAS_MAX": "最大指示空速",
+    "VNE": "限速预警",
+    "ALT_MIN": "最低气压高度",
+    "ES_MIN": "Es 最低点",
+    "ES_DROP": "Es 断崖",
+    "G_MAX": "最大过载",
+    "DEATH": "死亡",
+}
+
+#: 图上编号：①…⑩，第 11 条起退化成 ``(11)``。
+ANNOTATION_CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def annotation_code(kind: Optional[str]) -> str:
+    """批注 ``kind`` → 图上缩写 code；未知 kind 用大写 kind 兜底。"""
+    text = str(kind or "")
+    return ANNOTATION_CODES.get(text, text.upper() or "ANNOT")
+
+
+def annotation_name(code: str) -> str:
+    """缩写 code → 完整中文名（未知 code 返回空串，legend 直接用 code）。"""
+    return ANNOTATION_NAMES.get(code, "")
+
+
+def _annotation_number(index: int) -> str:
+    """上图编号：①②③…（索引从 0 开始；>10 条用 ``(11)``）。"""
+    if 0 <= index < len(ANNOTATION_CIRCLED):
+        return ANNOTATION_CIRCLED[index]
+    return "(%d)" % (int(index) + 1)
+
+
+def _annotation_member(annotation: Dict[str, Any]) -> Dict[str, Any]:
+    """批注的一条「成员」：合并后一条批注可能对应多个 kind（每个各占 legend 一段）。"""
+    return {
+        "kind": annotation.get("kind"),
+        "code": annotation.get("code") or annotation_code(annotation.get("kind")),
+        "value": annotation.get("value"),
+        "ref": annotation.get("ref"),
+        "rate": annotation.get("rate"),
+        "unit": annotation.get("unit") or "",
+        "decimals": int(annotation.get("decimals", 0) or 0),
+        "t": float(annotation["t"]),
+    }
+
+
+def _annotation_part(annotation: Dict[str, Any]) -> str:
+    """一条批注的完整短文字（CLI 摘要 / 数据导出用；图面改用 :func:`_annotation_mark_text`）。"""
+    kind = annotation.get("kind")
+    if kind == "es_cliff":
+        return "Es 断崖 %+.0f m/s" % float(annotation.get("rate") or 0.0)
+    if kind == "vne":
+        return "限速预警 >%s km/h" % _fmt_number(annotation.get("ref"), 0)
+    digits = int(annotation.get("decimals", 0))
+    unit = annotation.get("unit") or ""
+    unit_text = (" " + unit) if unit else ""
+    return "%s %s%s" % (
+        annotation.get("title") or annotation.get("kind") or "",
+        _fmt_number(annotation.get("value"), digits),
+        unit_text,
+    )
+
+
+def _merge_page_annotations(
+    annotations: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """同一页：时间相近（<10 s）的批注合并，最后只留前 N 条。"""
+    ordered = sorted(
+        annotations, key=lambda item: (int(item.get("priority", 9)), float(item["t"]))
+    )
+    kept: List[Dict[str, Any]] = []
+    for annotation in ordered:
+        target = None
+        for existing in kept:
+            if abs(float(existing["t"]) - float(annotation["t"])) < ANNOTATION_MERGE_S:
+                target = existing
+                break
+        if target is None:
+            new = dict(annotation)
+            new["parts"] = [_annotation_part(annotation)]
+            new["members"] = [_annotation_member(annotation)]
+            new["merged"] = False
+            kept.append(new)
+            continue
+        target["merged"] = True
+        if float(annotation["t"]) < float(target["t"]):
+            target.update(
+                t=annotation["t"],
+                value=annotation.get("value"),
+                series=annotation.get("series"),
+                kind=annotation.get("kind"),
+            )
+        target["parts"].append(_annotation_part(annotation))
+        target["members"].append(_annotation_member(annotation))
+    # 合并批注的 legend 成员按时间排（legend 的时间取最早那条，读起来才一致）
+    for item in kept:
+        item["members"].sort(key=lambda member: float(member["t"]))
+    return kept[:ANNOTATION_MAX_PER_PAGE]
+
+
+def _annotation_members(annotation: Dict[str, Any]) -> List[Dict[str, Any]]:
+    members = annotation.get("members") or []
+    return list(members) if members else [_annotation_member(annotation)]
+
+
+def _annotation_codes(annotation: Dict[str, Any]) -> List[str]:
+    """一条批注用到的 code（合并批注按顺序去重，如 ``["IAS_MAX", "VNE"]``）。"""
+    codes: List[str] = []
+    for member in _annotation_members(annotation):
+        code = member.get("code") or annotation_code(member.get("kind"))
+        if code and code not in codes:
+            codes.append(code)
+    return codes or [annotation_code(annotation.get("kind"))]
+
+
+def _annotation_code_label(annotation: Dict[str, Any]) -> str:
+    """图面缩写标签：``IAS_MAX``，合并批注是 ``IAS_MAX+VNE``。"""
+    return "+".join(_annotation_codes(annotation))
+
+
+def _annotation_mark_text(annotation: Dict[str, Any]) -> str:
+    """图上标记里只写缩写 code（编号由渲染器补 ``①``），不带数值 / 时间。"""
+    return _annotation_code_label(annotation)
+
+
+def _annotation_measure(member: Dict[str, Any]) -> str:
+    """legend 里的数值段：``1215 km/h`` / ``>1345 km/h`` / ``-699 m/s``。"""
+    kind = member.get("kind")
+    if kind == "vne":
+        return ">%s km/h" % _fmt_number(member.get("ref"), 0)
+    if kind == "es_cliff":
+        return "%+.0f m/s" % float(member.get("rate") or 0.0)
+    digits = int(member.get("decimals", 0) or 0)
+    text = _fmt_number(member.get("value"), digits)
+    unit = (member.get("unit") or "").strip()
+    return ("%s %s" % (text, unit)) if unit else text
+
+
+def _annotation_name_value_text(annotation: Dict[str, Any], name_sep: str = " ") -> str:
+    """legend 的「全称 + 数值」段；合并批注的多个成员用 `` / `` 连接。
+
+    ``name_sep=" "`` → ``最大指示空速 1215 km/h``（复盘卡）
+    ``name_sep=" · "`` → ``最大指示空速 · 1215 km/h``（屏幕 / PDF）
+    """
+    bits: List[str] = []
+    for member in _annotation_members(annotation):
+        code = member.get("code") or annotation_code(member.get("kind"))
+        name = annotation_name(code) or code
+        bits.append("%s%s%s" % (name, name_sep, _annotation_measure(member)))
+    return " / ".join(bits)
+
+
+def _annotation_legend_line(annotation: Dict[str, Any], index: int) -> str:
+    """屏幕 / PDF 的 legend 一行：``① IAS_MAX 最大指示空速 · 1215 km/h · T+04:32``。"""
+    return "%s %s %s · %s" % (
+        _annotation_number(index),
+        _annotation_code_label(annotation),
+        _annotation_name_value_text(annotation, name_sep=" · "),
+        _tc_text(float(annotation["t"]), tenths=False),
+    )
+
+
+def _annotation_card_line(annotation: Dict[str, Any], index: int) -> str:
+    """PNG 复盘卡的 legend 一行：``① IAS_MAX — 最大指示空速 1215 km/h · T+04:32``。"""
+    return "%s %s — %s · %s" % (
+        _annotation_number(index),
+        _annotation_code_label(annotation),
+        _annotation_name_value_text(annotation, name_sep=" "),
+        _tc_text(float(annotation["t"]), tenths=False),
+    )
+
+
+def _death_legend_line(mark: Dict[str, Any], index: int) -> str:
+    """屏幕 / PDF 的 DEATH legend 行：``③ DEATH 死亡 · 395.4 s · T+06:35（数据终止）``。"""
+    moment = float(mark["t"])
+    note = mark.get("note") or "数据终止"
+    return "%s DEATH 死亡 · %s s · %s（%s）" % (
+        _annotation_number(index),
+        _fmt_number(moment, 1),
+        _tc_text(moment, tenths=False),
+        note,
+    )
+
+
+def _death_card_line(mark: Dict[str, Any], index: int) -> str:
+    """PNG 复盘卡的 DEATH legend 行：``③ DEATH — 死亡 395.4 s · T+06:35（数据终止）``。"""
+    moment = float(mark["t"])
+    note = mark.get("note") or "数据终止"
+    return "%s DEATH — 死亡 %s s · %s（%s）" % (
+        _annotation_number(index),
+        _fmt_number(moment, 1),
+        _tc_text(moment, tenths=False),
+        note,
+    )
+
+
+def _annotation_text(annotation: Dict[str, Any]) -> str:
+    """屏幕标注条上的完整文字：``值 · T+mm:ss``。"""
+    body = " / ".join(annotation.get("parts") or [_annotation_part(annotation)])
+    return "%s · %s" % (body, _tc_text(float(annotation["t"])))
+
+
+def _annotation_print_text(annotation: Dict[str, Any]) -> str:
+    """打印/复盘卡上的打字机短注（一行，尽量短）。"""
+    parts = annotation.get("parts") or [_annotation_part(annotation)]
+    body = parts[0]
+    if len(parts) > 1:
+        body += " +%d" % (len(parts) - 1)
+    return "%s · %s" % (body, _tc_text(float(annotation["t"]), tenths=False))
+
+
+def _first_over(values: Sequence[Optional[float]], limit: float) -> int:
+    """首次 ``value > limit`` 的下标；没有返回 ``-1``。"""
+    for index, value in enumerate(values):
+        if value is not None and value > limit:
+            return index
+    return -1
+
+
+def compute_annotations(
+    flight: Any, vne_kmh: Optional[float] = None
+) -> Dict[str, List[Dict[str, Any]]]:
+    """按"批注规则表"计算一个架次每页的批注（页面键与 ``_flight_panel_specs`` 一致）。
+
+    规则：
+
+    * ``speed``：最大 IAS；首次 IAS 超过该机限速（限速预警）
+    * ``altitude``：最低气压高度
+    * ``energy``：Es 最低点；Es 断崖（2 s 滑动平均 dEs/dt 最负值 → 标该段起点）
+    * ``aoa_ny``：最大过载（Ny 正值峰值）
+    * ``attitude``：不批注
+    * 死亡/坠毁只在概览 / 能量页加圈（由渲染侧处理，不在这里）
+    """
+    series = getattr(flight, "series", None) or {}
+    times = [float(t) for t in (series.get("t") or []) if t is not None]
+    if len(times) < 2:
+        return {}
+    t0 = float(getattr(flight, "start_t", times[0]))
+    t1 = float(getattr(flight, "end_t", times[-1]))
+    if t1 <= t0:
+        t1 = t0 + 0.5
+
+    def values(key: str) -> List[Optional[float]]:
+        raw = series.get(key) or []
+        if len(raw) != len(times):
+            return [None] * len(times)
+        return [None if value is None else float(value) for value in raw]
+
+    annotations: Dict[str, List[Dict[str, Any]]] = {}
+
+    def add(page: str, **fields: Any) -> None:
+        index = int(fields.pop("index"))
+        if not (0 <= index < len(times)) or not (t0 - 0.05 <= times[index] <= t1 + 0.05):
+            return
+        annotation = {
+            "page": page,
+            "t": float(times[index]),
+            "value": fields.pop("value", None),
+        }
+        annotation.update(fields)
+        # 图上用的缩写 code + 中文全称（图面只写 ① CODE，全称进 legend）
+        annotation["code"] = annotation_code(annotation.get("kind"))
+        annotation["name"] = annotation_name(annotation["code"])
+        annotations.setdefault(page, []).append(annotation)
+
+    ias = values("ias")
+    index, value = _series_max(ias)
+    if index >= 0:
+        add("speed", index=index, value=value, kind="max_ias", title="MAX IAS",
+            series="ias", unit="km/h", decimals=0, priority=0)
+    if vne_kmh is not None and vne_kmh > 0:
+        crossing = _first_over(ias, float(vne_kmh))
+        if crossing >= 0:
+            add("speed", index=crossing, value=ias[crossing], kind="vne",
+                title="限速预警", series="ias", unit="km/h", decimals=0,
+                ref=float(vne_kmh), priority=1)
+
+    alt = values("alt")
+    index, value = _series_min(alt)
+    if index >= 0:
+        add("altitude", index=index, value=value, kind="min_alt",
+            title="最低气压高度", series="alt", unit="m", decimals=0, priority=0,
+            dimension=True)
+
+    es = values("es")
+    index, value = _series_min(es)
+    if index >= 0:
+        add("energy", index=index, value=value, kind="es_min", title="Es 最低点",
+            series="es", unit="m", decimals=0, priority=0, dimension=True)
+    cliff = _es_cliff(times, values("des"), es)
+    if cliff is not None and cliff["value"] is not None:
+        nearest = min(range(len(times)), key=lambda i: abs(times[i] - cliff["t"]))
+        add("energy", index=nearest, value=cliff["value"], kind="es_cliff",
+            title="Es 断崖", series="es", unit="m", decimals=0,
+            rate=cliff["rate"], priority=1)
+
+    ny = values("ny")
+    index, value = _series_max(ny)
+    if index >= 0:
+        add("aoa_ny", index=index, value=value, kind="max_ny", title="最大过载",
+            series="ny", unit="g", decimals=2, priority=0)
+
+    return {page: _merge_page_annotations(items) for page, items in annotations.items()}
 
 SERIES_ROUND = {
     "t": 3,
@@ -569,7 +2247,7 @@ def _svg_axes(
                     _fmt_coord(py),
                     _fmt_coord(PLOT_RIGHT),
                     _fmt_coord(py),
-                    "#ffffff2a" if is_zero else COLORS["grid"],
+                    COLORS.get("grid_zero", COLORS["grid"]) if is_zero else COLORS["grid"],
                     1.0 if is_zero else 1.0,
                 )
             )
@@ -624,13 +2302,14 @@ def _svg_axes(
             )
     # 边框
     parts.append(
-        '<rect x="%s" y="%s" width="%s" height="%s" fill="none" stroke="#ffffff14"'
+        '<rect x="%s" y="%s" width="%s" height="%s" fill="none" stroke="%s"'
         ' stroke-width="1"/>'
         % (
             _fmt_coord(PLOT_LEFT),
             _fmt_coord(y0),
             _fmt_coord(PLOT_W),
             _fmt_coord(y1 - y0),
+            COLORS["border"],
         )
     )
     return "".join(parts)
@@ -682,7 +2361,7 @@ def _svg_regions(
                 _fmt_coord(y0),
                 _fmt_coord(width),
                 _fmt_coord(y1 - y0),
-                region.get("color", "#ff5c5c"),
+                region.get("color", COLORS["death_region"]),
                 region.get("opacity", 0.08),
             )
         )
@@ -711,7 +2390,7 @@ def _svg_vlines(
                 _fmt_coord(y0),
                 _fmt_coord(px),
                 _fmt_coord(y1),
-                line.get("color", "#cbd5e1"),
+                line.get("color", COLORS["vline"]),
             )
         )
     return "".join(parts)
@@ -798,6 +2477,360 @@ def _svg_avg_overlay(
     return "".join(parts)
 
 
+def _wobble_ring(cx: float, cy: float, rx: float, ry: float, phase: float = 0.0,
+                 amp: float = 0.055, n: int = 40) -> str:
+    """手绘圈：一笔画出来的椭圆/圆。
+
+    以前是 40 个正弦抖动点连成折线，转折太多、像机绘锯齿；真人用笔画的圈
+    只有几个大的起伏。这里改成 **8 个锚点 + Catmull-Rom 转三次贝塞尔**，
+    半径只做低频起伏（2/3 次谐波），轮廓平滑、封闭处不出现尖角。
+    ``n`` 仅为兼容旧调用保留，不再使用。
+    """
+    anchors = 8
+    points: List[Tuple[float, float]] = []
+    for index in range(anchors):
+        angle = 2.0 * math.pi * index / anchors
+        wobble = (
+            1.0
+            + amp * 0.55 * math.sin(2.0 * angle + phase)
+            + amp * 0.35 * math.sin(3.0 * angle + phase * 1.7)
+        )
+        points.append(
+            (
+                cx + rx * wobble * math.cos(angle),
+                cy + ry * wobble * math.sin(angle),
+            )
+        )
+
+    parts = ["M%.1f,%.1f" % points[0]]
+    for index in range(anchors):
+        p0 = points[(index - 1) % anchors]
+        p1 = points[index]
+        p2 = points[(index + 1) % anchors]
+        p3 = points[(index + 2) % anchors]
+        c1 = (p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0)
+        c2 = (p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0)
+        parts.append(
+            "C%.1f,%.1f %.1f,%.1f %.1f,%.1f"
+            % (c1[0], c1[1], c2[0], c2[1], p2[0], p2[1])
+        )
+    parts.append("Z")
+    return "".join(parts)
+
+
+def _text_width(text: str, size: float = 10.5) -> float:
+    """粗略估算文字宽度（CJK ≈ 1.05em，ASCII ≈ 0.66em + 字距），用于标注条排布。"""
+    width = 0.0
+    for char in text:
+        width += size * (1.05 if ord(char) > 0x2E80 else 0.66)
+    return width + 2.0
+
+
+def _box_hits(box: Tuple[float, float, float, float],
+              boxes: Sequence[Tuple[float, float, float, float]]) -> bool:
+    x, y, w, h = box
+    for bx, by, bw, bh in boxes:
+        if x < bx + bw + 4 and bx < x + w + 4 and y < by + bh + 3 and by < y + h + 3:
+            return True
+    return False
+
+
+def _place_label(
+    px: float, py: float, text: str,
+    boxes: List[Tuple[float, float, float, float]],
+    y0: float, y1: float,
+) -> Tuple[float, float, float, float]:
+    """给标注条找一个不压曲线、不出图框的位置；返回 ``(x, y, w, h)``。"""
+    width = _text_width(text) + 22.0
+    height = 19.0
+    left_limit, right_limit = PLOT_LEFT + 2.0, PLOT_RIGHT - 2.0
+    candidates = [
+        (px + 14.0, py - height - 10.0),
+        (px + 14.0, py + 10.0),
+        (px - width - 14.0, py - height - 10.0),
+        (px - width - 14.0, py + 10.0),
+        (px + 14.0, py - height / 2.0),
+        (px - width - 14.0, py - height / 2.0),
+    ]
+    chosen: Optional[Tuple[float, float, float, float]] = None
+    for cx, cy in candidates:
+        box = (cx, cy, width, height)
+        if cx < left_limit or cx + width > right_limit:
+            continue
+        if cy < y0 + 1 or cy + height > y1 - 1:
+            continue
+        if not _box_hits(box, boxes):
+            chosen = box
+            break
+    if chosen is None:
+        x = min(max(candidates[0][0], left_limit), right_limit - width)
+        y = min(max(candidates[0][1], y0 + 1), y1 - height - 1)
+        chosen = (x, y, width, height)
+    boxes.append(chosen)
+    return chosen
+
+
+def _svg_annotations(
+    annotations: Sequence[Dict[str, Any]],
+    y0: float,
+    y1: float,
+) -> str:
+    """画审阅批注：屏幕层（红十字/方框 + 浅色标注条）与打印层（手绘双圈 + 打字机注）。
+
+    图上只写「编号 + 缩写 code」（``① IAS_MAX``），完整中文名 / 数值 / 时间在
+    图下方的对照表（``.ann-legend``）里。两层都在 DOM 里，用 ``@media print``
+    切换；``body.no-annot`` 关掉打印层（图上标记与 legend 一起隐藏）。
+
+    ``annotations`` 由 :func:`_render_chart` 预处理：每项已带 ``px`` / ``py`` / ``num``。
+    """
+    if not annotations:
+        return ""
+    parts: List[str] = []
+    boxes: List[Tuple[float, float, float, float]] = []
+    ring_slots: List[Tuple[float, float]] = []
+    for order, annotation in enumerate(annotations):
+        px = float(annotation["px"])
+        py = float(annotation["py"])
+        text = "%s %s" % (
+            annotation.get("num") or _annotation_number(order),
+            _annotation_mark_text(annotation),
+        )
+        bx, by, bw, bh = _place_label(px, py, text, boxes, y0, y1)
+        anchor = "start" if bx >= px else "end"
+        tx = bx + 8.0 if bx >= px else bx + bw - 8.0
+        ty = by + 13.0
+        # 引线：从数据点连到标注条最近的边
+        edge_x = bx if bx >= px else bx + bw
+        edge_y = by + bh / 2.0
+        group: List[str] = ['<g class="ann ann-screen">']
+        group.append(
+            '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"'
+            ' opacity="0.9"/>' % (px, py, edge_x, edge_y)
+        )
+        if annotation.get("dimension"):
+            group.append(
+                '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"'
+                ' stroke-dasharray="4 4" opacity="0.55"/>' % (px, py, px, y1)
+            )
+            group.append(
+                '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>'
+                % (px - 5, y1, px + 5, y1)
+            )
+        group.append(
+            '<path class="ann-mark" d="M%.1f,%.1f L%.1f,%.1f M%.1f,%.1f L%.1f,%.1f"/>'
+            % (px - 6, py, px + 6, py, px, py - 6, px, py + 6)
+        )
+        group.append(
+            '<rect class="ann-mark" x="%.1f" y="%.1f" width="14" height="14"'
+            ' stroke-dasharray="3 2"/>' % (px - 7, py - 7)
+        )
+        group.append(
+            '<rect class="ann-box" x="%.1f" y="%.1f" width="%.1f" height="%.1f"/>'
+            % (bx, by, bw, bh)
+        )
+        group.append(
+            '<text class="ann-ink" x="%.1f" y="%.1f" text-anchor="%s"'
+            ' font-size="10.5" font-family="Consolas,\'Courier New\',monospace">%s</text>'
+            % (tx, ty, anchor, html.escape(text))
+        )
+        group.append("</g>")
+        parts.append("".join(group))
+
+        # ---- 打印层：手绘双圈 + 打字机短注（同样只写编号 + code） ----
+        ring_rx, ring_ry = 30.0, 15.0
+        ring_cy = py
+        if ring_cy - ring_ry < y0 + 1:
+            ring_cy = y0 + ring_ry + 1
+        if ring_cy + ring_ry > y1 - 1:
+            ring_cy = y1 - ring_ry - 1
+        print_text = text
+        ptw = _text_width(print_text, 11.0)
+        ptx = px + ring_rx + 10.0
+        if ptx + ptw > PLOT_RIGHT - 4:
+            ptx = px - ring_rx - 10.0 - ptw
+        pty = ring_cy + 4.0
+        for slot in ring_slots:
+            if abs(slot[1] - ring_cy) < 26 and abs(slot[0] - px) < 70:
+                pty = ring_cy + 20.0
+                break
+        ring_slots.append((px, ring_cy))
+        pgroup: List[str] = ['<g class="ann ann-print">']
+        pgroup.append(
+            '<path class="ann-crayon" d="%s" stroke-width="3.4" opacity="0.8"/>'
+            % _wobble_ring(px, ring_cy, ring_rx, ring_ry, order * 1.7)
+        )
+        pgroup.append(
+            '<path class="ann-crayon" d="%s" stroke-width="1.7" opacity="0.55"/>'
+            % _wobble_ring(px, ring_cy, ring_rx * 0.9, ring_ry * 0.86, order * 1.7 + 2.2)
+        )
+        pgroup.append(
+            '<path class="ann-crayon-arrow" d="M%.1f,%.1f L%.1f,%.1f"/>'
+            % (ptx - 6.0 if ptx > px else ptx + ptw + 6.0, pty - 4.0,
+               px + (ring_rx - 2.0) if ptx > px else px - (ring_rx - 2.0), ring_cy - 2.0)
+        )
+        pgroup.append(
+            '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s" font-size="11">%s</text>'
+            % (ptx, pty, "start" if ptx > px else "end", html.escape(print_text))
+        )
+        pgroup.append("</g>")
+        parts.append("".join(pgroup))
+    return "".join(parts)
+
+
+def _svg_event_marks(
+    marks: Sequence[Dict[str, Any]],
+    y0: float,
+    y1: float,
+) -> str:
+    """死亡/坠毁等事件的"审阅圈"（只用于概览 / 能量页；竖线由事件层统一画）。
+
+    图上只写「编号 + 缩写 code」（``③ DEATH``）；数值 / 时间 / 说明进 legend。
+    ``marks`` 由 :func:`_render_chart` 预处理：已带 ``px`` / ``num``。
+    """
+    if not marks:
+        return ""
+    parts: List[str] = []
+    boxes: List[Tuple[float, float, float, float]] = []
+    for order, mark in enumerate(marks):
+        px = float(mark["px"])
+        py = y0 + 26.0
+        text = "%s %s" % (
+            mark.get("num") or _annotation_number(order),
+            annotation_code(mark.get("kind")),
+        )
+        bx, by, bw, bh = _place_label(px, py, text, boxes, y0, y1)
+        parts.append(
+            '<g class="ann ann-screen">'
+            '<path class="ann-mark" d="M%.1f,%.1f L%.1f,%.1f M%.1f,%.1f L%.1f,%.1f"/>'
+            '<rect class="ann-mark" x="%.1f" y="%.1f" width="15" height="15"'
+            ' stroke-dasharray="3 2"/>'
+            '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"/>'
+            '<rect class="ann-box" x="%.1f" y="%.1f" width="%.1f" height="%.1f"/>'
+            '<text class="ann-ink" x="%.1f" y="%.1f" text-anchor="start" font-size="10.5"'
+            ' font-family="Consolas,\'Courier New\',monospace">%s</text>'
+            '</g>'
+            % (
+                px - 8, py - 8, px + 8, py + 8, px + 8, py - 8, px - 8, py + 8,
+                px - 8, py - 8,
+                bx, by + bh / 2.0,
+                px + (8.0 if bx >= px else -8.0), py,
+                bx, by, bw, bh, bx + 8.0, by + 13.0, html.escape(text),
+            )
+        )
+        ring_cy = max(y0 + 16.0, py)
+        death_text = text
+        death_w = _text_width(death_text, 11.0)
+        death_x = px + 40.0
+        death_anchor = "start"
+        if death_x + death_w > PLOT_RIGHT - 4:
+            death_x = px - 40.0
+            death_anchor = "end"
+        parts.append(
+            '<g class="ann ann-print">'
+            '<path class="ann-crayon" d="%s" stroke-width="3.6" opacity="0.82"/>'
+            '<path class="ann-crayon" d="%s" stroke-width="1.8" opacity="0.55"/>'
+            '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s" font-size="11">%s</text>'
+            '</g>'
+            % (
+                _wobble_ring(px, ring_cy, 34.0, 16.0, 1.1 + order),
+                _wobble_ring(px, ring_cy, 30.0, 13.5, 3.3 + order),
+                death_x, ring_cy + 4.0, death_anchor,
+                html.escape(death_text),
+            )
+        )
+    return "".join(parts)
+
+
+def _svg_blueprint_chrome(
+    left: Optional[_Axis],
+    right: Optional[_Axis],
+    xaxis: _XAxis,
+    y0: float,
+    y1: float,
+    xticks: Sequence[float],
+) -> str:
+    """蓝图专属图面元素：图框角标、左尺寸线、底部比例尺（打印时隐藏）。
+
+    屏幕上是"工程图"语汇（尺寸线 / 比例尺）；打印成档案纸时不出现，
+    让纸面更像 C 档案袋（曲线 + 红圈）。
+    """
+    parts: List[str] = ['<g class="bp-dwg">']
+    # 绘图区角标（L 形）
+    for cx, cy, sx, sy in (
+        (PLOT_LEFT, y0, 1, 1), (PLOT_RIGHT, y0, -1, 1),
+        (PLOT_LEFT, y1, 1, -1), (PLOT_RIGHT, y1, -1, -1),
+    ):
+        parts.append(
+            '<path d="M%.1f,%.1f L%.1f,%.1f M%.1f,%.1f L%.1f,%.1f"'
+            ' fill="none" stroke="%s" stroke-width="1.2"/>'
+            % (cx, cy, cx + 14 * sx, cy, cx, cy, cx, cy + 14 * sy, COLORS["axis"])
+        )
+    axis = right if right is not None and left is None else left
+    if axis is not None:
+        lo, hi = axis.lo, axis.hi
+        label = "%s … %s" % (_fmt_number(lo, 1), _fmt_number(hi, 1))
+        dim_x = PLOT_LEFT - 40.0
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"'
+            ' stroke-dasharray="6 4" opacity="0.7"/>'
+            % (PLOT_LEFT, y0, dim_x, y0, COLORS["axis"])
+        )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.8"'
+            ' stroke-dasharray="6 4" opacity="0.7"/>'
+            % (PLOT_LEFT, y1, dim_x, y1, COLORS["axis"])
+        )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.9"/>'
+            % (dim_x, y0, dim_x, y1, COLORS["axis"])
+        )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.9"/>'
+            % (dim_x - 4, y0, dim_x + 4, y0, COLORS["axis"])
+        )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="0.9"/>'
+            % (dim_x - 4, y1, dim_x + 4, y1, COLORS["axis"])
+        )
+        mid = (y0 + y1) / 2.0
+        parts.append(
+            '<text x="%.1f" y="%.1f" text-anchor="middle" font-size="9" fill="%s"'
+            ' transform="rotate(-90 %.1f %.1f)" letter-spacing="1">%s</text>'
+            % (dim_x - 6, mid, COLORS["axis"], dim_x - 6, mid,
+               html.escape("RANGE " + label))
+        )
+    # 底部比例尺：60 s 对应的像素长度（贴在图线内侧，避开时间刻度）
+    if len(xticks) >= 2:
+        span = xticks[-1] - xticks[0]
+        if span > 0:
+            seg = min(60.0, span)
+            start_t = xticks[0]
+            bar_x0 = xaxis(start_t)
+            bar_x1 = xaxis(start_t + seg)
+            bar_y = y1 - 8.0
+            if bar_x1 - bar_x0 > 8:
+                parts.append(
+                    '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"'
+                    ' stroke-width="1" opacity="0.8"/>'
+                    % (bar_x0, bar_y, bar_x1, bar_y, COLORS["axis"])
+                )
+                for frac in (0.0, 0.5, 1.0):
+                    tick_x = bar_x0 + (bar_x1 - bar_x0) * frac
+                    parts.append(
+                        '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"'
+                        ' stroke-width="1" opacity="0.8"/>'
+                        % (tick_x, bar_y - 3, tick_x, bar_y + 3, COLORS["axis"])
+                    )
+                parts.append(
+                    '<text x="%.1f" y="%.1f" text-anchor="start" font-size="9" fill="%s"'
+                    ' letter-spacing="1" opacity="0.9">%s</text>'
+                    % (bar_x1 + 8.0, bar_y + 3.0, COLORS["axis"],
+                       html.escape("SCALE %d s" % round(seg)))
+                )
+    parts.append("</g>")
+    return "".join(parts)
+
+
 def _render_chart(
     panel: Dict[str, Any],
     times: Sequence[float],
@@ -810,11 +2843,16 @@ def _render_chart(
     regions: Sequence[Dict[str, Any]] = (),
     vlines: Sequence[Dict[str, Any]] = (),
     avg: Optional[Dict[str, Any]] = None,
+    annotations: Sequence[Dict[str, Any]] = (),
+    event_marks: Sequence[Dict[str, Any]] = (),
 ) -> Optional[Dict[str, Any]]:
     """画一张图，返回 (svg, 图例, 悬停几何)。没有数据时返回 None。
 
     ``avg`` 非空时（只有速度页用）额外画"平均速度统计区间"图层：半透明竖条 +
     边界虚线 + 平均 IAS/TAS/Mach 的水平虚线；默认范围 = 整个架次。
+
+    ``annotations`` / ``event_marks`` 是审阅批注（屏幕十字/方框 + 打印手绘双圈）
+    与事件圈（死亡/坠毁只在概览、能量页传）。批注按“值 → 轴”解析到左/右轴。
     """
     height = float(panel["height"])
     y0, y1 = PAD_TOP, height - PAD_BOTTOM
@@ -868,6 +2906,55 @@ def _render_chart(
     parts.append("".join(hover_group))
     if avg is not None:
         parts.append(_svg_avg_overlay(avg, chart_id, xaxis, left_axis, right_axis, y0, y1))
+
+    # ---- 审阅批注：先按「值 → 轴」解析出像素点并编号，图面与 legend 共用同一套编号 ----
+    ann_items: List[Dict[str, Any]] = []
+    if annotations:
+        axis_for = {defn["key"]: defn["axis"] for defn in defs}
+        for annotation in annotations:
+            item = dict(annotation)
+            item["axis"] = axis_for.get(item.get("series") or "", "left")
+            axis = right_axis if item["axis"] == "right" else left_axis
+            value = item.get("value")
+            if axis is None or value is None:
+                continue
+            try:
+                px = xaxis(float(item["t"]))
+                py = axis(float(value))
+            except (TypeError, ValueError):
+                continue
+            if py is None or not math.isfinite(py):
+                continue
+            if not (PLOT_LEFT - 1.0 <= px <= PLOT_RIGHT + 1.0):
+                continue
+            item["px"] = px
+            item["py"] = min(max(py, y0 + 2.0), y1 - 2.0)
+            ann_items.append(item)
+    for index, item in enumerate(ann_items):
+        item["num"] = _annotation_number(index)
+
+    mark_items: List[Dict[str, Any]] = []
+    for mark in event_marks:
+        try:
+            t = float(mark["t"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if t < t0 - 5.0 or t > t1 + 5.0:
+            continue
+        item = dict(mark)
+        item["px"] = min(max(xaxis(t), PLOT_LEFT), PLOT_RIGHT)
+        item["num"] = _annotation_number(len(ann_items) + len(mark_items))
+        mark_items.append(item)
+
+    if ann_items:
+        parts.append(_svg_annotations(ann_items, y0, y1))
+    if mark_items:
+        parts.append(_svg_event_marks(mark_items, y0, y1))
+
+    if ACTIVE_THEME.key == "blueprint":
+        parts.append(
+            _svg_blueprint_chrome(left_axis, right_axis, xaxis, y0, y1, xticks)
+        )
     parts.append("</svg>")
 
     legend_parts: List[str] = []
@@ -881,6 +2968,19 @@ def _render_chart(
         legend_parts.append(
             '<span class="lg avg-legend"><i class="avgdash"></i>'
             "平均速度（水平虚线，数值见上方；底纹 = 统计区间）</span>"
+        )
+
+    # 批注对照表：图上只有 ① IAS_MAX，这里给出「缩写 + 全称 + 值 + 时间」。
+    ann_legend_parts: List[str] = []
+    for index, item in enumerate(ann_items):
+        ann_legend_parts.append(
+            '<span class="ai">%s</span>'
+            % html.escape(_annotation_legend_line(item, index))
+        )
+    for index, item in enumerate(mark_items):
+        ann_legend_parts.append(
+            '<span class="ai">%s</span>'
+            % html.escape(_death_legend_line(item, len(ann_items) + index))
         )
 
     geometry = {
@@ -911,6 +3011,7 @@ def _render_chart(
     return {
         "svg": "".join(parts),
         "legend": "".join(legend_parts),
+        "ann_legend": "".join(ann_legend_parts),
         "geometry": geometry,
         "left_unit": panel.get("left_unit"),
         "right_unit": panel.get("right_unit"),
@@ -1007,13 +3108,13 @@ def _invalid_regions(series: Dict[str, Sequence[Optional[float]]]) -> List[Dict[
     for t, v in zip(times, valid):
         if v:
             if start is not None:
-                regions.append({"t0": start, "t1": t, "color": "#9aa7b8", "opacity": 0.10})
+                regions.append({"t0": start, "t1": t, "color": COLORS["invalid"], "opacity": 0.10})
                 start = None
         else:
             if start is None:
                 start = t
     if start is not None and times:
-        regions.append({"t0": start, "t1": times[-1], "color": "#9aa7b8", "opacity": 0.10})
+        regions.append({"t0": start, "t1": times[-1], "color": COLORS["invalid"], "opacity": 0.10})
     return [r for r in regions if r["t1"] - r["t0"] >= 0.25]
 
 
@@ -1023,7 +3124,7 @@ def _post_death_regions(flight: Flight) -> List[Dict[str, Any]]:
     end_t = flight.samples[-1]["t"]
     if end_t <= flight.death_t + 0.1:
         return []
-    return [{"t0": flight.death_t, "t1": end_t, "color": "#ff5c5c", "opacity": 0.10}]
+    return [{"t0": flight.death_t, "t1": end_t, "color": COLORS["death_region"], "opacity": 0.10}]
 
 
 def _render_all_panels(
@@ -1056,7 +3157,9 @@ def _render_all_panels(
     return rendered
 
 
-def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
+def _build_flight_payload(
+    flight: Flight, limits: Optional[SpeedLimits] = None
+) -> Dict[str, Any]:
     series = flight.series
     times = series["t"]
     t0, t1 = flight.start_t, flight.end_t
@@ -1069,6 +3172,15 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
 
     events = _visible_events(_events_dicts(flight), t0, t1)
     regions = _invalid_regions(series) + _post_death_regions(flight)
+    vne_kmh, vne_source = (None, "")
+    if limits is not None:
+        vne_kmh, vne_source = limits.vne_for(flight.vehicle)
+    annotations = compute_annotations(flight, vne_kmh)
+    event_marks: List[Dict[str, Any]] = []
+    if flight.death_t is not None:
+        event_marks = [
+            {"kind": "death", "t": flight.death_t, "label": "DEATH", "note": "数据终止"}
+        ]
 
     # 每个数据主题渲染一张独立的 SVG（每页一张，都带时间刻度）
     blocks: Dict[str, Dict[str, Any]] = {}
@@ -1081,9 +3193,12 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
             # 默认统计范围 = 整个当前架次（用户可在页面上手动改）
             chart_avg = average_speed(flight.samples, t0, t1)
             default_avg = chart_avg
+        chart_marks = event_marks if spec["key"] == "energy" else ()
         block = _render_chart(
             spec, times, series, t0, t1, chart_id, True,
             events=events, regions=regions, avg=chart_avg,
+            annotations=annotations.get(spec["key"], ()),
+            event_marks=chart_marks,
         )
         if block is None:
             continue
@@ -1101,6 +3216,7 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
         True,
         events=events,
         regions=regions,
+        event_marks=event_marks,
     )
     if thumb is not None:
         panels.append(thumb["geometry"])
@@ -1136,6 +3252,12 @@ def _build_flight_payload(flight: Flight) -> Dict[str, Any]:
         "avg_default": default_avg,
         "events": events,
         "badges": _flight_badges(flight),
+        "annotations": annotations,
+        "event_marks": event_marks,
+        "vne_kmh": vne_kmh,
+        "vne_source": vne_source,
+        "death_t": flight.death_t,
+        "stats": flight.stats,
     }
 
 
@@ -1188,7 +3310,7 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
             {
                 "t": flight.start_t,
                 "label": "架次 %d" % flight.index,
-                "color": "#cbd5e1",
+                "color": COLORS["vline"],
             }
         )
     regions = _invalid_regions(series_f)
@@ -1389,6 +3511,11 @@ def _flight_view_html(
     else:
         parts.append('<div class="legend">%s</div>' % block["legend"])
         parts.append('<div class="chart-wrap">%s</div>' % block["svg"])
+        if block.get("ann_legend"):
+            parts.append(
+                '<div class="ann-legend"><span class="ai-h">批注对照</span>%s</div>'
+                % block["ann_legend"]
+            )
     parts.append("</div>")
     return "".join(parts)
 
@@ -1502,7 +3629,7 @@ def _overview_page_html(
         '<section class="page active" id="page-overview" data-page="overview">'
         '<div class="page-head"><div class="page-title">概览</div>'
         '<div class="page-sub">汇总指标 + 比能量缩略图；多架次时用右上角切换</div>'
-        '<div class="page-right">按 ← → 或 PageUp/PageDown 翻页</div></div>'
+        '<div class="page-right nav-hint">按 ← → 或 PageUp/PageDown 翻页</div></div>'
         '<div class="page-body"><div class="ovwrap">'
         "%s"
         '<div class="cards">%s</div>'
@@ -1730,9 +3857,72 @@ def _replay_note_html(replay: Dict[str, Any]) -> str:
     )
 
 
-def _build_payload(model: LogModel) -> Dict[str, Any]:
+def _blueprint_chrome_meta(model: LogModel) -> Dict[str, str]:
+    """蓝图标题栏/图号用的元数据（项目 / 机型 / 日期 / REV）。"""
+    meta = model.meta or {}
+    generated = str((model.summary or {}).get("generated_utc") or "")
+    log_utc = str(meta.get("utc") or "")
+    date = (log_utc or generated or "")[:10] or "—"
+    vehicle = str(meta.get("vehicle") or "")
+    if not vehicle and model.flights:
+        vehicle = model.flights[0].vehicle or ""
+    stem = os.path.splitext(os.path.basename(model.path))[0]
+    tokens = re.split(r"[-_]", stem)
+    drawing = "LOG"
+    for token in tokens:
+        if re.fullmatch(r"\d{6}", token):
+            drawing = token
+            break
+    return {
+        "project": "WTHUD FLIGHT LOG",
+        "vehicle": vehicle or "—",
+        "date": date,
+        "rev": "C",
+        "dwg": "WT-FL-%s" % drawing,
+    }
+
+
+def _blueprint_chrome_html(page_no: int, page_total: int,
+                           bp: Dict[str, str]) -> str:
+    """每页的图框元素：坐标纸网格 + 注册标记 + 页脚 SHEET n/9 + 右下角标题栏。"""
+    return (
+        '<div class="bp-chrome" aria-hidden="true">'
+        '<div class="bp-grid"></div>'
+        '<i class="bp-reg tl"></i><i class="bp-reg tr"></i>'
+        '<i class="bp-reg bl"></i><i class="bp-reg br"></i>'
+        '<div class="bp-foot">'
+        '<span class="bp-sheet">%s</span>'
+        '<span class="bp-tb">'
+        "<span><em>PROJECT</em><b>%s</b></span>"
+        "<span><em>ACFT</em><b>%s</b></span>"
+        "<span><em>DATE</em><b>%s</b></span>"
+        "<span><em>DWG NO.</em><b>%s</b></span>"
+        "<span><em>REV</em><b>%s</b></span>"
+        "</span></div></div>"
+        % (
+            _html_escape("SHEET %02d/%02d" % (page_no, page_total)),
+            _html_escape(bp["project"]),
+            _html_escape(bp["vehicle"]),
+            _html_escape(bp["date"]),
+            _html_escape(bp["dwg"]),
+            _html_escape(bp["rev"]),
+        )
+    )
+
+
+def _inject_page_chrome(page: str, chrome: str) -> str:
+    """把 chrome 插到 ``<section ...>`` 开标签之后（页面内容保持原样）。"""
+    end = page.find(">")
+    if end < 0:
+        return page
+    return page[: end + 1] + chrome + page[end + 1 :]
+
+
+def _build_payload(
+    model: LogModel, limits: Optional[SpeedLimits] = None
+) -> Dict[str, Any]:
     flight_payloads: List[Dict[str, Any]] = [
-        _build_flight_payload(flight) for flight in model.flights
+        _build_flight_payload(flight, limits) for flight in model.flights
     ]
     default_index = flight_payloads[0]["index"] if flight_payloads else 1
 
@@ -1814,6 +4004,28 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
     if overview is not None and not multi_player:
         pages.append(_global_page_html(overview))
 
+    # A 工程蓝图：每页注入图框 / 图号 / 页脚 SHEET n/9 / 右下角标题栏
+    blueprint_meta: Optional[Dict[str, str]] = None
+    if ACTIVE_THEME.key == "blueprint" and pages:
+        blueprint_meta = _blueprint_chrome_meta(model)
+        total = len(pages)
+        pages = [
+            _inject_page_chrome(
+                page, _blueprint_chrome_html(index + 1, total, blueprint_meta)
+            )
+            for index, page in enumerate(pages)
+        ]
+
+    limits_info = None
+    if limits is not None:
+        limits_info = {
+            "manual": limits.manual,
+            "hud_dir": limits.hud_dir,
+            "global_vne_kmh": limits.global_vne_kmh,
+            "by_vehicle": len(limits.by_vehicle),
+            "notes": list(limits.notes),
+        }
+
     payload_flights = [
         {
             "index": flight_payload["index"],
@@ -1833,6 +4045,18 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
         overview_data = {key: value for key, value in overview.items() if key != "html"}
 
     title_prefix = "回放分析" if replay else "飞行日志分析"
+    vne_items: List[Dict[str, Any]] = []
+    for flight_payload in flight_payloads:
+        if flight_payload.get("vne_kmh") is None:
+            continue
+        item = {
+            "vehicle": flight_payload["vehicle"],
+            "vne": flight_payload["vne_kmh"],
+            "source": flight_payload.get("vne_source") or "",
+        }
+        if item not in vne_items:
+            vne_items.append(item)
+    debrief_html = _debrief_host_html(model, flight_payloads, blueprint_meta)
     return {
         "title": "%s · %s" % (title_prefix, os.path.basename(model.path)),
         "file": os.path.basename(model.path),
@@ -1842,58 +4066,712 @@ def _build_payload(model: LogModel) -> Dict[str, Any]:
         "overview": overview_data,
         "flights": payload_flights,
         "players": players_data,
+        "limits": limits_info,
+        "vne": vne_items,
+        "blueprint": blueprint_meta,
         "html": {
             "pages": pages,
             "page_count": len(pages),
             "flight_selector": _flight_selector_html(flight_payloads, default_index),
             "player_switch": player_switch,
+            "debrief": debrief_html,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# PNG 单张复盘卡（C 档案袋风格）：生成报告时用 Python 画成内嵌 SVG
+# ---------------------------------------------------------------------------
+
+
+def _card_polyline(
+    times: Sequence[float],
+    values: Sequence[Optional[float]],
+    xf: Any,
+    yf: Any,
+    limit: int = 460,
+) -> str:
+    """复盘卡曲线：分段折线（None / 大缺口断开），抽稀到 ``limit`` 点以内。"""
+    out: List[str] = []
+    for segment in _iter_segments(times, values):
+        segment = _decimate(segment, limit)
+        if len(segment) == 1:
+            x, y = xf(segment[0][0]), yf(segment[0][1])
+            if y is not None:
+                out.append("M%.1f,%.1f L%.1f,%.1f" % (x, y, x + 0.1, y))
+            continue
+        points = []
+        for t, v in segment:
+            y = yf(v)
+            if y is None:
+                continue
+            points.append("%.1f,%.1f" % (xf(t), y))
+        if points:
+            out.append("M" + " L".join(points))
+    return "".join(out)
+
+
+def _card_axis(values: Sequence[Optional[float]], target: int = 4,
+               pad: float = 0.0) -> Tuple[float, float, List[float]]:
+    """给复盘卡算一条轴：返回 ``(lo, hi, ticks)``。"""
+    clean = [float(v) for v in values if v is not None]
+    if not clean:
+        return 0.0, 1.0, [0.0, 1.0]
+    lo, hi, _step, ticks = _nice_ticks(min(clean), max(clean), target=target)
+    if hi - lo < 1e-9:
+        hi = lo + 1.0
+        ticks = [lo, hi]
+    return lo, hi, ticks
+
+
+def _debrief_card_svg(
+    model: LogModel,
+    flight_payload: Dict[str, Any],
+    clean: bool,
+    meta: Dict[str, str],
+) -> str:
+    """一张 1600×1000 的复盘卡（C 档案袋风格）：纸底 + 印章 + 关键数据 + 标注图 + 打字机注。
+
+    ``clean=True`` 时去掉所有手绘圈 / 编号 / 分析员注记（保留曲线、坐标、事件线）。
+    """
+    times = [float(t) for t in (flight_payload.get("times") or []) if t is not None]
+    series = flight_payload.get("series") or {}
+    if not times:
+        times = [0.0, 1.0]
+    t0 = float(flight_payload.get("t0") or times[0])
+    t1 = float(flight_payload.get("t1") or times[-1])
+    if t1 <= t0:
+        t1 = t0 + 1.0
+    stats = flight_payload.get("stats") or {}
+    vehicle = flight_payload.get("vehicle") or meta.get("vehicle") or "未知机型"
+    duration = (t1 - t0)
+    samples = len(flight_payload.get("times") or [])
+    death_t = flight_payload.get("death_t")
+    annotations = flight_payload.get("annotations") or {}
+    flat: List[Dict[str, Any]] = []
+    for page in ("speed", "altitude", "energy", "aoa_ny"):
+        for annotation in annotations.get(page) or []:
+            flat.append(annotation)
+    flat.sort(key=lambda item: float(item["t"]))
+
+    # ---------- 画布与纸张 ----------
+    W, H = 1600, 1000
+    parts: List[str] = []
+    svg_id = "debrief-svg-clean" if clean else "debrief-svg-annotated"
+    parts.append(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"'
+        ' id="%s" class="debrief-svg" role="img" aria-label="%s">'
+        % (W, H, W, H, svg_id,
+           html.escape("飞行复盘卡（无批注）" if clean else "飞行复盘卡（带批注）"))
+    )
+    parts.append(
+        '<defs>'
+        '<pattern id="pcard-lines-%s" width="7" height="7" patternUnits="userSpaceOnUse">'
+        '<rect width="7" height="7" fill="#C9B28A"/>'
+        '<path d="M0,0 L7,0 M0,3 L7,3" stroke="#B79E74" stroke-width="0.7" opacity="0.5"/>'
+        "</pattern>"
+        '<pattern id="pcard-paper-%s" width="4" height="4" patternUnits="userSpaceOnUse">'
+        '<rect width="4" height="4" fill="#F2EBD8"/>'
+        '<path d="M0,0 L4,0" stroke="#E2D6BB" stroke-width="0.6" opacity="0.6"/>'
+        "</pattern>"
+        "</defs>"
+        % ("a" if clean else "b", "a" if clean else "b")
+    )
+    parts.append('<rect width="%d" height="%d" fill="url(#pcard-lines-%s)"/>'
+                 % (W, H, "a" if clean else "b"))
+    parts.append('<rect x="52" y="42" width="%d" height="%d" fill="#00000018"/>'
+                 % (W - 96, H - 76))
+    parts.append(
+        '<rect x="42" y="32" width="%d" height="%d" fill="url(#pcard-paper-%s)"'
+        ' stroke="#8A734C" stroke-width="1.6"/>'
+        % (W - 84, H - 64, "a" if clean else "b")
+    )
+    parts.append(
+        '<rect x="54" y="44" width="%d" height="%d" fill="none" stroke="#B7A483"'
+        ' stroke-width="0.8" stroke-dasharray="5 4"/>' % (W - 108, H - 88)
+    )
+    # 胶带
+    for tx, ty, rot in ((96, 34, -7), (1360, 30, 5), (104, 918, 3), (1330, 924, -4)):
+        parts.append(
+            '<rect x="%d" y="%d" width="150" height="30" fill="#E8DCC0" opacity="0.72"'
+            ' transform="rotate(%d %d %d)"/>' % (tx, ty, rot, tx + 75, ty + 15)
+        )
+
+    # ---------- 页眉 ----------
+    parts.append(
+        '<text x="84" y="86" font-family="Courier New,Consolas,monospace" font-size="11"'
+        ' fill="#6B5B41" letter-spacing="3">WAR THUNDER · FLIGHT LOG DIVISION · DEBRIEF SECTION</text>'
+    )
+    parts.append(
+        '<text x="84" y="134" font-family="Courier New,Consolas,monospace" font-size="40"'
+        ' font-weight="700" fill="#2B2418" letter-spacing="1.5">COMBAT FLIGHT DEBRIEF</text>'
+    )
+    parts.append(
+        '<text x="84" y="160" font-family="Microsoft YaHei UI,Microsoft YaHei,sans-serif"'
+        ' font-size="14" fill="#6B5B41" letter-spacing="5">飞 行 复 盘 卡 · DEBRIEF CARD</text>'
+    )
+    parts.append(
+        '<text x="1516" y="96" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="15" font-weight="700" fill="#8E2A24" letter-spacing="1">NO. %s</text>'
+        % _html_escape(meta.get("dwg") or "WT-FL-LOG")
+    )
+    parts.append(
+        '<text x="1516" y="116" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="9.5" fill="#6B5B41" letter-spacing="2">CLASSIFIED · DEBRIEF COPY · DO NOT CIRCULATE</text>'
+    )
+    parts.append(
+        '<text x="1516" y="150" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="10" fill="#6B5B41" letter-spacing="1">REV %s · SHEET 01/01 · %s</text>'
+        % (_html_escape(meta.get("rev") or "C"), _html_escape(meta.get("date") or "—"))
+    )
+    parts.append('<line x1="84" y1="178" x2="1516" y2="178" stroke="#8A734C" stroke-width="2"/>')
+
+    # ---------- 左列：任务字段 ----------
+    mission = "FLT-%s" % (meta.get("dwg") or "LOG").replace("WT-FL-", "")
+    outcome = "LOST · DEATH %s s" % _fmt_number(death_t, 1) if death_t is not None else "SURVIVED"
+    rows = [
+        ("MISSION 任务", mission + "   · " + vehicle),
+        ("DATE 日期", "%s   LOCAL" % (meta.get("date") or "—")),
+        ("DURATION 时长", "%.1f s   · %d samples" % (duration, samples)),
+        ("ACFT 机型", vehicle),
+        ("OUTCOME 结果", outcome),
+    ]
+    row_y = 212.0
+    for label, value in rows:
+        parts.append(
+            '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="10"'
+            ' fill="#6B5B41" letter-spacing="1.5">%s</text>' % (row_y, _html_escape(label))
+        )
+        parts.append(
+            '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="14.5"'
+            ' fill="#2B2418">%s</text>' % (row_y + 20, _html_escape(value))
+        )
+        if "OUTCOME" in label and not clean:
+            parts.append(
+                '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="9"'
+                ' fill="#8E2A24" letter-spacing="1.2">RED = REVIEW MARK</text>'
+                % (row_y + 36)
+            )
+        parts.append(
+            '<line x1="84" y1="%.1f" x2="452" y2="%.1f" stroke="#C3B294"'
+            ' stroke-width="0.8" stroke-dasharray="2 3"/>' % (row_y + 29, row_y + 29)
+        )
+        row_y += 62.0
+
+    # ---------- 左列下部：关键数据 ----------
+    def kpi(label: str, value: str, unit: str, x: float, y: float) -> None:
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="9.5"'
+            ' fill="#6B5B41" letter-spacing="1.6">%s</text>' % (x, y, _html_escape(label))
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="25"'
+            ' font-weight="700" fill="#2B2418">%s<tspan font-size="11" font-weight="400"'
+            ' fill="#52708A"> %s</tspan></text>'
+            % (x, y + 27, _html_escape(value), _html_escape(unit))
+        )
+
+    stats_i = stats.get("ias") or {}
+    stats_ny = stats.get("ny") or {}
+    stats_alt = stats.get("alt") or {}
+    energy = stats.get("energy") or {}
+    kpi("MAX IAS 最大指示空速", _fmt_number(stats_i.get("max"), 0), "km/h", 84, 546)
+    kpi("MAX G 最大过载", _fmt_number(stats_ny.get("abs_max"), 2), "g", 268, 546)
+    kpi("ES 比能量范围", "%s–%s" % (_fmt_number(energy.get("min"), 0),
+                                  _fmt_number(energy.get("max"), 0)), "m", 84, 630)
+    kpi("MAX ALT 最大气压高度", _fmt_number(stats_alt.get("max"), 0), "m", 268, 630)
+    parts.append(
+        '<text x="84" y="708" font-family="Courier New,monospace" font-size="9.5"'
+        ' fill="#6B5B41" letter-spacing="1.4">SOURCE %s</text>'
+        % _html_escape(os.path.basename(model.path))
+    )
+    parts.append(
+        '<text x="84" y="724" font-family="Courier New,monospace" font-size="9.5"'
+        ' fill="#6B5B41" letter-spacing="1.4">SCHEMA %s · %s %s</text>'
+        % (
+            _html_escape((model.meta or {}).get("schema") or "1"),
+            _html_escape((model.meta or {}).get("app") or "WtHud"),
+            _html_escape((model.meta or {}).get("rate") or ""),
+        )
+    )
+
+    # ---------- 右侧：飞行剖面图 ----------
+    X0, X1 = 500.0, 1516.0
+    PA = {"top": 246.0, "bot": 352.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    PB = {"top": 372.0, "bot": 464.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    PC = {"top": 484.0, "bot": 574.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    ias_vals = series.get("ias") or []
+    alt_vals = series.get("alt") or []
+    es_vals = series.get("es") or []
+    ny_vals = series.get("ny") or []
+    PA["lo"], PA["hi"], PA["ticks"] = _card_axis(ias_vals, target=4)
+    alt_lo, alt_hi, alt_ticks = _card_axis(alt_vals, target=3)
+    PB["lo"], PB["hi"], PB["ticks"] = _card_axis(es_vals, target=3)
+    PC["lo"], PC["hi"], PC["ticks"] = _card_axis(ny_vals, target=3)
+
+    def xf(t: float) -> float:
+        return X0 + (t - t0) / (t1 - t0) * (X1 - X0)
+
+    def yf(panel: Dict[str, Any], value: float) -> float:
+        return panel["top"] + (panel["hi"] - value) / (panel["hi"] - panel["lo"]) * (
+            panel["bot"] - panel["top"]
+        )
+
+    parts.append(
+        '<text x="%.1f" y="226" font-family="Courier New,monospace" font-size="11"'
+        ' fill="#2B2418" letter-spacing="1.6">FIG. 2 — FLIGHT PROFILE'
+        '   ·   IAS / ALT / Es / Ny vs MISSION TIME</text>' % X0
+    )
+    for panel, caption, ticks, right_ticks in (
+        (PA, "2A  IAS（实线） / ALT（虚线） [km/h · m]", PA["ticks"], alt_ticks),
+        (PB, "2B  SPECIFIC ENERGY ALTITUDE  Es [m]", PB["ticks"], []),
+        (PC, "2C  NORMAL LOAD  Ny [g]", PC["ticks"], []),
+    ):
+        parts.append(
+            '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FBF7EC"'
+            ' stroke="#C0AE8C" stroke-width="1"/>'
+            % (X0, panel["top"], X1 - X0, panel["bot"] - panel["top"])
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="9.5"'
+            ' fill="#4A3D2A" letter-spacing="0.5">%s</text>'
+            % (X0 + 5, panel["top"] + 13, _html_escape(caption))
+        )
+        for tick in ticks:
+            y = yf(panel, tick)
+            parts.append(
+                '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#DCD0B6"'
+                ' stroke-width="0.8"/>' % (X0, y, X1, y)
+            )
+            parts.append(
+                '<text x="%.1f" y="%.1f" text-anchor="end" font-family="Courier New,monospace"'
+                ' font-size="9" fill="#6B5B41">%s</text>'
+                % (X0 - 6, y + 3, _fmt_number(tick, 0))
+            )
+        if right_ticks:
+            for tick in right_ticks:
+                y = panel["top"] + (alt_hi - tick) / (alt_hi - alt_lo) * (
+                    panel["bot"] - panel["top"]
+                )
+                parts.append(
+                    '<text x="%.1f" y="%.1f" text-anchor="start" font-family="Courier New"'
+                    ' font-size="9" fill="#8A734C">%s</text>'
+                    % (X1 + 5, y + 3, _fmt_number(tick, 0))
+                )
+    # 时间网格 + 时间刻度
+    for tick in range(0, int(t1 - t0) + 1, 60):
+        x = xf(t0 + tick)
+        if x > X1:
+            break
+        for panel in (PA, PB, PC):
+            parts.append(
+                '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#E4D8BE"'
+                ' stroke-width="0.8"/>' % (x, panel["top"], x, panel["bot"])
+            )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#C0AE8C"'
+            ' stroke-width="0.8"/>' % (x, PC["bot"], x, PC["bot"] + 4)
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New"'
+            ' font-size="9" fill="#6B5B41">%s</text>'
+            % (x, PC["bot"] + 17, _html_escape(_tc_text(t0 + tick, tenths=False)))
+        )
+
+    def alt_yf(value: float) -> float:
+        return PA["top"] + (alt_hi - value) / (alt_hi - alt_lo) * (
+            PA["bot"] - PA["top"]
+        )
+
+    alt_path = _card_polyline(times, alt_vals, xf, alt_yf)
+    if alt_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#8A734C" stroke-width="1"'
+            ' stroke-dasharray="4 4"/>' % alt_path
+        )
+    ias_path = _card_polyline(times, ias_vals, xf, lambda v: yf(PA, v))
+    if ias_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#2B2418" stroke-width="1.8"/>' % ias_path
+        )
+    es_path = _card_polyline(times, es_vals, xf, lambda v: yf(PB, v))
+    if es_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#3A3226" stroke-width="1.3"/>' % es_path
+        )
+    ny_path = _card_polyline(times, ny_vals, xf, lambda v: yf(PC, v))
+    if ny_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#3A3226" stroke-width="1.1"/>' % ny_path
+        )
+    if PC["lo"] < 0 < PC["hi"]:
+        zero_y = yf(PC, 0.0)
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#C3B294"'
+            ' stroke-width="0.9" stroke-dasharray="6 4"/>' % (X0, zero_y, X1, zero_y)
+        )
+
+    # 死亡线（每页/每卡保留；只有带批注时才加编号文字）
+    death_index = len(flat)  # DEATH 在 legend 里排最后一条
+    if death_t is not None and t0 <= float(death_t) <= t1:
+        dx = xf(float(death_t))
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#A8322B"'
+            ' stroke-width="1.1" stroke-dasharray="6 5" opacity="0.8"/>'
+            % (dx, PA["top"], dx, PC["bot"])
+        )
+        if not clean:
+            death_label = "%s DEATH" % _annotation_number(death_index)
+            dl_w = _text_width(death_label, 10.5)
+            dl_x = dx + 6.0
+            dl_anchor = "start"
+            if dl_x + dl_w > X1 - 4:
+                dl_x = dx - 6.0
+                dl_anchor = "end"
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s"'
+                ' font-family="Courier New,monospace" font-size="10.5" fill="#9E2F26"'
+                ' letter-spacing="0.3">%s</text>'
+                % (dl_x, PA["top"] - 5.0, dl_anchor, _html_escape(death_label))
+            )
+
+    # ---------- 批注：手绘圈 + 编号缩写（完整说明进下方 legend） ----------
+    if not clean:
+        panel_for = {
+            "ias": PA, "alt": PA, "es": PB, "ny": PC,
+        }
+        for index, annotation in enumerate(flat):
+            key = annotation.get("series") or ""
+            panel = panel_for.get(key)
+            value = annotation.get("value")
+            if panel is None or value is None:
+                continue
+            try:
+                value_f = float(value)
+            except (TypeError, ValueError):
+                continue
+            if key == "alt":
+                y = alt_yf(value_f)
+            else:
+                y = yf(panel, value_f)
+            y = min(max(y, panel["top"] + 6), panel["bot"] - 6)
+            x = xf(float(annotation["t"]))
+            rx, ry = 26.0, 12.0
+            parts.append(
+                '<path class="ann-crayon" d="%s" fill="none" stroke="#B0362A"'
+                ' stroke-width="3.2" stroke-linecap="round" opacity="0.78"/>'
+                % _wobble_ring(x, y, rx, ry, index * 1.6, n=36)
+            )
+            parts.append(
+                '<path class="ann-crayon" d="%s" fill="none" stroke="#B0362A"'
+                ' stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>'
+                % _wobble_ring(x, y, rx * 0.88, ry * 0.84, index * 1.6 + 2.4, n=36)
+            )
+            # 图上只写「编号 + 缩写」：① IAS_MAX（值 / 时间在下方 legend）
+            note = "%s %s" % (_annotation_number(index), _annotation_mark_text(annotation))
+            note_x = x + rx + 8
+            if note_x + _text_width(note, 10.5) > X1 - 4:
+                note_x = x - rx - 8 - _text_width(note, 10.5)
+            note_y = y - ry - 6
+            if note_y < panel["top"] + 12:
+                note_y = y + ry + 14
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" font-family="Courier New,monospace"'
+                ' font-size="10.5" fill="#9E2F26" letter-spacing="0.3">%s</text>'
+                % (max(X0 + 2, note_x), note_y, _html_escape(note))
+            )
+
+    # ---------- 批注对照表（legend）/ 印章 / 签字 ----------
+    parts.append(
+        '<line x1="84" y1="770" x2="1516" y2="770" stroke="#B7A483" stroke-width="1"/>'
+    )
+    notes_top = 788.0
+    if clean:
+        parts.append(
+            '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="13"'
+            ' fill="#6B5B41" letter-spacing="0.4">CLEAN COPY — 本卡未启用批注：'
+            '只保留曲线 / 坐标 / 事件竖线（无圈注、无批注对照表）</text>' % notes_top
+        )
+    else:
+        legend_lines: List[str] = [
+            _annotation_card_line(annotation, index)
+            for index, annotation in enumerate(flat)
+        ]
+        if death_t is not None:
+            legend_lines.append(_death_card_line({"t": death_t}, death_index))
+        parts.append(
+            '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="10"'
+            ' fill="#6B5B41" letter-spacing="2">ANALYST REMARKS · 分析员注记 — '
+            '红圈编号对照 LEGEND</text>' % notes_top
+        )
+        max_rows = 5
+        col_count = 1 if len(legend_lines) <= max_rows else 2
+        per_col = (
+            max_rows
+            if col_count == 1
+            else max(1, (len(legend_lines) + col_count - 1) // col_count)
+        )
+        shown = legend_lines[: per_col * col_count]
+        for index, line in enumerate(shown):
+            column = index // per_col
+            row = index % per_col
+            size = 12.0 if _text_width(line, 12.0) <= 556.0 else 10.0
+            parts.append(
+                '<text x="%.1f" y="%.1f" font-family="Courier New,monospace"'
+                ' font-size="%.1f" fill="#3A3023">%s</text>'
+                % (84 + column * 592, notes_top + 22 + row * 17, size,
+                   _html_escape(line))
+            )
+        extra = len(legend_lines) - len(shown)
+        note_y = notes_top + 22 + per_col * 17 + 4
+        if extra > 0:
+            parts.append(
+                '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="9.5"'
+                ' fill="#6B5B41">… 另有 %d 条批注（见 PDF 各页）</text>'
+                % (note_y, extra)
+            )
+        else:
+            parts.append(
+                '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="9.5"'
+                ' fill="#6B5B41" letter-spacing="1">红圈 / 编号为自动审阅批注，'
+                '时间相近（&lt;10 s）已合并；数值取自全速率样本。</text>'
+                % note_y
+            )
+    # 印章
+    stamp_x, stamp_y = 1216.0, 792.0
+    parts.append(
+        '<g transform="rotate(-10 %.1f %.1f)" opacity="0.82">'
+        '<rect x="%.1f" y="%.1f" width="272" height="78" fill="none" stroke="#A8322B"'
+        ' stroke-width="4"/>'
+        '<rect x="%.1f" y="%.1f" width="264" height="70" fill="none" stroke="#A8322B"'
+        ' stroke-width="1.6"/>'
+        '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New,monospace"'
+        ' font-size="31" font-weight="700" fill="#A8322B" letter-spacing="4">DEBRIEF</text>'
+        '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New,monospace"'
+        ' font-size="10" fill="#A8322B" letter-spacing="2.6">REVIEWED · WTHUD ANALYST</text>'
+        "</g>"
+        % (
+            stamp_x + 136, stamp_y + 39,
+            stamp_x + 4, stamp_y + 4,
+            stamp_x + 8, stamp_y + 8,
+            stamp_x + 136, stamp_y + 40,
+            stamp_x + 136, stamp_y + 58,
+        )
+    )
+    # 签字
+    parts.append(
+        '<path d="M1194,876 C1210,850 1218,884 1230,866 C1240,852 1246,882 1258,872'
+        ' C1272,860 1276,878 1292,870 C1306,862 1310,876 1326,868"'
+        ' fill="none" stroke="#2B2418" stroke-width="1.8" stroke-linecap="round"/>'
+    )
+    parts.append(
+        '<line x1="1180" y1="884" x2="1360" y2="884" stroke="#4A3D2A" stroke-width="1.2"/>'
+    )
+    parts.append(
+        '<text x="1270" y="900" text-anchor="middle" font-family="Courier New,monospace"'
+        ' font-size="9" fill="#6B5B41" letter-spacing="1.4">ANALYST SIGNATURE · 分析员签字</text>'
+    )
+    # 页脚
+    parts.append(
+        '<line x1="84" y1="918" x2="1120" y2="918" stroke="#B7A483" stroke-width="0.9"/>'
+    )
+    parts.append(
+        '<text x="84" y="936" font-family="Courier New,monospace" font-size="9.5"'
+        ' fill="#6B5B41" letter-spacing="1.2">ARCHIVED %s · %s · PNG 1600×1000 · %s</text>'
+        % (
+            _html_escape(meta.get("date") or "—"),
+            _html_escape(meta.get("dwg") or "WT-FL-LOG"),
+            _html_escape("CLEAN" if clean else "ANNOTATED"),
+        )
+    )
+    parts.append(
+        '<text x="1516" y="936" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="9.5" fill="#6B5B41" letter-spacing="1.2">%s · REV %s</text>'
+        % (_html_escape(meta.get("project") or "WTHUD FLIGHT LOG"),
+           _html_escape(meta.get("rev") or "C"))
+    )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _debrief_host_html(
+    model: LogModel,
+    flight_payloads: Sequence[Dict[str, Any]],
+    bp: Optional[Dict[str, str]],
+) -> str:
+    """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。"""
+    usable = [payload for payload in flight_payloads if payload.get("times")]
+    if not usable:
+        return ""
+    main = max(usable, key=lambda item: len(item.get("times") or []))
+    meta = bp or {
+        "project": "WTHUD FLIGHT LOG",
+        "vehicle": main.get("vehicle") or "—",
+        "date": "",
+        "rev": "C",
+        "dwg": "WT-FL-LOG",
+    }
+    stem = os.path.splitext(os.path.basename(model.path))[0]
+    prefix = "debrief-%s-" % stem
+    return (
+        '<div id="debrief-src" aria-hidden="true" data-prefix="%s">'
+        "%s%s"
+        "</div>"
+        % (
+            _html_escape(prefix),
+            _debrief_card_svg(model, main, False, meta),
+            _debrief_card_svg(model, main, True, meta),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
 # CSS / JS（内联，无外链）
 # ---------------------------------------------------------------------------
 
-CSS = """
-:root{
-  --bg:#0a0e13; --panel:#0f151d; --panel2:#121a24; --line:#1e2a36;
-  --text:#dde6f0; --muted:#8ea1b4; --accent:#4aa3ff;
-}
+def _root_vars(theme: Theme) -> Dict[str, str]:
+    """主题 -> ``:root`` CSS 变量表（键名不带 ``--``）。
+
+    基础变量从 :class:`Theme` 的字段派生，细节（按钮/提示框/徽标/打印……）
+    由 ``theme.css`` 覆盖；这样 ``CSS_BASE`` 里不出现任何硬编码颜色。
+    """
+    values: Dict[str, str] = {
+        "bg": theme.bg,
+        "panel": theme.panel,
+        "panel2": theme.panel2,
+        "line": theme.line,
+        "line-strong": theme.line,
+        "text": theme.text,
+        "muted": theme.muted,
+        "muted2": theme.muted,
+        "accent": theme.accent,
+        "accent2": theme.accent2,
+        "danger": theme.danger,
+        "ok": theme.ok,
+        "radius": theme.radius,
+        "radius-sm": theme.radius_sm,
+        "radius-xs": theme.radius_xs,
+        "pill": theme.pill,
+        "font-ui": theme.font_ui,
+        "font-title": theme.font_title,
+        "font-num": theme.font_num,
+        "body-size": "14px",
+        "header-bg": "linear-gradient(180deg,%s,%s)" % (theme.panel, theme.bg),
+        "header-border": theme.line,
+        "subline-code-bg": theme.panel2,
+        "chip-bg": theme.panel,
+        "chip-border": theme.line,
+        "chip-fg": theme.muted,
+        "chip-b": theme.text,
+        "btn-bg": theme.panel2,
+        "btn-fg": theme.muted,
+        "btn-border": theme.line,
+        "btn-hover-fg": theme.text,
+        "btn-active-bg": _alpha(theme.accent, "2e"),
+        "btn-active-fg": theme.text,
+        "link": theme.accent,
+        "replay-fg": theme.accent2,
+        "replay-b": theme.accent2,
+        "note-bg": theme.panel2,
+        "note-border": theme.line,
+        "note-fg": theme.text,
+        "note-b": theme.text,
+        "pchip-bg": theme.panel,
+        "pchip-fg": theme.muted,
+        "pchip-b": theme.text,
+        "badge-bg": theme.panel,
+        "badge-fg": theme.muted,
+        "legend-fg": theme.muted,
+        "chart-label-fg": theme.text,
+        "input-bg": theme.panel2,
+        "avg-btn-bg": theme.accent,
+        "avg-btn-border": theme.accent,
+        "avg-btn-fg": theme.bg,
+        "avg-btn-hover-bg": theme.accent2,
+        "ghost-fg": theme.muted,
+        "avg-msg": theme.accent2,
+        "avg-msg-warn": theme.danger,
+        "warn-bg": theme.panel2,
+        "warn-border": theme.accent2,
+        "warn-fg": theme.accent2,
+        "card-bg": theme.panel,
+        "card-border": theme.line,
+        "card-shadow": "none",
+        "pager-bg": theme.bg,
+        "pager-border": theme.line,
+        "dot": theme.line,
+        "dot-hover": theme.muted,
+        "dot-ring": _alpha(theme.accent, "2e"),
+        "hint-fg": theme.muted,
+        "side-bg": theme.panel,
+        "side-fg": theme.text,
+        "side-hover-bg": theme.panel2,
+        "tip-bg": theme.bg,
+        "tip-border": theme.line,
+        "tip-fg": theme.text,
+        "tip-strong": theme.text,
+        "tip-shadow": "0 10px 30px #00000066",
+        "dash-fg": theme.text,
+        "avgdash-fg": theme.muted,
+        "avg-dash": theme.muted,
+        "chart-bg": "transparent",
+        "chart-ring": "none",
+        "chart-radius": "0",
+        "color-scheme": theme.mode,
+        "print-bg": theme.bg,
+        "print-fg": theme.text,
+        "print-header-bg": theme.bg,
+        # 审阅批注：屏幕标注条的底色/字色与标记色（蓝图主题在 theme.css 里覆盖）
+        "ann-box": theme.panel2,
+        "ann-ink": theme.text,
+        "ann-mark": theme.danger,
+    }
+    values.update(theme.css)
+    return values
+
+
+CSS_BASE = """
 *{box-sizing:border-box}
+html{color-scheme:var(--color-scheme)}
 html,body{height:100%;margin:0;padding:0;overflow:hidden}
 body{
   background:var(--bg); color:var(--text);
-  font-family:"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",
-    "Noto Sans CJK SC",sans-serif;
-  font-size:14px; line-height:1.5;
+  font-family:var(--font-ui);
+  font-size:var(--body-size); line-height:1.5;
   -webkit-font-smoothing:antialiased;
 }
 .app{height:100%;display:flex;flex-direction:column;min-height:0}
 header{
   flex:0 0 auto;display:flex;flex-direction:column;
-  padding:11px 22px 8px;border-bottom:1px solid var(--line);
-  background:linear-gradient(180deg,#0d141c,#0a0e13);
+  padding:11px 22px 8px;border-bottom:1px solid var(--header-border);
+  background:var(--header-bg);
 }
 .hrow{display:flex;align-items:baseline;gap:14px;min-width:0;flex-wrap:wrap}
-header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.3px;white-space:nowrap}
+header h1{
+  font-family:var(--font-title);font-size:19px;margin:0;font-weight:650;
+  letter-spacing:.3px;white-space:nowrap;
+}
 .subline{
   color:var(--muted);font-size:12px;margin-top:3px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.subline code{background:#16202b;border:1px solid var(--line);padding:1px 5px;border-radius:4px}
+.subline code{
+  background:var(--subline-code-bg);border:1px solid var(--line);padding:1px 5px;
+  border-radius:var(--radius-xs);
+}
 .flights{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .flights .flabel{font-size:12px;color:var(--muted);margin-right:2px;white-space:nowrap}
 .fbtn{
-  font-family:inherit;font-size:12px;color:#c3d2e1;background:var(--panel2);
-  border:1px solid var(--line);border-radius:999px;padding:3px 11px;cursor:pointer;
+  font-family:inherit;font-size:12px;color:var(--btn-fg);background:var(--btn-bg);
+  border:1px solid var(--btn-border);border-radius:var(--pill);padding:3px 11px;cursor:pointer;
   transition:.15s;white-space:nowrap;
 }
-.fbtn:hover{border-color:var(--accent);color:#fff}
-.fbtn.active{background:#12324f;border-color:var(--accent);color:#fff}
+.fbtn:hover{border-color:var(--accent);color:var(--btn-hover-fg)}
+.fbtn.active{background:var(--btn-active-bg);border-color:var(--accent);color:var(--btn-active-fg)}
 .fselect{
-  font-family:inherit;font-size:12px;color:#c3d2e1;background:var(--panel2);
-  border:1px solid var(--line);border-radius:8px;padding:3px 8px;cursor:pointer;max-width:240px;
+  font-family:inherit;font-size:12px;color:var(--btn-fg);background:var(--btn-bg);
+  border:1px solid var(--btn-border);border-radius:var(--radius-sm);padding:3px 8px;
+  cursor:pointer;max-width:240px;
 }
 .fselect:hover{border-color:var(--accent)}
 /* 回放：玩家切换条 / 估算声明 / 概览玩家摘要 */
@@ -1903,55 +4781,86 @@ header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.3px;white-spac
 }
 .players-bar .flabel{font-size:12px;color:var(--muted);margin-right:2px;white-space:nowrap}
 .replay-banner{
-  color:#ffd79b!important;font-size:11.5px;white-space:normal!important;
+  color:var(--replay-fg)!important;font-size:11.5px;white-space:normal!important;
   overflow:visible!important;text-overflow:clip!important;
 }
-.replay-banner b{color:#ffcf7a}
+.replay-banner b{color:var(--replay-b)}
 .replay-note{
-  flex:0 0 auto;background:#1b2735;border:1px solid #2f4a66;color:#bcd6ee;
-  border-radius:9px;padding:5px 12px;font-size:12px;
+  flex:0 0 auto;background:var(--note-bg);border:1px solid var(--note-border);
+  color:var(--note-fg);border-radius:var(--radius-sm);padding:5px 12px;font-size:12px;
 }
-.replay-note b{color:#e6f1ff;margin-right:2px}
+.replay-note b{color:var(--note-b);margin-right:2px}
 .players-strip{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;max-height:58px;overflow:auto}
 .pchip{
-  font-size:11.5px;color:#9fb4c8;background:#131c26;border:1px solid var(--line);
-  border-radius:7px;padding:2px 8px;white-space:nowrap;
-  font-variant-numeric:tabular-nums;
+  font-size:11.5px;color:var(--pchip-fg);background:var(--pchip-bg);
+  border:1px solid var(--line);border-radius:var(--radius-xs);padding:2px 8px;
+  white-space:nowrap;font-variant-numeric:tabular-nums;
 }
-.pchip b{color:#dbe7f3;font-weight:600;margin-right:6px}
+.pchip b{color:var(--pchip-b);font-weight:600;margin-right:6px}
 main{position:relative;flex:1 1 auto;min-height:0}
 .page{position:absolute;inset:0;display:none;flex-direction:column;padding:9px 26px 4px;min-height:0}
 .page.active{display:flex}
 .page-head{flex:0 0 auto;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
-.page-title{font-size:16px;font-weight:650}
+.page-title{font-family:var(--font-title);font-size:16px;font-weight:650}
 .page-sub{font-size:12px;color:var(--muted)}
-.page-right{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.page-right{
+  margin-left:auto;font-size:12px;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
 .page-body{flex:1 1 auto;min-height:0;position:relative}
 .page-body.single>.flight-view{position:absolute;inset:0}
 .flight-view{display:none;flex-direction:column;min-height:0}
 .flight-view.active{display:flex}
-.badges{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px;overflow:hidden;max-height:56px}
+.badges{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px;
+  overflow:hidden;max-height:56px;
+}
 .badges span{
-  font-size:11.5px;color:#bfcedd;background:#141d27;border:1px solid var(--line);
-  border-radius:6px;padding:2px 8px;font-variant-numeric:tabular-nums;
+  font-size:11.5px;color:var(--badge-fg);background:var(--badge-bg);border:1px solid var(--line);
+  border-radius:var(--radius-xs);padding:2px 8px;font-variant-numeric:tabular-nums;
 }
 .strip{flex:0 0 auto;margin-bottom:1px}
 .strip svg{width:100%;height:34px;display:block;overflow:hidden}
-.legend{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:13px;font-size:12px;color:#b8c7d6;margin:2px 0 3px}
+.legend{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;gap:13px;font-size:12px;color:var(--legend-fg);
+  margin:2px 0 3px;
+}
 .lg{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
 .lg i{display:inline-block;width:15px;height:3px;border-radius:2px}
-.lg i.dashed{background-image:linear-gradient(90deg,#fff 0 60%,transparent 60% 100%)!important;background-size:7px 3px;background-repeat:repeat-x}
-.chart-wrap{flex:1 1 auto;min-height:0;position:relative}
+.lg i.dashed{
+  background-image:linear-gradient(90deg,var(--dash-fg) 0 60%,transparent 60% 100%)!important;
+  background-size:7px 3px;background-repeat:repeat-x;
+}
+.chart-wrap{
+  flex:1 1 auto;min-height:0;position:relative;background:var(--chart-bg);
+  box-shadow:var(--chart-ring);border-radius:var(--chart-radius);
+}
 .chart-svg{width:100%;height:100%;display:block;overflow:hidden}
-.chart-svg text{font-family:inherit}
-.empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+.chart-svg text{font-family:var(--font-num)}
+.empty{
+  flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+  color:var(--muted);font-size:13px;
+}
+/* ---------- 批注对照表（legend）：图上只有 ① IAS_MAX，图下列全称 / 值 / 时间 ---------- */
+.ann-legend{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 16px;
+  margin:3px 0 0;padding-top:3px;border-top:1px dotted var(--line);
+  font-family:var(--font-num);font-size:11px;line-height:1.5;
+  color:var(--muted);letter-spacing:.02em;
+}
+.ann-legend .ai{white-space:nowrap}
+.ann-legend .ai-h{
+  font-size:9.5px;letter-spacing:.22em;color:var(--muted);
+  text-transform:uppercase;opacity:.75;margin-right:2px;
+}
+body.no-annot .ann-legend{display:none!important}
 /* 速度页：平均速度 / 手动统计范围（只在第 2 页出现） */
 .speed-body{display:flex;flex-direction:column;min-height:0}
 .speed-views{position:relative;flex:1 1 auto;min-height:0}
 .speed-views>.flight-view{position:absolute;inset:0}
 .avgbar{
   flex:0 0 auto;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
-  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
   padding:6px 13px;margin-bottom:5px;font-variant-numeric:tabular-nums;
 }
 .avgbar .avg-title{font-size:12px;color:var(--muted);line-height:1.35;white-space:nowrap}
@@ -1967,34 +4876,41 @@ main{position:relative;flex:1 1 auto;min-height:0}
 }
 .avg-ctl{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
 .avg-range{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
-.avg-dash{color:#6d7f92}
+.avg-dash{color:var(--avg-dash)}
 .avg-input{
-  width:82px;font-family:inherit;font-size:12.5px;color:var(--text);background:var(--panel2);
-  border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-variant-numeric:tabular-nums;
+  width:82px;font-family:inherit;font-size:12.5px;color:var(--text);background:var(--input-bg);
+  border:1px solid var(--line);border-radius:var(--radius-xs);padding:3px 6px;
+  font-variant-numeric:tabular-nums;
 }
 .avg-input:focus{outline:none;border-color:var(--accent)}
 .avg-input:disabled{opacity:.45}
 .avg-btn{
-  font-family:inherit;font-size:12.5px;color:#fff;background:#16406b;border:1px solid #2b6aa8;
-  border-radius:7px;padding:4px 12px;cursor:pointer;transition:.15s;
+  font-family:inherit;font-size:12.5px;color:var(--avg-btn-fg);background:var(--avg-btn-bg);
+  border:1px solid var(--avg-btn-border);border-radius:var(--radius-xs);
+  padding:4px 12px;cursor:pointer;transition:.15s;
 }
-.avg-btn:hover{background:#1b4f84;border-color:var(--accent)}
-.avg-btn.ghost{background:var(--panel2);border-color:var(--line);color:#c3d2e1}
-.avg-btn.ghost:hover{border-color:var(--accent);color:#fff}
+.avg-btn:hover{background:var(--avg-btn-hover-bg);border-color:var(--accent)}
+.avg-btn.ghost{background:var(--panel2);border-color:var(--line);color:var(--ghost-fg)}
+.avg-btn.ghost:hover{border-color:var(--accent);color:var(--text)}
 .avg-meta{
   flex-basis:100%;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;
   font-size:11.5px;color:var(--muted);margin-top:1px;min-height:14px;
 }
-.avg-msg{color:#ffd79b}
-.avg-msg.warn{color:#ffb4a8}
+.avg-msg{color:var(--avg-msg)}
+.avg-msg.warn{color:var(--avg-msg-warn)}
 /* SVG 里的平均速度图层不拦截悬停 */
 .avg-band,.avg-edge,.avg-line{pointer-events:none}
-.lg i.avgdash{background-image:linear-gradient(90deg,#cbd5e1 0 60%,transparent 60% 100%);
-  background-size:7px 3px;background-repeat:repeat-x}
+.lg i.avgdash{
+  background-image:linear-gradient(90deg,var(--avgdash-fg) 0 60%,transparent 60% 100%);
+  background-size:7px 3px;background-repeat:repeat-x;
+}
 /* 概览页 */
 .ovwrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:9px;min-height:0}
 .cards{flex:0 0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:7px 11px}
+.card{
+  background:var(--card-bg);border:1px solid var(--card-border);border-radius:var(--radius);
+  padding:7px 11px;box-shadow:var(--card-shadow);
+}
 .card .k{font-size:12px;color:var(--muted)}
 .card b{
   display:block;font-size:17px;font-weight:650;letter-spacing:.2px;
@@ -2005,8 +4921,8 @@ main{position:relative;flex:1 1 auto;min-height:0}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .warn{
-  flex:0 0 auto;background:#2c2113;border:1px solid #6a4a1c;color:#ffd79b;
-  border-radius:9px;padding:6px 12px;font-size:12.5px;max-height:64px;overflow:auto;
+  flex:0 0 auto;background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-fg);
+  border-radius:var(--radius-sm);padding:6px 12px;font-size:12.5px;max-height:64px;overflow:auto;
 }
 .warn ul{margin:3px 0 0;padding-left:18px}
 .ovchart{flex:1 1 auto;min-height:0;position:relative}
@@ -2014,48 +4930,67 @@ main{position:relative;flex:1 1 auto;min-height:0}
 /* 全局总览页（多图堆叠） */
 .stackwrap{position:absolute;inset:0;display:flex;flex-direction:column;gap:5px;min-height:0}
 .stack-item{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
-.chart-label{flex:0 0 auto;font-size:12.5px;font-weight:650;color:#cfdcea}
+.chart-label{flex:0 0 auto;font-size:12.5px;font-weight:650;color:var(--chart-label-fg)}
 .chart-label span{font-weight:400;color:var(--muted);margin-left:8px;font-size:11.5px}
 .stack-item .legend{margin:0 0 2px;font-size:11.5px}
 /* 翻页控件 */
 .pager{
   flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:14px;
-  padding:7px 22px 9px;border-top:1px solid var(--line);background:#0b1118;position:relative;
+  padding:7px 22px 9px;border-top:1px solid var(--pager-border);background:var(--pager-bg);
+  position:relative;
 }
 .pbtn{
-  font-family:inherit;font-size:13px;color:var(--text);background:var(--panel2);
-  border:1px solid var(--line);border-radius:999px;padding:5px 15px;cursor:pointer;transition:.15s;
+  font-family:inherit;font-size:13px;color:var(--text);background:var(--btn-bg);
+  border:1px solid var(--btn-border);border-radius:var(--pill);padding:5px 15px;
+  cursor:pointer;transition:.15s;
 }
-.pbtn:hover:not(:disabled){border-color:var(--accent);color:#fff}
+.pbtn:hover:not(:disabled){border-color:var(--accent);color:var(--btn-hover-fg)}
 .pbtn:disabled{opacity:.35;cursor:default}
-.page-label{font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;min-width:104px;text-align:center}
+.page-label{
+  font-size:13px;color:var(--text);font-variant-numeric:tabular-nums;
+  min-width:104px;text-align:center;
+}
 .dots{display:flex;gap:7px;align-items:center}
-.dot{width:9px;height:9px;padding:0;border:0;border-radius:50%;background:#2b3c4f;cursor:pointer;transition:.15s}
-.dot:hover{background:#5b7a99}
-.dot.active{background:var(--accent);box-shadow:0 0 0 3px #4aa3ff2e}
-.hint{position:absolute;right:16px;bottom:12px;font-size:11.5px;color:#6d7f92;white-space:nowrap}
+.dot{
+  width:9px;height:9px;padding:0;border:0;border-radius:50%;background:var(--dot);
+  cursor:pointer;transition:.15s;
+}
+.dot:hover{background:var(--dot-hover)}
+.dot.active{background:var(--accent);box-shadow:0 0 0 3px var(--dot-ring)}
+.hint{
+  position:absolute;right:16px;bottom:12px;font-size:11.5px;color:var(--hint-fg);
+  white-space:nowrap;
+}
 .side{
   position:absolute;top:50%;transform:translateY(-50%);z-index:6;width:32px;height:76px;
   display:flex;align-items:center;justify-content:center;font-size:22px;line-height:1;
-  color:#bcd0e4;background:#0d151ef2;border:1px solid var(--line);cursor:pointer;
-  font-family:inherit;border-radius:8px;transition:.15s;
+  color:var(--side-fg);background:var(--side-bg);border:1px solid var(--line);cursor:pointer;
+  font-family:inherit;border-radius:var(--radius-sm);transition:.15s;
 }
-.side:hover:not(:disabled){border-color:var(--accent);color:#fff;background:#12324f}
+.side:hover:not(:disabled){border-color:var(--accent);color:var(--text);background:var(--side-hover-bg)}
 .side:disabled{opacity:.22;cursor:default}
 .side.prev{left:3px}
 .side.next{right:3px}
 .tip{
   position:fixed;z-index:999;display:none;pointer-events:none;
-  background:#080c11f2;border:1px solid #2e4054;border-radius:9px;
-  padding:8px 11px;font-size:12px;color:var(--text);
-  box-shadow:0 10px 30px #00000066;min-width:180px;
+  background:var(--tip-bg);border:1px solid var(--tip-border);border-radius:var(--radius-sm);
+  padding:8px 11px;font-size:12px;color:var(--tip-fg);
+  box-shadow:var(--tip-shadow);min-width:180px;
 }
-.tip .tip-t{font-weight:650;margin-bottom:5px;color:#fff;font-variant-numeric:tabular-nums}
+.tip .tip-t{
+  font-weight:650;margin-bottom:5px;color:var(--tip-strong);
+  font-variant-numeric:tabular-nums;
+}
 .tip table{border-collapse:collapse;width:100%}
 .tip td{padding:1px 0;vertical-align:top}
-.tip td.v{text-align:right;padding-left:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tip td.v{
+  text-align:right;padding-left:14px;font-variant-numeric:tabular-nums;white-space:nowrap;
+}
 .tip td i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-a{color:var(--accent)}
+a{color:var(--link)}
+/* 等宽数字：座舱/手册/战术主题下所有读数统一用 --font-num */
+.card b,.avg-val b,.page-label,.page-right,.badges span,.pchip,.avg-input,.avg-meta,
+.tip .tip-t,.tip td.v{font-family:var(--font-num)}
 @media (max-width:1000px){
   .hint{display:none}
   .side{width:26px;height:60px;font-size:18px}
@@ -2072,27 +5007,121 @@ a{color:var(--accent)}
   .badges{max-height:28px}
   .cards .card b{font-size:15px}
 }
+/* ---------- 审阅批注：屏幕层 / 打印层 ---------- */
+/* 打印层默认藏起来；@media print 里反过来（见 CSS_PRINT），body.no-annot 再关掉。 */
+.ann-print{display:none}
+.ann-box{fill:var(--ann-box)}
+.ann-ink{fill:var(--ann-ink)}
+.ann-mark{stroke:var(--ann-mark);fill:none;stroke-width:1.4}
+.ann-mark-fill{fill:var(--ann-mark)}
+.ann-crayon{fill:none;stroke:#B0362A;stroke-linecap:round;stroke-linejoin:round}
+.ann-crayon-arrow{fill:none;stroke:#B0362A;stroke-width:2;stroke-linecap:round}
+.ann-type{font-family:"Courier New",Consolas,monospace;fill:#9E2F26;letter-spacing:.02em}
+.ann-num{font-family:"Courier New",Consolas,monospace;fill:#9E2F26}
+/* ---------- 页眉「保存」按钮 + 保存设置二级页（模态） ---------- */
+.header-save{
+  margin-left:10px;font-family:var(--font-num);font-size:12.5px;letter-spacing:.1em;
+  color:var(--btn-active-fg);background:var(--btn-active-bg);border:1px solid var(--accent);
+  border-radius:var(--radius-xs);padding:4px 16px;cursor:pointer;white-space:nowrap;
+}
+.header-save:hover{background:var(--accent);color:var(--bg)}
+.save-modal{position:fixed;inset:0;z-index:200;display:flex;align-items:center;
+  justify-content:center}
+.save-modal[hidden]{display:none!important}
+.save-backdrop{position:absolute;inset:0;background:#02101fd9}
+.save-dialog{position:relative;width:520px;max-width:calc(100vw - 40px);
+  background:var(--panel);border:1.4px solid var(--accent);border-radius:var(--radius);
+  box-shadow:0 30px 80px #00000099;color:var(--text);font-family:var(--font-ui);
+  padding:0;outline:none}
+.save-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  padding:14px 22px 11px;border-bottom:1px solid var(--line)}
+.save-head b{font-family:var(--font-title);font-size:19px;letter-spacing:1.4px}
+.save-head span{font-family:var(--font-num);font-size:9.5px;letter-spacing:.26em;
+  color:var(--muted)}
+.save-body{padding:16px 22px 8px;display:flex;flex-direction:column;gap:14px}
+.save-group{border:1px solid var(--line);padding:10px 13px;border-radius:var(--radius-xs);
+  background:var(--panel2)}
+.save-label{font-family:var(--font-num);font-size:9.5px;letter-spacing:.24em;
+  color:var(--muted);margin-bottom:8px}
+.save-opt{display:flex;align-items:flex-start;gap:10px;padding:7px 2px;cursor:pointer}
+.save-opt+.save-opt{border-top:1px dotted var(--line)}
+.save-opt input,.save-check input{margin-top:3px;accent-color:var(--accent)}
+.save-opt b{display:block;font-size:13.5px;letter-spacing:.3px}
+.save-opt i,.save-check i{display:block;font-style:normal;font-family:var(--font-num);
+  font-size:10.5px;color:var(--muted);letter-spacing:.06em;margin-top:1px}
+.save-check{display:flex;align-items:flex-start;gap:10px;padding:2px;cursor:pointer}
+.save-check b{display:block;font-size:13.5px}
+.save-foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 22px 16px;
+  border-top:1px solid var(--line)}
+.save-foot .save-btn{font-family:var(--font-num);font-size:12.5px;letter-spacing:.1em;
+  padding:7px 20px;cursor:pointer}
+.save-btn{background:var(--btn-active-bg);color:var(--btn-active-fg);
+  border:1px solid var(--accent);border-radius:var(--radius-xs)}
+.save-btn.ghost{background:transparent;color:var(--ghost-fg)}
+body.modal-open{overflow:hidden}
+#debrief-src{position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
+"""
+
+CSS_PRINT = """
 @media print{
-  html,body{height:auto;overflow:visible;background:#fff;color:#111}
+  html,body{height:auto;overflow:visible}
+  body{
+    background:var(--print-bg);color:var(--print-fg);
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+  }
   .app{height:auto}
-  header{background:#fff;border-color:#ccc}
+  header{background:var(--print-header-bg);border-color:var(--line)}
   main{position:static}
-  .page{position:relative;inset:auto;display:flex!important;height:auto;min-height:72vh;
-        page-break-after:always;border-top:1px solid #ddd}
+  .page{
+    position:relative;inset:auto;display:flex!important;height:auto;min-height:72vh;
+    page-break-after:always;border-top:1px solid var(--line);
+  }
+  .page:first-of-type{border-top:0}
   .page-body{min-height:420px}
   .flight-view{display:none!important}
   .flight-view.active{display:flex!important}
-  .pager,.side,.hint{display:none}
-  .card,.badges span{background:#f6f8fa;border-color:#ddd;color:#111}
-  .subline,.card span,.badges span,.legend,.psub,.punit,.page-sub,.page-right,.chart-label{color:#555}
-  .warn{background:#fff7e6;color:#5a3d00;border-color:#e0c080}
+  .pager,.side,.hint,.header-save,.save-modal,#debrief-src,#tip{display:none}
+  .card{box-shadow:none}
+  /* 批注：打印层显示手绘圈 + 打字机短注，屏幕层隐藏；关闭批注时整层隐藏 */
+  .ann-screen{display:none!important}
+  .ann-print{display:inline}
+  body.no-annot .ann-print{display:none!important}
 }
 """
+
+
+def _css(theme: Theme) -> str:
+    """把主题配置渲染成完整内联 CSS（变量 + 结构样式 + 主题纹理 + 打印）。"""
+    root = ":root{" + "".join(
+        "--%s:%s;" % (key, value) for key, value in _root_vars(theme).items()
+    ) + "}"
+    # 主题打印覆盖必须包在 @media print 里，否则会污染屏幕样式
+    print_extra = ("@media print{" + theme.print_css + "}") if theme.print_css else ""
+    # 打印时把 SVG 里的深色曲线/网格按主题配置换成纸上的墨色（属性选择器只影响
+    # 内联 SVG 的 stroke/fill 属性值，屏幕样式完全不变）。
+    chart_print = ""
+    if theme.print_chart:
+        pairs: Dict[str, str] = {}
+        # 曲线/网格颜色可能重复（ias / alt / pitch 都是正文色），只保留第一次映射，
+        # 否则后出现的装饰色（avg_band 等）会把主曲线改成红色。
+        for key, new_color in theme.print_chart.items():
+            old_color = theme.chart.get(key)
+            if old_color and old_color != new_color and old_color not in pairs:
+                pairs[old_color] = new_color
+        rules = "".join(
+            '[stroke="%s"]{stroke:%s!important}[fill="%s"]{fill:%s!important}'
+            % (old, new, old, new)
+            for old, new in pairs.items()
+        )
+        if rules:
+            chart_print = "@media print{" + rules + "}"
+    return root + "\n" + CSS_BASE + theme.extra_css + CSS_PRINT + chart_print + print_extra
 
 JS = r"""
 (function(){
   "use strict";
   var DATA = window.__FLIGHTLOG__ || {};
+  var THEME = DATA.theme || {};
   var NS = "http://www.w3.org/2000/svg";
   var tip = document.getElementById("tip");
   var hiders = [];
@@ -2170,14 +5199,14 @@ JS = r"""
         var c = document.createElementNS(NS, "circle");
         c.setAttribute("r", "3.2");
         c.setAttribute("fill", s.color);
-        c.setAttribute("stroke", "#0a0e13");
+        c.setAttribute("stroke", THEME.crosshairStroke || "#0a0e13");
         c.setAttribute("stroke-width", "0.9");
         c.setAttribute("opacity", "0");
         svg.appendChild(c);
         dots.push({el: c, s: s});
       });
       var line = document.createElementNS(NS, "line");
-      line.setAttribute("stroke", "#e6eef7");
+      line.setAttribute("stroke", THEME.crosshair || "#e6eef7");
       line.setAttribute("stroke-width", "0.9");
       line.setAttribute("stroke-dasharray", "3 3");
       line.setAttribute("opacity", "0");
@@ -2624,6 +5653,167 @@ JS = r"""
     }
   }
   showPage(startPage, false);
+
+  // ---------------- 保存：二级页（PDF 完整版 / PNG 复盘卡 + 批注开关） ----------------
+  var saveModal = document.getElementById("save-modal");
+  var saveBtn = document.getElementById("btn-save");
+  var saveLastFocus = null;
+
+  function saveIsOpen(){ return !!(saveModal && !saveModal.hidden); }
+  function saveOpen(){
+    if (!saveModal) return;
+    saveLastFocus = document.activeElement;
+    saveModal.hidden = false;
+    saveModal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("modal-open");
+    var focusEl = saveModal.querySelector('input[name="save-kind"]:checked') ||
+      saveModal.querySelector("input");
+    if (focusEl && focusEl.focus) focusEl.focus();
+  }
+  function saveClose(){
+    if (!saveModal) return;
+    saveModal.hidden = true;
+    saveModal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("modal-open");
+    if (saveLastFocus && saveLastFocus.focus) saveLastFocus.focus();
+  }
+  function saveKind(){
+    var el = saveModal && saveModal.querySelector('input[name="save-kind"]:checked');
+    return el ? el.value : "pdf";
+  }
+  function saveAnnot(){
+    var el = document.getElementById("save-annot");
+    return el ? !!el.checked : true;
+  }
+  function debriefPrefix(){
+    var host = document.getElementById("debrief-src");
+    return (DATA.debrief && DATA.debrief.prefix) ||
+      (host && host.getAttribute("data-prefix")) || "debrief-";
+  }
+  function debriefTimestamp(){
+    var d = new Date();
+    function p(n){ return (n < 10 ? "0" : "") + n; }
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" +
+      p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+  // 内嵌 SVG -> canvas -> PNG（不引外部库；SVG 里没有外链，canvas 不会被污染）
+  function renderDebriefCanvas(annotated, done, fail){
+    var svg = document.getElementById(
+      annotated ? "debrief-svg-annotated" : "debrief-svg-clean");
+    if (!svg){ if (fail) fail("缺少复盘卡 SVG"); return; }
+    var xml = new XMLSerializer().serializeToString(svg);
+    if (xml.indexOf('xmlns="http://www.w3.org/2000/svg"') < 0){
+      xml = xml.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ');
+    }
+    var blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>' + xml],
+      {type: "image/svg+xml;charset=utf-8"});
+    var url = URL.createObjectURL(blob);
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var canvas = document.createElement("canvas");
+        canvas.width = 1600; canvas.height = 1000;
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#C9B28A";
+        ctx.fillRect(0, 0, 1600, 1000);
+        ctx.drawImage(img, 0, 0, 1600, 1000);
+        URL.revokeObjectURL(url);
+        done(canvas);
+      } catch (err) {
+        URL.revokeObjectURL(url);
+        if (fail) fail("canvas 失败: " + (err && err.message ? err.message : err));
+      }
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+      if (fail) fail("SVG 载入失败");
+    };
+    img.src = url;
+  }
+  function exportDebriefPNG(annotated, done, fail){
+    renderDebriefCanvas(annotated, function(canvas){
+      var name = debriefPrefix() + debriefTimestamp() + ".png";
+      var link = document.createElement("a");
+      link.href = canvas.toDataURL("image/png");
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      if (done) done({name: name, width: canvas.width, height: canvas.height});
+    }, fail);
+  }
+  // 自动化验证钩子：返回 PNG dataURL（headless 通过 CDP 取回写成样张）
+  window.__exportDebrief = function(annotated){
+    return new Promise(function(resolve, reject){
+      renderDebriefCanvas(annotated !== false, function(canvas){
+        resolve(canvas.toDataURL("image/png"));
+      }, reject);
+    });
+  };
+  window.__debriefInfo = function(){
+    return {prefix: debriefPrefix(), filename: debriefPrefix() + debriefTimestamp() + ".png"};
+  };
+  window.__saveState = function(){
+    return {open: saveIsOpen(), kind: saveKind(), annot: saveAnnot()};
+  };
+  if (saveBtn) saveBtn.addEventListener("click", function(ev){
+    ev.preventDefault();
+    saveOpen();
+  });
+  if (saveModal){
+    saveModal.querySelectorAll("[data-save-cancel]").forEach(function(el){
+      el.addEventListener("click", function(ev){ ev.preventDefault(); saveClose(); });
+    });
+    var generateBtn = document.getElementById("save-generate");
+    if (generateBtn) generateBtn.addEventListener("click", function(ev){
+      ev.preventDefault();
+      var kind = saveKind();
+      var annot = saveAnnot();
+      var body = document.body;
+      var state = {kind: kind, annot: annot, result: ""};
+      body.classList.toggle("no-annot", !annot);
+      saveClose();
+      if (kind === "png"){
+        exportDebriefPNG(annot, function(info){
+          state.result = info.name;
+          body.setAttribute("data-last-save",
+            "png:" + info.name + ":" + info.width + "x" + info.height);
+        }, function(message){
+          state.result = "error:" + message;
+          body.setAttribute("data-last-save", "png-error:" + message);
+        });
+      } else {
+        body.setAttribute("data-last-save", "pdf:" + (annot ? "annotated" : "clean"));
+        window.setTimeout(function(){
+          // 打印期间保持 body.no-annot；打印结束后由 afterprint 统一移除
+          try {
+            window.print();
+          } catch (err) {
+            body.classList.remove("no-annot");
+          }
+        }, 40);
+      }
+    });
+    var cancelBtn = document.getElementById("save-cancel");
+    if (cancelBtn) cancelBtn.addEventListener("click", function(ev){
+      ev.preventDefault();
+      saveClose();
+    });
+  }
+  document.addEventListener("keydown", function(ev){
+    if (!saveIsOpen()) return;
+    if (ev.key === "Escape"){
+      ev.preventDefault();
+      saveClose();
+    } else if (ev.key === "Enter" && ev.target && ev.target.tagName === "INPUT"){
+      ev.preventDefault();
+      var gen = document.getElementById("save-generate");
+      if (gen) gen.click();
+    }
+  });
+  window.addEventListener("afterprint", function(){
+    document.body.classList.remove("no-annot");
+  });
 })();
 """
 
@@ -2632,17 +5822,57 @@ html,body{height:auto;overflow:auto}
 .app{height:auto}
 main{position:static}
 .page{position:relative;inset:auto;display:flex!important;flex-direction:column;
-  height:auto;min-height:70vh;border-top:1px solid #1e2a36;margin-top:8px}
+  height:auto;min-height:70vh;border-top:1px solid var(--line);margin-top:8px}
 .page-body{min-height:420px}
 .pager,.side,.hint,.flights{display:none}
-</style><p style="color:#8ea1b4;font-size:12px;padding:0 22px">
+</style><p style="color:var(--muted);font-size:12px;padding:0 22px">
 本报告用脚本实现翻页；当前浏览器禁用了脚本，已改为纵向平铺显示全部页面。
 </p></noscript>"""
 
+#: 页眉「保存」打开的二级页（模态）：输出类型 + 批注开关。
+SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal="true"
+     aria-labelledby="save-title" aria-hidden="true" hidden>
+  <div class="save-backdrop" data-save-cancel></div>
+  <div class="save-dialog" role="document">
+    <div class="save-head"><b id="save-title">保存设置</b><span>SAVE / EXPORT</span></div>
+    <div class="save-body">
+      <div class="save-group">
+        <div class="save-label">输出类型 / OUTPUT</div>
+        <label class="save-opt"><input type="radio" name="save-kind" value="pdf" checked>
+          <span><b>PDF 完整版</b><i>9 页 · 档案纸 · 每页独立分页（打印 / 另存为 PDF）</i></span></label>
+        <label class="save-opt"><input type="radio" name="save-kind" value="png">
+          <span><b>PNG 单张复盘卡</b><i>1600 × 1000 · 档案袋风格 · 下载单张 PNG</i></span></label>
+      </div>
+      <div class="save-group">
+        <label class="save-check"><input type="checkbox" id="save-annot" checked>
+          <span><b>保留批注</b><i>红色审阅标记 / 手绘双圈 / 打字机短注；关闭后只留曲线、坐标、事件竖线</i></span></label>
+      </div>
+    </div>
+    <div class="save-foot">
+      <button type="button" class="save-btn ghost" id="save-cancel">取消</button>
+      <button type="button" class="save-btn" id="save-generate">生成</button>
+    </div>
+  </div>
+</div>"""
 
-def render_report(model: LogModel, title: Optional[str] = None) -> str:
-    """把模型渲染成完整 HTML 字符串（翻页式、单文件自包含）。"""
-    payload = _build_payload(model)
+
+def render_report(
+    model: LogModel,
+    title: Optional[str] = None,
+    theme: Optional[str] = None,
+    limits: Optional[SpeedLimits] = None,
+) -> str:
+    """把模型渲染成完整 HTML 字符串（翻页式、单文件自包含）。
+
+    ``theme`` 取 :data:`THEMES` 里的键（``blueprint`` / ``glass`` / ``manual`` /
+    ``tactical`` / ``clean`` / ``mfd``）；省略时用 :data:`DEFAULT_THEME`
+    （= ``blueprint`` A 工程蓝图）。
+
+    ``limits`` 是预先读好的限速表（:func:`load_speed_limits`）；省略时跳过
+    限速批注（不影响其它批注）。
+    """
+    theme_obj = _apply_theme(get_theme(theme))
+    payload = _build_payload(model, limits)
     page_title = title or payload["title"]
     page_count = payload["html"]["page_count"]
     pages_html = "\n".join(payload["html"]["pages"])
@@ -2666,6 +5896,11 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         )
     meta_bits.append("采样 %s" % _html_escape(meta.get("rate") or "?"))
     meta_bits.append("生成于 %s" % _html_escape(model.summary.get("generated_utc", "")))
+    meta_bits.append("主题 %s" % _html_escape(theme_obj.label))
+    for item in payload.get("vne") or []:
+        meta_bits.append(
+            "限速 %s %s km/h" % (_html_escape(item["vehicle"]), _html_escape(_fmt_number(item["vne"], 0)))
+        )
     subline = " · ".join(meta_bits)
     replay_banner = ""
     if replay:
@@ -2687,6 +5922,12 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         '<span class="hint">&#8592; &#8594; / PageUp PageDown 翻页 · 鼠标悬停看数值</span>'
         "</nav>" % page_count
     )
+    save_button = (
+        '<button type="button" class="header-save" id="btn-save"'
+        ' title="导出 PDF 完整版 / PNG 复盘卡">保存</button>'
+    )
+    debrief_host = payload["html"].get("debrief") or ""
+    stem = os.path.splitext(os.path.basename(model.path))[0]
 
     data_json = json.dumps(
         {
@@ -2694,6 +5935,14 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
             "overview": payload["overview"],
             "flights": payload["flights"],
             "players": payload.get("players") or [],
+            "debrief": {"prefix": "debrief-%s-" % stem},
+            "limits": payload.get("limits"),
+            "theme": {
+                "key": theme_obj.key,
+                "label": theme_obj.label,
+                "crosshair": COLORS["crosshair"],
+                "crosshairStroke": COLORS["crosshair_stroke"],
+            },
         },
         ensure_ascii=False,
         allow_nan=False,
@@ -2704,12 +5953,12 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
 
     return (
         "<!DOCTYPE html>\n"
-        '<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
+        '<html lang="zh-CN" data-theme="%s">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>%s</title>\n<style>%s</style>\n</head>\n<body>\n"
         '<div class="app">\n'
         "<header>\n"
-        '<div class="hrow"><h1>%s</h1>%s</div>\n'
+        '<div class="hrow"><h1>%s</h1>%s%s</div>\n'
         "%s"
         "%s"
         '<div class="subline">%s</div>\n'
@@ -2723,34 +5972,46 @@ def render_report(model: LogModel, title: Optional[str] = None) -> str:
         "</main>\n"
         "%s\n"
         "</div>\n"
+        "%s\n"
         '<div id="tip" class="tip"></div>\n'
+        "%s\n"
         "<script>window.__FLIGHTLOG__=%s;</script>\n"
         "<script>%s</script>\n"
         "</body>\n</html>\n"
         % (
+            theme_obj.key,
             _html_escape(page_title),
-            CSS,
+            _css(theme_obj),
             "回放分析" if replay else "飞行日志分析",
             payload["html"]["flight_selector"],
+            save_button,
             payload["html"].get("player_switch") or "",
             replay_banner,
             subline,
             NOSCRIPT,
             pages_html,
             pager,
+            debrief_host,
+            SAVE_MODAL,
             data_json,
             JS,
         )
     )
 
 
-def write_report(model: LogModel, out_path: str, title: Optional[str] = None) -> str:
+def write_report(
+    model: LogModel,
+    out_path: str,
+    title: Optional[str] = None,
+    theme: Optional[str] = None,
+    limits: Optional[SpeedLimits] = None,
+) -> str:
     """渲染并写盘（UTF-8，自动建目录），返回绝对路径。"""
     out_path = os.path.abspath(out_path)
     directory = os.path.dirname(out_path)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    content = render_report(model, title=title)
+    content = render_report(model, title=title, theme=theme, limits=limits)
     with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(content)
     return out_path

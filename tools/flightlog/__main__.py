@@ -41,7 +41,13 @@ from typing import List, Optional
 
 from . import picker
 from .parse import DEFAULT_GAP_SPLIT_S, LogError, analyze
-from .report import write_report
+from .report import (
+    DEFAULT_THEME,
+    THEME_KEYS,
+    load_speed_limits,
+    manual_speed_limits,
+    write_report,
+)
 
 _TOOL_DIR = Path(__file__).resolve().parent
 
@@ -101,10 +107,41 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--png", default=None, help="额外输出 Pillow PNG 预览到该路径")
     parser.add_argument("--title", default=None, help="HTML 页面标题")
     parser.add_argument(
+        "--theme",
+        default=DEFAULT_THEME,
+        choices=list(THEME_KEYS),
+        metavar="THEME",
+        help=(
+            "HTML 报告美术主题：%s（默认 %s）；只影响 HTML，--mfd-json 模式下忽略"
+            % (" / ".join(THEME_KEYS), DEFAULT_THEME)
+        ),
+    )
+    parser.add_argument(
         "--gap",
         type=float,
         default=DEFAULT_GAP_SPLIT_S,
         help="相邻样本间隔超过多少秒就切新架次（默认 %(default)s）",
+    )
+    parser.add_argument(
+        "--vne-kmh",
+        dest="vne_kmh",
+        type=float,
+        default=None,
+        metavar="KMH",
+        help=(
+            "手动指定限速（Vne IAS, km/h）用于「限速预警」批注；"
+            "默认自动读 FlightLog.exe 同目录的 hud-config.json / airframes.json"
+        ),
+    )
+    parser.add_argument(
+        "--hud-dir",
+        dest="hud_dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "hud-config.json / airframes.json 所在目录；默认用 FlightLog.exe 同目录"
+            "（开发时可用它指向 WtHud 发布目录）"
+        ),
     )
     parser.add_argument(
         "--list",
@@ -240,6 +277,8 @@ def _mfd_main(args) -> int:
     if args.summary or args.png or args.list_players:
         _say("错误: --summary / --png / --list 不能和 --mfd-json 一起用")
         return 2
+    if args.theme and args.theme != DEFAULT_THEME:
+        _say("提示: --theme 只影响 HTML 报告，--mfd-json 模式已忽略（主题 %s）" % args.theme)
 
     started = time.perf_counter()
     try:
@@ -435,11 +474,25 @@ def _replay_main(args) -> int:
     return _finish_model(args, model, source_stem=Path(args.log).stem)
 
 
+def _speed_limits(args):
+    """读限速表（``--vne-kmh`` 优先，否则 hud-config.json / airframes.json）。"""
+    if getattr(args, "vne_kmh", None) is not None:
+        limits = manual_speed_limits(args.vne_kmh)
+    else:
+        limits = load_speed_limits(getattr(args, "hud_dir", None))
+    for note in limits.notes:
+        print("限速读取: %s" % note, file=sys.stderr)
+    return limits
+
+
 def _finish_model(args, model, source_stem: str) -> int:
+    limits = _speed_limits(args)
     if args.summary:
         print(json.dumps(model.summary, ensure_ascii=False, indent=2))
         if args.out:
-            out_path = write_report(model, args.out, title=args.title)
+            out_path = write_report(
+                model, args.out, title=args.title, theme=args.theme, limits=limits
+            )
             print("\nHTML: %s" % out_path, file=sys.stderr)
         return 0
 
@@ -447,14 +500,28 @@ def _finish_model(args, model, source_stem: str) -> int:
         out_path = Path(args.out)
     else:
         out_path = default_out_dir() / (_safe_stem(source_stem) + ".html")
-    written = write_report(model, str(out_path), title=args.title)
+    written = write_report(
+        model, str(out_path), title=args.title, theme=args.theme, limits=limits
+    )
     size_kb = os.path.getsize(written) / 1024.0
     print("HTML: %s (%.1f KB)" % (written, size_kb))
+    for item in model.flights:
+        vne, source = limits.vne_for(item.vehicle)
+        if vne is not None:
+            print("限速: %s = %s km/h（%s）" % (item.vehicle or "未知机型",
+                                                _fmt_kmh(vne), source))
     _print_summary_line(model)
 
     if args.png:
         _render_png(model, args.png)
     return 0
+
+
+def _fmt_kmh(value) -> str:
+    try:
+        return "%.0f" % float(value)
+    except (TypeError, ValueError):
+        return "?"
 
 
 def _render_png(model, target: str) -> None:
