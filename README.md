@@ -26,6 +26,21 @@ no packet interception, no automation.
 
 ![HUD 全部要素](docs/screenshots/hud-all-elements.jpg)
 
+## 飞行日志分析（FlightLog）
+
+独立的日志分析工具：读取 HUD 记录（`recordings/*.jsonl`）或导入 War Thunder `.wrpl` 回放，
+生成翻页式 HTML / PDF 复盘报告；MFD 里也能直接查看分析结果。
+
+| 概览 | 速度 |
+|---|---|
+| ![日志概览](docs/screenshots/flightlog-overview.jpg) | ![速度页](docs/screenshots/flightlog-speed.jpg) |
+
+| 比能量 Es | 姿态 |
+|---|---|
+| ![比能量页](docs/screenshots/flightlog-energy.jpg) | ![姿态页](docs/screenshots/flightlog-attitude.jpg) |
+
+> 截图由当前版本的分析工具在真实记录上现场渲染（J-16 · 3 架次 · 983.6 s · 57,781 样本）。
+
 ## 特性
 
 ### MFD 设置面板（F1）
@@ -395,6 +410,21 @@ interception, no automation. It never draws enemy positions (no ESP).
 | ![Third-person HUD](docs/screenshots/hud-01-third-person.jpg) | ![Close view](docs/screenshots/hud-02-close-view.jpg) |
 
 ![All elements](docs/screenshots/hud-all-elements.jpg)
+
+## Flight-log analysis (FlightLog)
+
+A standalone analyzer: reads HUD recordings (`recordings/*.jsonl`) or imports War Thunder `.wrpl`
+replays, and renders paged HTML / PDF debrief reports. The same analysis is available inside the MFD.
+
+| Overview | Speed |
+|---|---|
+| ![Overview](docs/screenshots/flightlog-overview.jpg) | ![Speed](docs/screenshots/flightlog-speed.jpg) |
+
+| Specific energy (Es) | Attitude |
+|---|---|
+| ![Energy](docs/screenshots/flightlog-energy.jpg) | ![Attitude](docs/screenshots/flightlog-attitude.jpg) |
+
+> Screenshots rendered by the current analyzer on a real recording (J-16, 3 flights, 983.6 s, 57,781 samples).
 
 ## Features
 
