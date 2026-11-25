@@ -23,6 +23,7 @@ public sealed class FlightRecorder : IDisposable
     private readonly BlockingCollection<string> _queue = new(new ConcurrentQueue<string>(), 8192);
     private readonly Thread _writer;
     private readonly string _path;
+    private readonly object _stopGate = new();
     private volatile bool _closed;
 
     /// <summary>记录文件所在目录（exe 同目录 /recordings）。</summary>
@@ -49,7 +50,7 @@ public sealed class FlightRecorder : IDisposable
         string path = System.IO.Path.Combine(Folder, $"{Prefix}{stamp}-{vehicle}.jsonl");
 
         var rec = new FlightRecorder(path);
-        rec._queue.Add(JsonSerializer.Serialize(new MetaLine
+        rec.TryEnqueue(JsonSerializer.Serialize(new MetaLine
         {
             Type = "meta",
             Schema = 1,
@@ -95,25 +96,29 @@ public sealed class FlightRecorder : IDisposable
             Fuel = Math.Round(s.FuelKg, 1),
             Fuel0 = Math.Round(s.Fuel0Kg, 1),
         }, JsonOpts);
-        _queue.TryAdd(line);
+        TryEnqueue(line);
     }
 
-    /// <summary>在时间轴上记一个事件（死亡/重生/换机型/击落）。</summary>
-    /// <param name="kind">事件种类：death / spawn / vehicle_change / kill。</param>
+    /// <summary>在时间轴上记一个事件（死亡/重生/换机型/击落/数据中断）。</summary>
+    /// <param name="kind">事件种类：death / spawn / vehicle_change / kill / gap。</param>
     /// <param name="vehicle">事件机型（spawn / vehicle_change 用）。</param>
     /// <param name="utc">事件 UTC 时间；不传则用当前时间。</param>
     /// <param name="target">击落事件的目标（被击落的玩家名）；其它事件留空，空值不写进 JSONL。</param>
-    public void Event(string kind, string? vehicle = null, DateTime? utc = null, string? target = null)
+    /// <param name="gap">数据中断事件的中断秒数（只有 kind=gap 写）；null 不写进 JSONL。
+    /// 旧事件保持四条字段不变，旧版 FlightLog 解析器看到的就是原来的形状。</param>
+    public void Event(string kind, string? vehicle = null, DateTime? utc = null, string? target = null,
+                      double? gap = null)
     {
         if (_closed) return;
-        _queue.TryAdd(JsonSerializer.Serialize(new EventLine
+        TryEnqueue(JsonSerializer.Serialize(new EventLine
         {
             Type = "event",
             Kind = kind,
             Utc = (utc ?? DateTime.UtcNow).ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
             Vehicle = vehicle ?? "",
-            // 空 target 走 JsonIgnoreCondition.WhenWritingNull：旧解析器看到的还是四条字段
+            // 空 target/gap 走 JsonIgnoreCondition.WhenWritingNull：旧解析器看到的还是四条字段
             Target = string.IsNullOrWhiteSpace(target) ? null : target.Trim(),
+            Gap = gap,
         }, JsonOpts));
     }
 
@@ -121,7 +126,7 @@ public sealed class FlightRecorder : IDisposable
     public void Marker(string label)
     {
         if (_closed) return;
-        _queue.TryAdd(JsonSerializer.Serialize(new MarkerLine
+        TryEnqueue(JsonSerializer.Serialize(new MarkerLine
         {
             Type = "marker",
             Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
@@ -132,16 +137,29 @@ public sealed class FlightRecorder : IDisposable
     /// <summary>结束记录：写 end 并等写线程落盘。</summary>
     public void Stop()
     {
-        if (_closed) return;
-        _queue.Add(JsonSerializer.Serialize(new EndLine
+        lock (_stopGate)
         {
-            Type = "end",
-            Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
-        }, JsonOpts));
-        _closed = true;
-        _queue.CompleteAdding();
+            if (_closed) return;
+            TryEnqueue(JsonSerializer.Serialize(new EndLine
+            {
+                Type = "end",
+                Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            }, JsonOpts));
+            _closed = true;
+            _queue.CompleteAdding();
+        }
         if (!_writer.Join(3000))
             Console.WriteLine("recorder: writer thread did not finish in 3 s");
+    }
+
+    /// <summary>
+    /// 入队一行。调用方可能来自多个线程（轮询线程写样本、hudmsg 线程写击落、主线程收尾），
+    /// Stop() 可能刚好 CompleteAdding，所以这里吞掉那次竞争：丢了收尾后的一行也不抛异常。
+    /// </summary>
+    private void TryEnqueue(string line)
+    {
+        try { _queue.TryAdd(line); }
+        catch (InvalidOperationException) { }   // CompleteAdding 已经跑过，正常退出竞争
     }
 
     public void Dispose() => Stop();
@@ -258,6 +276,9 @@ public sealed class FlightRecorder : IDisposable
         // 击落事件的目标（被击落玩家名）。只有 kill 事件写这个字段：
         // null 时 JsonIgnoreCondition.WhenWritingNull 直接省略，旧工具无需兼容新字段。
         [JsonPropertyName("target")] public string? Target { get; set; }
+
+        // 数据中断秒数（只有 kind=gap 写）。旧事件同样省略，事件行仍是原来的四条字段。
+        [JsonPropertyName("gap")] public double? Gap { get; set; }
     }
 
     private sealed class EndLine

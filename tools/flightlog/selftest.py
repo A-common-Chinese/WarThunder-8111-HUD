@@ -37,6 +37,9 @@
     ``--vne-kmh`` 手动覆盖。
 17. 击落事件（0.5.2）：kill 事件带 target、只有 utc 也能换算、KILL 竖线每页都有、
     legend / 复盘卡 / MFD 事件 JSON 的 target 与缺省占位。
+18. 数据中断（0.5.3）：曲线改用三次贝塞尔平滑（Catmull-Rom 切线 + 限幅，零过冲）、
+    断线阈值 1.0 s、断口虚线贝塞尔桥 + 淡灰竖带/斜纹、gap 事件解析与合并去重、
+    老日志按样本间隔自动检测、GAP legend 文本与编号、概览「数据完整性」行。
 """
 
 from __future__ import annotations
@@ -67,6 +70,10 @@ from flightlog.report import (  # noqa: E402
     ANNOTATION_CODES,
     ANNOTATION_NAMES,
     DEFAULT_THEME,
+    GAP_HOLE_S,
+    PATH_GAP_S,
+    PLOT_LEFT,
+    PLOT_RIGHT,
     THEMES,
     THEME_KEYS,
     SpeedLimits,
@@ -75,12 +82,23 @@ from flightlog.report import (  # noqa: E402
     _annotation_legend_line,
     _annotation_mark_text,
     _annotation_text,
+    _Axis,
+    _bezier_path,
+    _bezier_segments,
     _death_legend_line,
     _es_cliff,
+    _gap_items,
+    _gap_legend_line,
+    _integrity_html,
+    _integrity_stats,
+    _iter_segments_with_gaps,
     _kill_card_line,
     _kill_legend_line,
     _moving_average,
+    _svg_series,
     _tc_text,
+    _tc_text_floor,
+    _XAxis,
     annotation_code,
     annotation_name,
     compute_annotations,
@@ -2100,6 +2118,263 @@ def test_kill_events(tmp: Path) -> None:
           "MFD 非击落事件字段不变（缺 target 的击落不写该字段）")
 
 
+def build_gap_log(path: Path, with_gap_events: bool = True) -> None:
+    """单架次日志：两处 > 1 s 数据中断 + 一处 0.4 s 小抖动（只算「空洞」不算中断）。
+
+    带 gap 事件时：一条与真实空洞重合（验证合并去重），一条只有事件、没有样本空洞
+    （验证"事件补充"路径）；``with_gap_events=False`` 就是**老日志**，报告必须靠
+    相邻样本间隔自动检测出同样的空洞。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 1,
+                "app": "0.5.3-selftest",
+                "utc": _iso(EPOCH0),
+                "vehicle": "f_15ex",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    skip_windows = ((1.2, 1.6), (2.0, 3.3), (5.5, 6.6))
+    for i in range(0, 165):  # t = 1.00 … 9.20 @ 20 Hz
+        t = round(1.0 + 0.05 * i, 3)
+        if any(start < t < end for start, end in skip_windows):
+            continue
+        ias = 900.0 + 10.0 * (t - 1.0)
+        lines.append(
+            json.dumps(
+                _sample(t, EPOCH0, ias_kmh=ias, tas_kmh=ias + 40.0),
+                ensure_ascii=False,
+            )
+        )
+    if with_gap_events:
+        # 与自动检测的 1.3 s 空洞重合（事件写在洞尾）→ 合并去重，不重复计数
+        lines.append(
+            json.dumps({"type": "event", "kind": "gap", "t": 3.3, "gap": 1.3},
+                       ensure_ascii=False)
+        )
+        # 只有事件、没有样本空洞（样本被补插过）→ 单独一条 legend，没有桥
+        lines.append(
+            json.dumps({"type": "event", "kind": "gap", "t": 8.6, "gap": 1.2},
+                       ensure_ascii=False)
+        )
+    lines.append(json.dumps({"type": "event", "kind": "death", "t": 9.25}))
+    lines.append(json.dumps({"type": "end", "t": 9.3}))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _bezier_point(p0, c1, c2, p1, s: float):
+    """三次贝塞尔在参数 s∈[0,1] 处的点（测试专用）。"""
+    u = 1.0 - s
+    x = u ** 3 * p0[0] + 3 * u * u * s * c1[0] + 3 * u * s * s * c2[0] + s ** 3 * p1[0]
+    y = u ** 3 * p0[1] + 3 * u * u * s * c1[1] + 3 * u * s * s * c2[1] + s ** 3 * p1[1]
+    return x, y
+
+
+def test_gap_bezier(tmp: Path) -> None:
+    """数据中断（0.5.3）：贝塞尔平滑 / 1 s 断线 / 虚线桥 / gap 事件 / 完整性行。"""
+    print("\n[18] 数据中断：贝塞尔平滑 / 1 s 断线 / 虚线桥 / gap 事件 / 完整性")
+
+    # ---- 常量口径 ----
+    check(PATH_GAP_S == 1.0, "断线阈值 PATH_GAP_S 从 2.5 s 改成 1.0 s")
+    check(GAP_HOLE_S == 0.2, "「空洞」统计阈值 = 0.2 s（>0.2 s 计一处）")
+
+    # ---- 解析：gap 事件 + 向后兼容 ----
+    check(P.EVENT_LABELS.get("gap") == "数据中断", "事件中文名：gap = 数据中断")
+    path = tmp / "gap.jsonl"
+    build_gap_log(path)
+    model = P.analyze(str(path))
+    gap_events = [event for event in model.events if event.kind == "gap"]
+    check(len(gap_events) == 2, "解析出 2 条 gap 事件")
+    named = next(event for event in gap_events if close(event.gap, 1.3, 1e-9))
+    check(close(named.t, 3.3, 1e-9), "gap 事件的 t 解析正确")
+    check(named.as_dict().get("gap") == 1.3, "事件模型 / summary dict 带 gap 秒数")
+    check(len(model.flights) == 1, "gap 事件不切分架次（仍是一个架次）")
+    full = tmp / "full.jsonl"
+    if not full.exists():
+        build_full_log(full)
+    old_model = P.analyze(str(full))
+    check(all("gap" not in event.as_dict() for event in old_model.events),
+          "老日志事件不输出 gap 字段（向后兼容）")
+
+    # ---- 分段：1 s 断线 ----
+    segments, gaps = _iter_segments_with_gaps(
+        [0.0, 0.5, 1.4, 2.5], [1.0, 2.0, 3.0, 4.0]
+    )
+    check([len(segment) for segment in segments] == [3, 1], "0.9 s 间隔不断线、1.1 s 断线")
+    check(len(gaps) == 1 and close(gaps[0]["gap"], 1.1, 1e-9)
+          and close(gaps[0]["v0"], 3.0, 1e-9) and close(gaps[0]["v1"], 4.0, 1e-9),
+          "断口记录两侧时间与数值（画桥用）")
+    none_segments, none_gaps = _iter_segments_with_gaps(
+        [0.0, 0.1, None, 0.3], [1.0, 2.0, 3.0, 4.0]
+    )
+    check(len(none_segments) == 2 and none_gaps == [],
+          "None 只断线、不算 gap（不做插值桥）")
+
+    # ---- 贝塞尔：无 NaN / 零过冲 / C1 连续 ----
+    points = [(0.0, 100.0), (10.0, 100.0), (20.0, 300.0), (25.0, 300.0),
+              (30.0, 100.0), (40.0, 100.0)]
+    bezier = _bezier_segments(points)
+    check(len(bezier) == len(points) - 1, "每两个相邻点之间生成一段三次贝塞尔")
+    control_ok = True
+    curve_ok = True
+    tangent_ok = True
+    for p0, c1, c2, p1 in bezier:
+        lo, hi = min(p0[1], p1[1]), max(p0[1], p1[1])
+        if not (lo - 1e-9 <= c1[1] <= hi + 1e-9 and lo - 1e-9 <= c2[1] <= hi + 1e-9):
+            control_ok = False
+        if not (p0[0] - 1e-9 <= c1[0] <= p1[0] + 1e-9
+                and p0[0] - 1e-9 <= c2[0] <= p1[0] + 1e-9):
+            control_ok = False
+        for step in range(11):
+            x, y = _bezier_point(p0, c1, c2, p1, step / 10.0)
+            if not (math.isfinite(x) and math.isfinite(y)):
+                curve_ok = False
+            if not (lo - 1e-6 <= y <= hi + 1e-6):
+                curve_ok = False  # 过冲（鼓出尖峰）
+            if not (p0[0] - 1e-6 <= x <= p1[0] + 1e-6):
+                curve_ok = False  # 回头 / 打圈
+    check(control_ok, "贝塞尔控制点夹在两端点包围盒内（切线限幅生效）")
+    check(curve_ok, "曲线每个采样点都不越出相邻两端点范围（零过冲、x 单调、无 NaN）")
+    for index in range(len(bezier) - 1):
+        _p0, _c1, c2, p1 = bezier[index]
+        _q0, c1n, _q2, _q1 = bezier[index + 1]
+        ax, ay = p1[0] - c2[0], p1[1] - c2[1]
+        bx, by = c1n[0] - p1[0], c1n[1] - p1[1]
+        if abs(ax * by - ay * bx) > 1e-6 * max(1.0, abs(ax) + abs(by)):
+            tangent_ok = False
+    check(tangent_ok, "相邻两段在公共点处切线同向（C1 连续，没有折角）")
+    flat = _bezier_segments([(0.0, 50.0), (10.0, 50.0), (20.0, 50.0)])
+    check(all(abs(c1[1] - 50.0) < 1e-9 and abs(c2[1] - 50.0) < 1e-9
+              for _p0, c1, c2, _p1 in flat),
+          "完全平坦的段切线为 0（不会鼓包）")
+    path_text = _bezier_path(points)
+    check(path_text.startswith("M") and "C" in path_text
+          and "nan" not in path_text.lower() and "inf" not in path_text.lower(),
+          "路径是 M + C 三次贝塞尔，没有 NaN / inf")
+
+    # ---- _svg_series：实线段 + 断口虚线桥 + 面积图底边直线 ----
+    times_series = [
+        round(0.1 * i, 3) for i in range(0, 51) if not 2.0 < round(0.1 * i, 3) < 3.2
+    ]
+    values_series = [500.0 + 10.0 * t for t in times_series]
+    xaxis = _XAxis(0.0, 5.0, PLOT_LEFT, PLOT_RIGHT)
+    yaxis = _Axis(0.0, 1000.0, 640.0, 14.0)
+    defn = {"key": "ias", "label": "IAS", "color": "#123456", "axis": "left", "width": 1.7}
+    svg = _svg_series(defn, times_series, values_series, xaxis, yaxis)
+    check(svg.count('class="gap-bridge"') == 1,
+          ">1 s 空洞处画一条虚线贝塞尔桥（%d）" % svg.count('class="gap-bridge"'))
+    check('stroke-dasharray="4 4"' in svg and 'opacity="0.42"' in svg,
+          "桥是虚线 + 低透明度（同色）")
+    line_paths = re.findall(r'<path d="(M[^"]*)" fill="none"', svg)
+    check(len(line_paths) == 2 and all("C" in item for item in line_paths),
+          "断口两侧各一段平滑贝塞尔（不再有 L 折线），共 %d 段" % len(line_paths))
+    check(all(" L" not in item for item in line_paths), "非中断段不再用 L 直线连接")
+    check("nan" not in svg.lower() and "inf" not in svg.lower(),
+          "_svg_series 输出没有 NaN / inf")
+    fill_defn = dict(defn, fill="zero")
+    area_svg = _svg_series(fill_defn, times_series, values_series, xaxis, yaxis)
+    area_path = re.search(r'<path d="([^"]*)" fill="#123456"', area_svg)
+    check(area_path is not None and area_path.group(1).endswith("Z")
+          and area_path.group(1).count(" L") == 2,
+          "面积图只有两条直线（底边 + 两侧），曲线部分仍是 C（底边保持直线）")
+
+    # ---- gap 检测：自动检测为主 + gap 事件合并去重 ----
+    flight_times = model.flights[0].series["t"]
+    detected = _gap_items(flight_times)
+    check(len(detected) == 2 and [round(item["gap"], 2) for item in detected] == [1.3, 1.1],
+          "老日志口径：自动检测出 2 处 >1 s 中断（%s）"
+          % [round(item["gap"], 2) for item in detected])
+    merged = _gap_items(flight_times, _all_event_dicts(model))
+    check(len(merged) == 3, "gap 事件合并后 3 条（2 处样本空洞 + 1 条只有事件）")
+    check(merged[0]["source"] == "samples" and close(merged[0]["event_t"], 3.3, 1e-9)
+          and close(merged[0]["gap"], 1.3, 1e-9),
+          "与事件重合的空洞只算一次（以样本间隔为准，事件只做标记）")
+    check(merged[-1]["source"] == "event" and close(merged[-1]["gap"], 1.2, 1e-9)
+          and close(merged[-1]["t0"], 7.4, 1e-6),
+          "只有事件、没有样本空洞时按事件补一条（t0 = t - gap）")
+
+    # ---- legend 文本 / 时间码 ----
+    check(_tc_text_floor(19.628) == "T+00:19" and _tc_text_floor(59.99) == "T+00:59",
+          "中断时间码向零截断（19.628 → T+00:19）")
+    check(_gap_legend_line({"t0": 19.628, "t1": 22.29, "gap": 2.662}, 3)
+          == "④ GAP 数据中断 2.66s · T+00:19",
+          "GAP legend 行：%s"
+          % _gap_legend_line({"t0": 19.628, "t1": 22.29, "gap": 2.662}, 3))
+    check(_gap_legend_line({"t0": 2.0, "t1": 3.3, "gap": 1.3}, 0)
+          == "① GAP 数据中断 1.3s · T+00:02", "编号沿用 ①…⑩ 规则")
+
+    # ---- 概览「数据完整性」 ----
+    stats = _integrity_stats(model)
+    check(stats["samples"] == len(flight_times), "完整性统计样本数 = %d" % stats["samples"])
+    check(stats["holes"] == 3, "空洞 3 处（1.3 / 1.1 / 0.4 s，>0.2 s 都算）")
+    check(stats["interrupts"] == 2, ">1 s 中断 2 处")
+    check(close(stats["longest_s"], 1.3, 1e-6), "最大间隔 1.3 s")
+    integrity_html = _integrity_html(model)
+    check("数据完整性：%d 样本 / 3 空洞 / 最大 1.3 s（&gt;1 s 中断 2 处）"
+          % stats["samples"] in integrity_html,
+          "概览完整性行：%s" % re.sub(r"<[^>]+>", "", integrity_html))
+
+    # ---- 报告 HTML：竖带 / 斜纹 / 桥 / legend / 老日志兼容 ----
+    html = render_report(model)
+    speed_page = re.search(r'<section class="page[^"]*" id="page-speed".*?</section>',
+                           html, re.S)
+    speed_page = speed_page.group(0) if speed_page else ""
+    check(speed_page.count('class="gap-band"') == 2 and
+          speed_page.count('class="gap-hatch"') == 2,
+          "速度页 2 处中断各有一条淡灰竖带 + 斜纹")
+    check(speed_page.count('class="gap-bridge"') == 6,
+          "速度页 3 条曲线 × 2 处中断 = 6 条虚线桥（%d）"
+          % speed_page.count('class="gap-bridge"'))
+    speed_gap_lines = re.findall(r'<span class="ai gap-ai">([^<]*)</span>', speed_page)
+    check(speed_gap_lines == [
+        "② GAP 数据中断 1.3s · T+00:02",
+        "③ GAP 数据中断 1.1s · T+00:05",
+        "④ GAP 数据中断 1.2s · T+00:07",
+    ], "速度页 GAP legend 文本与编号（%s）" % " | ".join(speed_gap_lines))
+    check(speed_page.count('class="ann ann-screen"') <= 2,
+          "GAP legend 不挤占数据批注上限（速度页图面批注仍 ≤2）")
+    check("数据完整性：%d 样本" % stats["samples"] in html, "报告含概览完整性行")
+    pattern_ids = re.findall(r'<pattern id="([^"]+)"', html)
+    check(len(pattern_ids) == len(set(pattern_ids)) and pattern_ids,
+          "斜纹 <pattern> id 全文件唯一（%d 个）" % len(pattern_ids))
+    all_d = re.findall(r'<path[^>]*\sd="([^"]*)"', html)
+    check(all("nan" not in item.lower() and "inf" not in item.lower() for item in all_d),
+          "全部 SVG path 都没有 NaN / inf（%d 条）" % len(all_d))
+
+    # 老日志（没有 gap 事件）：自动检测出同样的空洞，桥与 legend 都在
+    old_gap_path = tmp / "gap-old.jsonl"
+    build_gap_log(old_gap_path, with_gap_events=False)
+    old_gap_model = P.analyze(str(old_gap_path))
+    check(not [event for event in old_gap_model.events if event.kind == "gap"],
+          "老日志没有 gap 事件")
+    old_gap_html = render_report(old_gap_model)
+    old_speed = re.search(r'<section class="page[^"]*" id="page-speed".*?</section>',
+                          old_gap_html, re.S)
+    old_speed = old_speed.group(0) if old_speed else ""
+    check(old_speed.count('class="gap-bridge"') == 6
+          and "GAP 数据中断 1.3s · T+00:02" in old_speed,
+          "老日志（无 gap 事件）也能自动检测中断并画桥 / legend")
+
+    # 更老的日志（没有 gap 事件、间隔 0.5 s）不受影响：没有中断 legend
+    legacy_html = render_report(old_model)
+    check("GAP 数据中断" not in legacy_html, "老日志（无 >1 s 空洞）不出现 GAP legend")
+    check("数据完整性：" in legacy_html, "老日志也有数据完整性行")
+
+    # ---- MFD 导出：gap 是诊断事件，不进 MFD 事件 JSON ----
+    payload = MF.build_mfd_payload(model)
+    check(not [event for event in payload["events"] if event["kind"] == "gap"],
+          "MFD 事件 JSON 不带 gap（HUD 事件轴字段集合不变）")
+
+
+def _all_event_dicts(model) -> list:
+    """模型全部事件 → dict（测试用；给 _gap_items 做事件合并）。"""
+    return [event.as_dict() for event in model.events if event.t is not None]
+
+
 def test_speed_limits(tmp: Path) -> None:
     """限速读取：hud-config perVehicleOverrides → airframes → 全局 overspeedKmh。"""
     print("\n[10] 限速读取（hud-config.json / airframes.json / --vne-kmh）")
@@ -2211,6 +2486,7 @@ def main() -> int:
         test_blueprint_report(tmp)
         test_annotations()
         test_kill_events(tmp)
+        test_gap_bezier(tmp)
         test_speed_limits(tmp)
         test_cli(tmp)
         test_mfd_helpers()

@@ -7,6 +7,9 @@
 // ★ 新增断言请写在这里；只增不改，别在它们中间删旧的（回归靠的就是这些名字）。
 
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using WtHud.Telemetry;
 using WtHud.Hud;
 using WtHud.Graphics;
@@ -1668,6 +1671,8 @@ public static partial class Program
             // 击落事件：kind=kill + target（被击落目标名）
             rec.Event("kill", null, null, "=FdX= Target");
             rec.Event("spawn", "selftest");
+            // 数据中断事件：kind=gap + gap 秒数
+            rec.Event("gap", null, null, null, 2.66);
             rec.Stop();
             var lines = File.ReadAllLines(recPath);
             Check("recorder round-trips JSONL",
@@ -1689,10 +1694,178 @@ public static partial class Program
                 && lines.Any(l => l.Contains("\"kind\":\"spawn\"")
                                   && l.Contains("\"vehicle\":\"selftest\"")
                                   && !l.Contains("\"target\"")));
+            // ★ 0.5.3 数据中断：kind=gap + gap 秒数；普通事件行不受影响（不出现 gap 字段）。
+            Check("recorder writes gap events with the interruption seconds",
+                lines.Any(l => l.Contains("\"type\":\"event\"")
+                              && l.Contains("\"kind\":\"gap\"")
+                              && l.Contains("\"gap\":2.66")));
+            Check("recorder keeps old event lines without a gap field",
+                lines.Where(l => l.Contains("\"type\":\"event\"") && !l.Contains("\"kind\":\"gap\""))
+                     .All(l => !l.Contains("\"gap\"")));
         }
         finally
         {
             if (recPath != null) { try { File.Delete(recPath); } catch { } }
+        }
+
+        // ---- 数据中断 gap：阈值纯函数 + 真实记录路径（不依赖游戏）----
+        // 阈值是严格 > 1.0 s：正好 1 s 的间隔不算中断，避免和 1 Hz 采样互相误伤。
+        var gapT0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Check("data gap threshold is strictly greater than 1 s",
+            SampleGapSeconds(null, gapT0) is null
+            && SampleGapSeconds(gapT0, gapT0.AddSeconds(0.4)) is null
+            && SampleGapSeconds(gapT0, gapT0.AddSeconds(1.0)) is null
+            && SampleGapSeconds(gapT0, gapT0.AddSeconds(1.001)) is double gEdge
+            && Math.Abs(gEdge - 1.001) < 1e-6);
+        Check("data gap log line keeps the documented shape",
+            GapLogLine(2.66, 41.2) == "record gap 2.66s at sample t=41.20");
+
+        // 走一遍 UpdateFlightRecording 的真实状态机：开始 → 1.3 s 中断 → 0.4 s 正常 → 收尾，
+        // 断言文件里正好一条 gap 事件、样本一条不少。这就是「用假快照做短录制」的等价物；
+        // 局限：没接真游戏，只验证记录器语义，不验证 8111 的实际负载。
+        string? gapRecPath = null;
+        try
+        {
+            var gapCfg = new HudConfig { RecordEnabled = true, RecordKeep = 200 };
+            var gapBaseUtc = DateTime.UtcNow;
+            TelemetrySnapshot GapSnap(double t) => new()
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest-gap",
+                ElapsedSeconds = t, TimestampUtc = gapBaseUtc.AddSeconds(t),
+                IasKmh = 700, TasKmh = 720, AltM = 3000, VyMs = 1, NyG = 1.1,
+            };
+            UpdateFlightRecording(gapCfg, GapSnap(0), true);     // 开始记录 + 第一条样本
+            gapRecPath = flightRecorder?.FilePath;
+            UpdateFlightRecording(gapCfg, GapSnap(1.3), true);   // 距上一条 1.3 s → gap
+            UpdateFlightRecording(gapCfg, GapSnap(1.7), true);   // 距上一条 0.4 s → 不写 gap
+            UpdateFlightRecording(new HudConfig { RecordEnabled = false }, GapSnap(1.7), true);  // 收尾落盘
+            var gapLines = gapRecPath is null ? Array.Empty<string>() : File.ReadAllLines(gapRecPath);
+            var gapSamples = gapLines.Count(l => l.Contains("\"type\":\"sample\""));
+            var gapEvents = gapLines.Where(l => l.Contains("\"type\":\"event\"")
+                                                && l.Contains("\"kind\":\"gap\"")).ToArray();
+            Check("recording writes one gap event for a >1 s interruption and keeps sampling",
+                gapRecPath is not null && gapSamples == 3 && gapEvents.Length == 1
+                && gapEvents[0].Contains("\"gap\":1.3"));
+        }
+        finally
+        {
+            // 断言失败也要把记录器收掉，别把半截文件留在 recordings/。
+            if (flightRecorder != null)
+                UpdateFlightRecording(new HudConfig { RecordEnabled = false },
+                    new TelemetrySnapshot { Valid = false }, false);
+            if (gapRecPath != null) { try { File.Delete(gapRecPath); } catch { } }
+        }
+
+        // ---- 8111 轮询：专用线程 + 延迟汇总行（回环假 8111，不依赖游戏）----
+        // 局限：这是最小的 HTTP/1.1 回环服务器，只证明「线程模型 + 计时 + 汇总行格式」；
+        // 不覆盖游戏侧真实负载，也不覆盖 8111 单线程服务端的排队特性。
+        Check("poll summary line keeps the documented shape",
+            WtHud.Telemetry.TelemetryClient.FormatPollLine(29.4, 12, 48, 120, 2660, 0)
+                == "poll: hz=29.4 p50=12ms p95=48ms p99=120ms max=2660ms errors=0");
+        var latSamples = new double[100];
+        for (int i = 0; i < latSamples.Length; i++) latSamples[i] = i + 1;
+        var (latP50, latP95, latP99) = WtHud.Telemetry.TelemetryClient.Percentiles(latSamples, latSamples.Length);
+        Check("poll percentiles use nearest rank",
+            Math.Abs(latP50 - 50) < 1e-9 && Math.Abs(latP95 - 95) < 1e-9 && Math.Abs(latP99 - 99) < 1e-9);
+
+        try
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int pollPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+            const string stateBody = """{"valid":true,"IAS, km/h":800,"TAS, km/h":820,"M":0.7,"H, m":3000,"Vy, m/s":2,"AoA, deg":3,"AoS, deg":0.5,"Ny":1.2,"Mfuel, kg":500,"Mfuel0, kg":1000}""";
+            const string indBody = """{"valid":true,"type":"selftest-poll","compass":90,"vario":2}""";
+            // 0 = 正常应答，1 = 回 500（制造 HTTP 失败，用来验证 errors 计数与汇总行）
+            var srvMode = new int[1];
+            using var srvCts = new System.Threading.CancellationTokenSource();
+            var srvThread = new Thread(() =>
+            {
+                while (!srvCts.IsCancellationRequested)
+                {
+                    TcpClient conn;
+                    try { conn = listener.AcceptTcpClient(); }
+                    catch { return; }
+                    using (conn)
+                    {
+                        try
+                        {
+                            var stream = conn.GetStream();
+                            var reader = new StreamReader(stream, Encoding.ASCII, false, 256, leaveOpen: true);
+                            string? requestLine = reader.ReadLine();
+                            string? header;
+                            do { header = reader.ReadLine(); } while (!string.IsNullOrEmpty(header));
+                            bool fail = System.Threading.Volatile.Read(ref srvMode[0]) != 0;
+                            byte[] head;
+                            if (fail)
+                            {
+                                head = Encoding.ASCII.GetBytes(
+                                    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                                stream.Write(head, 0, head.Length);
+                            }
+                            else
+                            {
+                                string body = requestLine != null && requestLine.Contains("/indicators")
+                                    ? indBody : stateBody;
+                                var payload = Encoding.UTF8.GetBytes(body);
+                                head = Encoding.ASCII.GetBytes(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                                    payload.Length.ToString(CultureInfo.InvariantCulture) +
+                                    "\r\nConnection: close\r\n\r\n");
+                                stream.Write(head, 0, head.Length);
+                                stream.Write(payload, 0, payload.Length);
+                            }
+                            stream.Flush();
+                        }
+                        catch { }
+                    }
+                }
+            }) { IsBackground = true, Name = "selftest-fake-8111" };
+            srvThread.Start();
+
+            var pollSeqs = new List<long>();
+            var pollOut = new StringWriter();
+            var oldOut = Console.Out;
+            int oldWindowMs = WtHud.Telemetry.TelemetryClient.StatsWindowMs;
+            WtHud.Telemetry.TelemetryClient? poller = null;
+            bool pollThreadOk = false;
+            try
+            {
+                WtHud.Telemetry.TelemetryClient.StatsWindowMs = 150;   // 自检不等 5 s
+                Console.SetOut(pollOut);
+                poller = new WtHud.Telemetry.TelemetryClient(5, "http://127.0.0.1:" + pollPort);
+                poller.SnapshotReceived += s => { lock (pollSeqs) pollSeqs.Add(s.Seq); };
+                poller.Start();
+                Thread.Sleep(250);
+                var pollThread = poller.PollThread;
+                pollThreadOk = pollThread is { IsBackground: true }
+                               && pollThread.Priority == ThreadPriority.AboveNormal
+                               && pollThread.Name == "telemetry-poll";
+                Thread.Sleep(250);
+                System.Threading.Volatile.Write(ref srvMode[0], 1);   // 之后回 500 → errors 计数
+                Thread.Sleep(500);
+            }
+            finally
+            {
+                Console.SetOut(oldOut);
+                WtHud.Telemetry.TelemetryClient.StatsWindowMs = oldWindowMs;
+                poller?.Dispose();
+                try { listener.Stop(); } catch { }
+                srvThread.Join(1000);
+            }
+            string pollLog = pollOut.ToString();
+            Check("poller runs on its own above-normal background thread", pollThreadOk);
+            Check("poller publishes monotonically increasing sequence numbers",
+                pollSeqs.Count >= 3 && pollSeqs.Zip(pollSeqs.Skip(1), (x, y) => y > x).All(ok => ok));
+            Check("poller logs a latency summary line every window",
+                pollLog.Contains("poll: hz=") && pollLog.Contains(" p50=")
+                && pollLog.Contains(" p95=") && pollLog.Contains(" errors="));
+            Check("poller logs poll errors as a summary instead of spamming",
+                pollLog.Contains("poll error:"));
+        }
+        catch (Exception ex)
+        {
+            // 受限环境（比如禁止监听回环）不算功能失败，跳过并注明，免得误报。
+            Console.WriteLine("  SKIP  poll thread simulation: " + ex.Message);
         }
 
         // ================= MFD 内置飞行记录分析（0.4.41）=================

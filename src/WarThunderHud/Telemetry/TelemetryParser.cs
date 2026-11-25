@@ -19,7 +19,8 @@ public static class TelemetryParser
     /// </summary>
     private const double FeetToMetres = 0.3048;
 
-    public static TelemetrySnapshot Parse(string? stateJson, string? indicatorsJson, TimeSpan elapsed, DateTime utcNow)
+    public static TelemetrySnapshot Parse(string? stateJson, string? indicatorsJson, TimeSpan elapsed, DateTime utcNow,
+                                          long seq = 0)
     {
         double ias = 0, tas = 0, mach = 0, alt = 0, vy = 0, aoa = 0, aos = 0, ny = 1, wx = 0;
         double mfuel = 0, mfuel0 = 0, gearPct = 0, flapsPct = 0, airbrakePct = 0;
@@ -114,6 +115,7 @@ public static class TelemetryParser
 
         return new TelemetrySnapshot
         {
+            Seq = seq,
             TimestampUtc = utcNow,
             ElapsedSeconds = elapsed.TotalSeconds,
             Valid = valid,

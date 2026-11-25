@@ -40,6 +40,12 @@ public sealed class Capabilities
 /// </summary>
 public sealed class TelemetrySnapshot
 {
+    /// <summary>
+    /// 轮询序号（<see cref="TelemetryClient"/> 每次成功解析加一）。用来区分「同一条快照被读多次」
+    /// 和「真来了新快照」，也方便日志/自检核对轮询节奏 —— 游戏的 ElapsedSeconds 只有 0.1 s 分辨率。
+    /// </summary>
+    public long Seq { get; init; }
+
     public DateTime TimestampUtc { get; init; }
     public double ElapsedSeconds { get; init; }
 

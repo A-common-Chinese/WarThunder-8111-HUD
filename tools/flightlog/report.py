@@ -14,9 +14,15 @@
 * 速度页顶部显示**平均 IAS / TAS / Mach**，起止时间可手动设置（默认整个架次），
   所选区间在图上用浅色底纹 + 边界虚线标出、平均值画成对应颜色的水平虚线；
 * 图表全部用内联 SVG 在 Python 侧画好，**浏览器禁用脚本也能看到全部图**；
+  曲线是**三次贝塞尔平滑**（Catmull-Rom 切线 + Fritsch–Carlson 限幅，零过冲），
+  相邻样本间隔 > 1 s 的"数据中断"处实线断开、补一条虚线贝塞尔桥 + 淡灰竖带/斜纹，
+  图下 legend 加 ``GAP 数据中断 2.66s · T+00:19``；概览页有「数据完整性」一行
+  （样本 / 空洞 / 最大间隔 / >1 s 中断数）；
 * 内联 JS 只负责"锦上添花"：翻页、架次切换、鼠标悬停十字线 + 数值浮窗；
 * 事件（死亡 / 复活 / 换机型 / 击落）以竖线 + 标签画在每条时间轴上方，并贯穿全部图表；
   击落（``kill``，0.5.2 起）用青绿/蓝竖线，图下 legend 补一行 ``KILL 击落 <target> · T+mm:ss``；
+  数据中断（``gap``，0.5.3 起日志才有）不画事件竖线，用断口虚线桥 + 竖带表示，
+  legend 补 ``GAP 数据中断 <秒>s · T+mm:ss``（老日志没有 gap 事件也能按样本间隔自动检测）；
 * **6 套美术主题**（``--theme blueprint|glass|manual|tactical|clean|mfd``，
   默认 ``blueprint`` = A 工程蓝图：深蓝图纸底 + 坐标纸网格 + 每页图框/图号
   （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9`` + 右下角标题栏）；
@@ -68,8 +74,22 @@ PAD_BOTTOM = 26.0
 MAX_SVG_POINTS = 1800
 #: 全局总览抽稀目标点数
 MAX_OVERVIEW_POINTS = 2600
-#: 序列在两条曲线之间断开的时间阈值（秒）
-PATH_GAP_S = 2.5
+#: 序列在两条曲线之间断开的时间阈值（秒）：相邻样本间隔 > 1 s 视为一次**数据中断**，
+#: 实线断开、改画虚线贝塞尔桥（8111 轮询卡顿时录制样本会出现这种空洞）。
+PATH_GAP_S = 1.0
+#: 概览「数据完整性」里"空洞"的判定阈值（秒）：相邻样本间隔 > 0.2 s 计一处。
+#: 用户实测 220101 文件（104 s / 2088 样本）按这个口径正好 43 处。
+GAP_HOLE_S = 0.2
+#: 超过这个跨度的空洞不再当"轮询卡顿"：达到架次切分阈值（DEFAULT_GAP_SPLIT_S = 30 s）
+#: 说明是换局 / 长时间暂停，画插值桥反而误导，保持断开（也不进 legend）。
+GAP_BRIDGE_MAX_S = 30.0
+#: gap 事件与自动检测空洞的时间容差（秒），用于合并去重。
+GAP_MERGE_S = 1.5
+#: 中断的表现参数：虚线贝塞尔桥 / 淡灰竖带 / 斜纹
+GAP_BRIDGE_OPACITY = 0.42
+GAP_BRIDGE_WIDTH = 1.35
+GAP_BAND_OPACITY = 0.06
+GAP_HATCH_OPACITY = 0.38
 
 #: 单页图表的 viewBox 高度（页面铺满时按容器比例拉伸）
 PAGE_CHART_H = 650.0
@@ -367,6 +387,7 @@ THEMES: Dict[str, Theme] = {
             "invalid": "#9aa7b8",
             "death_region": "#ff5c5c",
             "vline": "#cbd5e1",
+            "gap": "#94a7bd",
             "crosshair": "#e6eef7",
             "crosshair_stroke": "#0a0e13",
         },
@@ -483,6 +504,7 @@ THEMES: Dict[str, Theme] = {
             "invalid": "#6c8ea0",
             "death_region": "#ef476f",
             "vline": "#a7c6d4",
+            "gap": "#8fa8ba",
             "crosshair": "#e6edf3",
             "crosshair_stroke": "#0b0f14",
         },
@@ -604,6 +626,7 @@ header h1,.page-title{letter-spacing:1.2px;font-weight:600}
             "invalid": "#8a8578",
             "death_region": "#a31d1d",
             "vline": "#8a7a63",
+            "gap": "#9a9488",
             "crosshair": "#7a3b12",
             "crosshair_stroke": "#f4f1e8",
         },
@@ -752,6 +775,7 @@ header{background:#fff!important;border-bottom:2px solid #111!important}
             "invalid": "#8a8a6f",
             "death_region": "#e06a5a",
             "vline": "#d8cba6",
+            "gap": "#a9a48a",
             "crosshair": "#f0e6c8",
             "crosshair_stroke": "#2f3a2a",
         },
@@ -879,6 +903,7 @@ header{background:#2f3a2a!important}
             "invalid": "#6b7280",
             "death_region": "#dc2626",
             "vline": "#64748b",
+            "gap": "#9ca3af",
             "crosshair": "#1f2937",
             "crosshair_stroke": "#ffffff",
         },
@@ -1008,6 +1033,7 @@ header{background:#fff!important}
             "invalid": "#6E93B5",
             "death_region": "#FF5A3C",
             "vline": "#CFE9FC",
+            "gap": "#8FB6D4",
             "crosshair": "#E6F4FF",
             "crosshair_stroke": "#0B2A4A",
         },
@@ -1113,6 +1139,7 @@ header{background:#fff!important}
             "invalid": "#B7A483",
             "death_region": "#A8322B",
             "vline": "#A8967A",
+            "gap": "#B7A483",
             "crosshair": "#2B2418",
         },
     ),
@@ -1217,6 +1244,8 @@ class SpeedLimits:
     global_vne_kmh: Optional[float] = None
     #: 读到的配置目录（诊断用）
     hud_dir: str = ""
+    #: ``hud-config.json`` 里的玩家昵称（复盘卡「PILOT 飞行员」用，空则为空）
+    player_name: str = ""
     #: 是否由 ``--vne-kmh`` 手动指定
     manual: bool = False
     #: 读取过程中的提示（缺文件 / 坏 JSON）
@@ -1304,9 +1333,11 @@ def load_speed_limits(hud_dir: Optional[str] = None) -> SpeedLimits:
 
     config = _read_json_object(os.path.join(chosen, "hud-config.json"))
     global_vne: Optional[float] = None
+    player_name = ""
     if config is None:
         notes.append("hud-config.json 无法解析（只用 airframes.json）")
     else:
+        player_name = str(config.get("playerName") or "").strip()
         global_vne = _positive_float(config.get("overspeedKmh"))
         if global_vne is None:
             global_vne = _positive_float(config.get("overspeedIas"))
@@ -1328,6 +1359,7 @@ def load_speed_limits(hud_dir: Optional[str] = None) -> SpeedLimits:
         by_vehicle=by_vehicle,
         global_vne_kmh=global_vne,
         hud_dir=chosen,
+        player_name=player_name,
         notes=tuple(notes),
     )
 
@@ -1354,6 +1386,21 @@ def _tc_text(seconds: float, tenths: bool = True) -> str:
             whole -= 60
         text = "%02d" % whole
     return "T+%02d:%s" % (minutes, text)
+
+
+def _tc_text_floor(seconds: float) -> str:
+    """任务时间码 ``T+mm:ss``（**向零截断**，不四舍五入）。
+
+    中断 legend 用截断：空洞从 19.6 s 开始就写 ``T+00:19``（和用户实测对齐），
+    写成 ``T+00:20`` 会让人以为空洞发生在第 20 秒整。
+    """
+    value = max(0.0, float(seconds))
+    minutes = int(value // 60)
+    rest = int(value - minutes * 60)
+    if rest >= 60:
+        minutes += 1
+        rest -= 60
+    return "T+%02d:%02d" % (minutes, rest)
 
 
 def _series_max(values: Sequence[Optional[float]]) -> Tuple[int, float]:
@@ -1711,6 +1758,20 @@ def _event_legend_line(mark: Dict[str, Any], index: int) -> str:
     return _death_legend_line(mark, index)
 
 
+def _gap_legend_line(item: Dict[str, Any], index: int) -> str:
+    """屏幕 / PDF 的 GAP legend 行：``③ GAP 数据中断 2.66s · T+00:19``。
+
+    编号沿用事件编号规则（排在数据批注 / DEATH / KILL 之后，不占数据批注的 2 条上限）；
+    时间取空洞**起点**并截断到秒，``2.66s`` 与事件条 / 概览「数据完整性」口径一致。
+    """
+    gap = float(item.get("gap") or 0.0)
+    return "%s GAP 数据中断 %ss · %s" % (
+        _annotation_number(index),
+        _fmt_number(gap, 2),
+        _tc_text_floor(float(item["t0"])),
+    )
+
+
 def _annotation_text(annotation: Dict[str, Any]) -> str:
     """屏幕标注条上的完整文字：``值 · T+mm:ss``。"""
     body = " / ".join(annotation.get("parts") or [_annotation_part(annotation)])
@@ -1934,11 +1995,23 @@ def _fmt_time(value: float, step: float) -> str:
     return ("%." + str(_tick_digits(step)) + "f") % value
 
 
-def _iter_segments(
+def _iter_segments_with_gaps(
     times: Sequence[float], values: Sequence[Optional[float]], max_gap_s: float = PATH_GAP_S
-) -> List[List[Tuple[float, float]]]:
-    """把序列切成若干连续段（None 或大时间缺口处断开）。"""
+) -> Tuple[List[List[Tuple[float, float]]], List[Dict[str, float]]]:
+    """把序列切成若干连续段，并返回段与段之间的**时间跳变**。
+
+    返回 ``(segments, gaps)``：
+
+    * ``segments`` —— ``[[(t, v), ...], ...]``，``None`` 或相邻间隔 > ``max_gap_s``
+      处断开；
+    * ``gaps`` —— ``[{"t0", "t1", "gap", "v0", "v1"}, ...]``，只记**时间跳变**造成的
+      断口，``v0`` / ``v1`` 是断口两侧的值（画虚线贝塞尔桥用）。
+
+    ``None`` 造成的断开不算 gap：那是坏样本 / 无效数据，用 ``invalid`` 底纹表示，
+    不做插值桥（否则等于凭空编数据）。
+    """
     segments: List[List[Tuple[float, float]]] = []
+    gaps: List[Dict[str, float]] = []
     current: List[Tuple[float, float]] = []
     last_t: Optional[float] = None
     for t, v in zip(times, values):
@@ -1950,13 +2023,30 @@ def _iter_segments(
             continue
         if last_t is not None and (t - last_t) > max_gap_s:
             if current:
+                prev = current[-1]
                 segments.append(current)
+                gaps.append(
+                    {
+                        "t0": float(prev[0]),
+                        "t1": float(t),
+                        "gap": float(t) - float(prev[0]),
+                        "v0": float(prev[1]),
+                        "v1": float(v),
+                    }
+                )
                 current = []
         current.append((t, v))
         last_t = t
     if current:
         segments.append(current)
-    return segments
+    return segments, gaps
+
+
+def _iter_segments(
+    times: Sequence[float], values: Sequence[Optional[float]], max_gap_s: float = PATH_GAP_S
+) -> List[List[Tuple[float, float]]]:
+    """兼容入口：只要连续段（内部改用 :func:`_iter_segments_with_gaps`）。"""
+    return _iter_segments_with_gaps(times, values, max_gap_s)[0]
 
 
 def _decimate(points: List[Tuple[float, float]], limit: int) -> List[Tuple[float, float]]:
@@ -1974,6 +2064,174 @@ def _decimate(points: List[Tuple[float, float]], limit: int) -> List[Tuple[float
         pos += step
     out.append(points[-1])
     return out
+
+
+# ---------------------------------------------------------------------------
+# 平滑路径：Catmull-Rom 切线 + Fritsch–Carlson 限幅 → 三次贝塞尔
+# ---------------------------------------------------------------------------
+#
+# 旧版曲线是 ``M...L...`` 折线，样本密时转折生硬、还容易看出量化锯齿。
+# 现在所有"连续段"都画成穿过每个点的三次贝塞尔：
+#
+# 1. 切线取三点差分（= Catmull-Rom 在函数形式下的非均匀版本）：
+#    ``m_i = (h_next*delta_prev + h_prev*delta_next) / (h_prev + h_next)``；
+# 2. 再用 Fritsch–Carlson 单调性限幅（PCHIP 的圆约束 ``a^2 + b^2 <= 9``，
+#    局部极值处切线置 0）。这一步保证**每段 y 都在两端点之间、x 单调**，
+#    即曲线不会过冲（不会在尖峰外鼓包、不会回头打圈），也不改变端点值。
+#
+# 控制点仍是贝塞尔标准形式 ``c1 = p0 + h/3 * (1, m0)``、``c2 = p1 - h/3 * (1, m1)``，
+# 所以"穿过各点"和 Catmull-Rom 一致，只是把危险的切线压回去了。
+
+
+def _bezier_segments(
+    points: Sequence[Tuple[float, float]],
+) -> List[Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float]]]:
+    """像素点列 → ``[(p0, c1, c2, p1), ...]`` 三次贝塞尔段（无过冲，见上）。"""
+    clean: List[Tuple[float, float]] = []
+    for raw_x, raw_y in points:
+        x = float(raw_x)
+        y = float(raw_y)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            continue
+        if clean and abs(x - clean[-1][0]) < 1e-9:
+            # 同一像素列（重复时间戳 / 抽稀撞车）：保留后一个值，避免 h = 0
+            clean[-1] = (x, y)
+        else:
+            clean.append((x, y))
+    n = len(clean)
+    if n < 2:
+        return []
+
+    h = [clean[i + 1][0] - clean[i][0] for i in range(n - 1)]
+    delta = [(clean[i + 1][1] - clean[i][1]) / h[i] for i in range(n - 1)]
+
+    # 1) Catmull-Rom（三点差分）切线 + 局部极值处置 0（单调性要求）
+    tan = [0.0] * n
+    tan[0] = delta[0]
+    tan[-1] = delta[-1]
+    for i in range(1, n - 1):
+        if delta[i - 1] * delta[i] <= 0.0:
+            tan[i] = 0.0
+        else:
+            tan[i] = (h[i] * delta[i - 1] + h[i - 1] * delta[i]) / (h[i - 1] + h[i])
+
+    # 2) Fritsch–Carlson 圆约束限幅（只减小切线，因此前一段的单调性不会被破坏）
+    for i in range(n - 1):
+        if abs(delta[i]) < 1e-12:
+            tan[i] = 0.0
+            tan[i + 1] = 0.0
+            continue
+        a = max(0.0, tan[i] / delta[i])
+        b = max(0.0, tan[i + 1] / delta[i])
+        norm = a * a + b * b
+        if norm > 9.0:
+            scale = 3.0 / math.sqrt(norm)
+            tan[i] = scale * a * delta[i]
+            tan[i + 1] = scale * b * delta[i]
+
+    segments = []
+    for i in range(n - 1):
+        step = h[i] / 3.0
+        p0 = clean[i]
+        p1 = clean[i + 1]
+        c1 = (p0[0] + step, p0[1] + tan[i] * step)
+        c2 = (p1[0] - step, p1[1] - tan[i + 1] * step)
+        segments.append((p0, c1, c2, p1))
+    return segments
+
+
+def _bezier_commands(
+    segments: Sequence[
+        Tuple[Tuple[float, float], Tuple[float, float], Tuple[float, float], Tuple[float, float]]
+    ],
+) -> str:
+    """控制点段 → ``C x1,y1 x2,y2 x,y`` 命令串（不含起始 ``M``）。"""
+    parts: List[str] = []
+    for _p0, c1, c2, p1 in segments:
+        parts.append(
+            "C%s,%s %s,%s %s,%s"
+            % (
+                _fmt_coord(c1[0]),
+                _fmt_coord(c1[1]),
+                _fmt_coord(c2[0]),
+                _fmt_coord(c2[1]),
+                _fmt_coord(p1[0]),
+                _fmt_coord(p1[1]),
+            )
+        )
+    return "".join(parts)
+
+
+def _bezier_path(points: Sequence[Tuple[float, float]]) -> str:
+    """像素点列 → ``M...C...`` 平滑路径（局部极值/尖峰不过冲）。"""
+    segments = _bezier_segments(points)
+    if not segments:
+        return ""
+    first = segments[0][0]
+    return "M%s,%s%s" % (_fmt_coord(first[0]), _fmt_coord(first[1]), _bezier_commands(segments))
+
+
+def _edge_slope_px(
+    segment: Sequence[Tuple[float, float]],
+    side: str,
+    xaxis: Any,
+    yaxis: Any,
+    window_s: float = 1.0,
+) -> float:
+    """断口一侧的像素斜率 ``dy/dx``（用一个时间窗里的首尾点估计，抗单点噪声）。"""
+    if len(segment) < 2:
+        return 0.0
+    if side == "end":
+        t_anchor, v_anchor = segment[-1]
+        t_other, v_other = segment[0]
+        for t, v in segment:
+            if t >= t_anchor - window_s:
+                t_other, v_other = t, v
+                break
+    else:  # "start"
+        t_anchor, v_anchor = segment[0]
+        t_other, v_other = segment[-1]
+        for t, v in reversed(segment):
+            if t <= t_anchor + window_s:
+                t_other, v_other = t, v
+                break
+    if abs(t_anchor - t_other) < 1e-9:
+        return 0.0
+    py_anchor = yaxis(v_anchor)
+    py_other = yaxis(v_other)
+    px_anchor = xaxis(t_anchor)
+    px_other = xaxis(t_other)
+    if py_anchor is None or py_other is None or abs(px_anchor - px_other) < 1e-9:
+        return 0.0
+    slope = (py_anchor - py_other) / (px_anchor - px_other)
+    # 极端斜率（单样本跳变）没有意义，限幅到 ±8（约 83°），控制点再按端点点 y 夹紧
+    return max(-8.0, min(8.0, slope))
+
+
+def _gap_bridge_path(
+    p0: Tuple[float, float], slope0: float, p1: Tuple[float, float], slope1: float
+) -> str:
+    """断口两侧点 → 一段平滑的三次贝塞尔"桥"（虚线画，表示插值 / 中断）。"""
+    dx = p1[0] - p0[0]
+    if dx <= 0.0:
+        return ""
+    step = dx / 3.0
+    c1y = p0[1] + slope0 * step
+    c2y = p1[1] - slope1 * step
+    lo, hi = (p0[1], p1[1]) if p0[1] <= p1[1] else (p1[1], p0[1])
+    # 控制点 y 夹在两端点之间 → 桥本身也不会过冲（凸包性质）
+    c1y = min(max(c1y, lo), hi)
+    c2y = min(max(c2y, lo), hi)
+    return "M%s,%s C%s,%s %s,%s %s,%s" % (
+        _fmt_coord(p0[0]),
+        _fmt_coord(p0[1]),
+        _fmt_coord(p0[0] + step),
+        _fmt_coord(c1y),
+        _fmt_coord(p1[0] - step),
+        _fmt_coord(c2y),
+        _fmt_coord(p1[0]),
+        _fmt_coord(p1[1]),
+    )
 
 
 class _Axis:
@@ -2206,8 +2464,14 @@ def _svg_series(
     xaxis: _XAxis,
     yaxis: _Axis,
 ) -> str:
-    """渲染一条曲线（含正值/负值裁剪与面积填充）。"""
-    key = defn["key"]
+    """渲染一条曲线：三次贝塞尔平滑（含正值/负值裁剪与面积填充）。
+
+    * 非中断段（相邻样本间隔 ≤ ``PATH_GAP_S``）不再画折线，改用
+      :func:`_bezier_path`（Catmull-Rom 切线 + 限幅）平滑穿过各点；
+    * 每个 > 1 s 的时间空洞：实线断开，在断口两侧点之间补一条**虚线、
+      低透明度、同色**的三次贝塞尔桥（表示插值 / 中断），不画实线直连；
+    * 面积图的**底边保持直线**（``M baseline → L 首点 → 贝塞尔 → L baseline``）。
+    """
     clip = defn.get("clip")
     fill = defn.get("fill")
     if clip == "pos":
@@ -2217,54 +2481,91 @@ def _svg_series(
     else:
         series = list(values)
 
-    segments = _iter_segments(times, series)
+    segments, gaps = _iter_segments_with_gaps(times, series)
     if not segments:
         return ""
 
+    # 断口桥：只画 <= GAP_BRIDGE_MAX_S 的（更大 = 换局/长暂停，保持断开）
+    bridges: Dict[Tuple[float, float], Dict[str, float]] = {}
+    for gap in gaps:
+        if gap["gap"] <= GAP_BRIDGE_MAX_S:
+            bridges[(gap["t0"], gap["t1"])] = gap
+
+    color = defn["color"]
+    width = defn.get("width", 1.7)
+    dash = ' stroke-dasharray="5 4"' if defn.get("dash") else ""
     parts: List[str] = []
-    for segment in segments:
-        segment = _decimate(segment, MAX_SVG_POINTS)
-        if len(segment) == 1:
-            px = xaxis(segment[0][0])
-            py = yaxis(segment[0][1])
+
+    for index, segment in enumerate(segments):
+        pixels: List[Tuple[float, float]] = []
+        for t, v in segment:
+            py = yaxis(v)
             if py is None:
                 continue
+            pixels.append((xaxis(t), py))
+        if not pixels:
+            continue
+        if len(pixels) > 1:
+            # 像素空间抽稀（保持 MAX_SVG_POINTS 口径；抽稀后仍按顺序穿过这些点）
+            pixels = _decimate(pixels, MAX_SVG_POINTS)
+        if len(pixels) == 1:
             parts.append(
                 '<circle cx="%s" cy="%s" r="2.2" fill="%s"/>'
-                % (_fmt_coord(px), _fmt_coord(py), defn["color"])
+                % (_fmt_coord(pixels[0][0]), _fmt_coord(pixels[0][1]), color)
             )
-            continue
-        line = "M" + " L".join(
-            "%s,%s" % (_fmt_coord(xaxis(t)), _fmt_coord(yaxis(v) or 0.0)) for t, v in segment
-        )
-        if fill:
-            if fill == "zero":
-                baseline = yaxis(0.0)
-            else:
-                baseline = yaxis(yaxis.lo)
-            if baseline is not None:
-                first_x = xaxis(segment[0][0])
-                last_x = xaxis(segment[-1][0])
-                area = (
-                    "M%s,%s L"
-                    % (_fmt_coord(first_x), _fmt_coord(baseline))
-                    + " L".join(
-                        "%s,%s" % (_fmt_coord(xaxis(t)), _fmt_coord(yaxis(v) or 0.0))
-                        for t, v in segment
+        else:
+            if fill:
+                if fill == "zero":
+                    baseline = yaxis(0.0)
+                else:
+                    baseline = yaxis(yaxis.lo)
+                if baseline is not None:
+                    first, last = pixels[0], pixels[-1]
+                    area = (
+                        "M%s,%s L%s,%s %s L%s,%s Z"
+                        % (
+                            _fmt_coord(first[0]),
+                            _fmt_coord(baseline),
+                            _fmt_coord(first[0]),
+                            _fmt_coord(first[1]),
+                            _bezier_commands(_bezier_segments(pixels)),
+                            _fmt_coord(last[0]),
+                            _fmt_coord(baseline),
+                        )
                     )
-                    + " L%s,%s Z" % (_fmt_coord(last_x), _fmt_coord(baseline))
-                )
-                opacity = "0.16" if fill == "min" else "0.22"
-                parts.append(
-                    '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"/>'
-                    % (area, defn["color"], opacity)
-                )
-        dash = ' stroke-dasharray="5 4"' if defn.get("dash") else ""
-        parts.append(
-            '<path d="%s" fill="none" stroke="%s" stroke-width="%s" stroke-linejoin="round"'
-            ' stroke-linecap="round"%s vector-effect="non-scaling-stroke"/>'
-            % (line, defn["color"], defn.get("width", 1.7), dash)
-        )
+                    opacity = "0.16" if fill == "min" else "0.22"
+                    parts.append(
+                        '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"/>'
+                        % (area, color, opacity)
+                    )
+            parts.append(
+                '<path d="%s" fill="none" stroke="%s" stroke-width="%s" stroke-linejoin="round"'
+                ' stroke-linecap="round"%s vector-effect="non-scaling-stroke"/>'
+                % (_bezier_path(pixels), color, width, dash)
+            )
+
+        # 到下一段的断口：虚线贝塞尔桥（表示插值 / 中断，不画实线直连）
+        if index + 1 < len(segments):
+            gap = bridges.get((segment[-1][0], segments[index + 1][0][0]))
+            if gap is None:
+                continue
+            py0 = yaxis(gap["v0"])
+            py1 = yaxis(gap["v1"])
+            if py0 is None or py1 is None:
+                continue
+            p0 = (xaxis(gap["t0"]), py0)
+            p1 = (xaxis(gap["t1"]), py1)
+            slope0 = _edge_slope_px(segment, "end", xaxis, yaxis)
+            slope1 = _edge_slope_px(segments[index + 1], "start", xaxis, yaxis)
+            bridge = _gap_bridge_path(p0, slope0, p1, slope1)
+            if not bridge:
+                continue
+            parts.append(
+                '<path class="gap-bridge" d="%s" fill="none" stroke="%s"'
+                ' stroke-width="%s" stroke-dasharray="4 4" stroke-linecap="round"'
+                ' opacity="%s" vector-effect="non-scaling-stroke"/>'
+                % (bridge, color, GAP_BRIDGE_WIDTH, GAP_BRIDGE_OPACITY)
+            )
     return "".join(parts)
 
 
@@ -2412,6 +2713,64 @@ def _svg_regions(
                 _fmt_coord(y1 - y0),
                 region.get("color", COLORS["death_region"]),
                 region.get("opacity", 0.08),
+            )
+        )
+    return "".join(parts)
+
+
+def _svg_gap_bands(
+    gaps: Sequence[Dict[str, Any]],
+    xaxis: _XAxis,
+    t0: float,
+    t1: float,
+    y0: float,
+    y1: float,
+    chart_id: str,
+) -> str:
+    """数据中断的底纹：淡灰竖带 + 45° 浅斜纹（很淡，压在曲线下面）。
+
+    每个图用自己唯一的 ``gap-hatch-<chart_id>`` 图案 id，避免单文件里多张 SVG
+    的 ``<pattern>`` id 撞车。带宽按时间区间真实宽度画；极窄时至少留 0.8 单位，
+    保证"有中断"这件事看得见。
+    """
+    if not gaps:
+        return ""
+    gap_color = COLORS.get("gap") or COLORS["other"]
+    pattern_id = "gap-hatch-%s" % re.sub(r"[^A-Za-z0-9_.-]", "-", str(chart_id))
+    parts: List[str] = [
+        '<defs><pattern id="%s" width="7" height="7" patternUnits="userSpaceOnUse"'
+        ' patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke="%s"'
+        ' stroke-width="1.5" opacity="0.6"/></pattern></defs>' % (pattern_id, gap_color)
+    ]
+    for item in gaps:
+        start = max(float(item["t0"]), float(t0))
+        end = min(float(item["t1"]), float(t1))
+        if end < start:
+            continue
+        x = xaxis(start)
+        width = max(xaxis(end) - x, 0.8)
+        parts.append(
+            '<rect class="gap-band" x="%s" y="%s" width="%s" height="%s" fill="%s"'
+            ' fill-opacity="%s"/>'
+            % (
+                _fmt_coord(x),
+                _fmt_coord(y0),
+                _fmt_coord(width),
+                _fmt_coord(y1 - y0),
+                gap_color,
+                GAP_BAND_OPACITY,
+            )
+        )
+        parts.append(
+            '<rect class="gap-hatch" x="%s" y="%s" width="%s" height="%s"'
+            ' fill="url(#%s)" fill-opacity="%s"/>'
+            % (
+                _fmt_coord(x),
+                _fmt_coord(y0),
+                _fmt_coord(width),
+                _fmt_coord(y1 - y0),
+                pattern_id,
+                GAP_HATCH_OPACITY,
             )
         )
     return "".join(parts)
@@ -2895,6 +3254,8 @@ def _render_chart(
     annotations: Sequence[Dict[str, Any]] = (),
     event_marks: Sequence[Dict[str, Any]] = (),
     event_legend: Sequence[Dict[str, Any]] = (),
+    gap_events: Sequence[Dict[str, Any]] = (),
+    gap_times: Optional[Sequence[float]] = None,
 ) -> Optional[Dict[str, Any]]:
     """画一张图，返回 (svg, 图例, 悬停几何)。没有数据时返回 None。
 
@@ -2907,6 +3268,11 @@ def _render_chart(
     ``event_legend`` 是"只进图下 legend、不在图面加圈"的事件（0.5.2 的 KILL）：
     竖线由 ``events`` 统一画，这里只补一行 ``④ KILL 击落 <target> · T+mm:ss``，
     编号顺延在数据批注 / 事件圈之后，不和数据批注编号冲突。
+
+    数据中断（相邻样本 > 1 s，或 gap 事件）在这里统一处理：曲线层（
+    :func:`_svg_series`）画虚线贝塞尔桥，本函数画淡灰竖带/斜纹并把
+    ``GAP 数据中断 2.66s · T+00:19`` 追加到图下 legend（编号继续顺延，
+    不占数据批注的 2 条上限）。
     """
     height = float(panel["height"])
     y0, y1 = PAD_TOP, height - PAD_BOTTOM
@@ -2938,11 +3304,21 @@ def _render_chart(
 
     xstep, xticks = _time_ticks(t0, t1, target=8)
 
+    # 数据中断：自动检测（样本间隔 > 1 s）为主，gap 事件合并去重（老日志没有事件也可用）。
+    # 全局总览页的曲线是抽稀后的 times，自动检测要用**原始**时间轴（gap_times），
+    # 否则抽稀间隔会被误判成空洞。
+    gap_source: Sequence[float] = times if gap_times is None else gap_times
+    gap_list = _gap_items_in_range(_gap_items(gap_source, gap_events), t0, t1)
+    # 竖带/斜纹只画"样本里真有空洞"的中断；只有事件、样本连续的情况只进 legend
+    # （没有可标记的空洞区间，画带会误导成"这里没数据"）。
+    band_items = [item for item in gap_list if item.get("source") != "event"]
+
     parts: List[str] = [
         '<svg id="svg-%s" viewBox="0 0 %.0f %.1f" class="chart-svg"'
         ' preserveAspectRatio="none" role="img" aria-label="%s">'
         % (chart_id, VIEW_W, height, html.escape(panel["title"]))
     ]
+    parts.append(_svg_gap_bands(band_items, xaxis, t0, t1, y0, y1, chart_id))
     parts.append(_svg_regions(regions, xaxis, t0, t1, y0, y1))
     parts.append(_svg_vlines(vlines, xaxis, t0, t1, y0, y1))
     parts.append(_svg_axes(left_axis, right_axis, xstep, xticks, xaxis, t_label, height, y0, y1))
@@ -3056,6 +3432,19 @@ def _render_chart(
             '<span class="ai">%s</span>'
             % html.escape(_event_legend_line(item, int(item["index"])))
         )
+    # 数据中断（GAP）legend：编号继续顺延（不占数据批注上限）；竖带/斜纹 + 虚线桥
+    # 在每张图上都画，legend 只说明"这处空洞多大、发生在哪"。
+    gap_legend: List[Dict[str, Any]] = []
+    gap_base = legend_base + len(legend_items)
+    for item in gap_list:
+        entry = dict(item)
+        entry["index"] = gap_base + len(gap_legend)
+        gap_legend.append(entry)
+    for item in gap_legend:
+        ann_legend_parts.append(
+            '<span class="ai gap-ai">%s</span>'
+            % html.escape(_gap_legend_line(item, int(item["index"])))
+        )
 
     geometry = {
         "id": chart_id,
@@ -3161,20 +3550,166 @@ def _render_event_strip(
 
 
 def _events_dicts(flight: Flight) -> List[Dict[str, Any]]:
-    return [
-        {
+    items: List[Dict[str, Any]] = []
+    for event in flight.events:
+        if event.t is None:
+            continue
+        item = {
             "kind": event.kind,
             "label": EVENT_LABELS.get(event.kind, event.kind),
             "t": event.t,
             "target": event.target,
         }
-        for event in flight.events
-        if event.t is not None
-    ]
+        if event.gap is not None:
+            item["gap"] = float(event.gap)
+        items.append(item)
+    return items
 
 
 def _visible_events(events: Sequence[Dict[str, Any]], t0: float, t1: float) -> List[Dict[str, Any]]:
     return [e for e in events if e["t"] is not None and t0 - 0.05 <= e["t"] <= t1 + 0.05]
+
+
+def _gap_items(
+    times: Sequence[float], gap_events: Sequence[Dict[str, Any]] = ()
+) -> List[Dict[str, Any]]:
+    """收集图表要标出来的**数据中断**（空洞）列表。
+
+    口径（与另一路 C# 的 ``event kind:"gap"`` 兼容、老日志也能工作）：
+
+    * 自动检测：同一架次内**相邻样本间隔 >** :data:`PATH_GAP_S`（1 s）即一处中断，
+      这是主口径（用户实测 220101：8 处 > 1 s，最长 2.66 s）；
+    * gap 事件：新日志会带 ``{"kind":"gap","t":...,"gap":<秒>}``，按时间容差
+      :data:`GAP_MERGE_S` 与自动检测**合并去重**；只有事件、没有样本空洞的
+      （例如样本被补插过）也保留，用于 legend / 竖带，但没有桥可画；
+    * 跨度 > :data:`GAP_BRIDGE_MAX_S`（30 s，= 架次切分阈值）不标：那是换局 /
+      长暂停，不是 8111 轮询卡顿。
+
+    返回 ``[{"t0","t1","gap","source"[,"event_t","event_gap"]}, ...]``，按 t0 排序。
+    """
+    items: List[Dict[str, Any]] = []
+    for index in range(1, len(times)):
+        try:
+            prev_t = float(times[index - 1])
+            cur_t = float(times[index])
+        except (TypeError, ValueError):
+            continue
+        dt = cur_t - prev_t
+        if PATH_GAP_S < dt <= GAP_BRIDGE_MAX_S:
+            items.append(
+                {"t0": prev_t, "t1": cur_t, "gap": dt, "source": "samples"}
+            )
+    for event in gap_events or ():
+        if str(event.get("kind") or "") != "gap":
+            continue  # 只认 gap 事件；调用方偷懒传全部事件也不会被误判
+        raw_t = event.get("t")
+        if raw_t is None:
+            continue
+        try:
+            moment = float(raw_t)
+        except (TypeError, ValueError):
+            continue
+        size = event.get("gap")
+        try:
+            size = float(size) if size is not None else None
+        except (TypeError, ValueError):
+            size = None
+        matched: Optional[Dict[str, Any]] = None
+        for item in items:
+            if "event_t" in item:
+                continue
+            if item["t0"] - GAP_MERGE_S <= moment <= item["t1"] + GAP_MERGE_S:
+                matched = item
+                break
+        if matched is not None:
+            matched["event_t"] = moment
+            if size is not None:
+                matched["event_gap"] = size
+            continue
+        if size is not None and PATH_GAP_S < size <= GAP_BRIDGE_MAX_S:
+            items.append(
+                {
+                    "t0": moment - size,
+                    "t1": moment,
+                    "gap": size,
+                    "source": "event",
+                    "event_t": moment,
+                }
+            )
+    items.sort(key=lambda item: float(item["t0"]))
+    return items
+
+
+def _gap_items_in_range(
+    gaps: Sequence[Dict[str, Any]], t0: float, t1: float
+) -> List[Dict[str, Any]]:
+    """只保留和图表时间范围有交集的空洞（多架次 / 全局总览用）。"""
+    return [
+        item
+        for item in gaps
+        if float(item["t1"]) >= t0 - 1e-6 and float(item["t0"]) <= t1 + 1e-6
+    ]
+
+
+def _integrity_stats(model: LogModel) -> Dict[str, Any]:
+    """概览「数据完整性」统计（只在**架次内部**算相邻样本间隔）。
+
+    * ``samples`` —— 样本总数；
+    * ``holes`` —— 相邻样本间隔 > :data:`GAP_HOLE_S`（0.2 s）的处数；
+    * ``interrupts`` —— 相邻样本间隔 > :data:`PATH_GAP_S`（1 s）的处数
+      （= 报告里断线 / 画虚线贝塞尔桥的那些中断）；
+    * ``longest_s`` —— 最长相邻样本间隔（秒）。
+
+    架次之间本来就不连续（换局 / 长暂停 / 死亡后的空白），跨架次的时间差不算空洞。
+    """
+    samples = 0
+    holes = 0
+    interrupts = 0
+    longest = 0.0
+    for flight in model.flights:
+        times = (flight.series or {}).get("t") or [sample["t"] for sample in flight.samples]
+        samples += len(times)
+        for index in range(1, len(times)):
+            try:
+                dt = float(times[index]) - float(times[index - 1])
+            except (TypeError, ValueError):
+                continue
+            if dt <= 0.0:
+                continue
+            if dt > GAP_HOLE_S:
+                holes += 1
+            if dt > PATH_GAP_S:
+                interrupts += 1
+            if dt > longest:
+                longest = dt
+    return {
+        "samples": samples,
+        "holes": holes,
+        "interrupts": interrupts,
+        "longest_s": longest,
+    }
+
+
+def _integrity_html(model: LogModel) -> str:
+    """概览页 KPI 下面的「数据完整性」一行（老日志同样适用）。"""
+    stats = _integrity_stats(model)
+    if not stats["samples"]:
+        return ""
+    if stats["longest_s"] <= 0.0:
+        value_text = "—"
+    else:
+        value_text = _fmt_number(stats["longest_s"], 2) + " s"
+    text = "数据完整性：%d 样本 / %d 空洞 / 最大 %s（>1 s 中断 %d 处）" % (
+        stats["samples"],
+        stats["holes"],
+        value_text,
+        stats["interrupts"],
+    )
+    hint = "空洞 = 相邻样本间隔 > 0.2 s（8111 轮询抖动）；中断 = > 1 s（断线 / 贝塞尔桥阈值）"
+    return '<div class="integrity" title="%s">%s</div>' % (
+        _html_escape(hint),
+        _html_escape(text),
+    )
 
 
 def _invalid_regions(series: Dict[str, Sequence[Optional[float]]]) -> List[Dict[str, Any]]:
@@ -3216,6 +3751,8 @@ def _render_all_panels(
     regions: Sequence[Dict[str, Any]] = (),
     vlines: Sequence[Dict[str, Any]] = (),
     event_legend: Sequence[Dict[str, Any]] = (),
+    gap_events: Sequence[Dict[str, Any]] = (),
+    gap_times: Optional[Sequence[float]] = None,
 ) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """渲染一组面板；丢弃没有数据的面板，并让最后一个面板显示时间刻度。"""
     rendered: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
@@ -3223,7 +3760,7 @@ def _render_all_panels(
         chart_id = "%s-%s" % (id_prefix, spec["key"])
         block = _render_chart(
             spec, times, series, t0, t1, chart_id, False, events, regions, vlines,
-            event_legend=event_legend,
+            event_legend=event_legend, gap_events=gap_events, gap_times=gap_times,
         )
         if block is not None:
             rendered.append((spec, block))
@@ -3233,7 +3770,7 @@ def _render_all_panels(
     chart_id = "%s-%s" % (id_prefix, spec["key"])
     last = _render_chart(
         spec, times, series, t0, t1, chart_id, True, events, regions, vlines,
-        event_legend=event_legend,
+        event_legend=event_legend, gap_events=gap_events, gap_times=gap_times,
     )
     if last is not None:
         rendered[-1] = (spec, last)
@@ -3253,7 +3790,11 @@ def _build_flight_payload(
     for key, values in series.items():
         payload_series[key] = _round_series(values, _series_digits(key))
 
-    events = _visible_events(_events_dicts(flight), t0, t1)
+    all_events = _events_dicts(flight)
+    # gap（数据中断）不画竖线/不进事件条：曲线断口 + 淡灰竖带 + legend 已经说明；
+    # 这里单独拆出来给图表做"自动检测 + gap 事件合并"（老日志没有 gap 事件也能用）。
+    gap_events: List[Dict[str, Any]] = [e for e in all_events if e["kind"] == "gap"]
+    events = _visible_events([e for e in all_events if e["kind"] != "gap"], t0, t1)
     regions = _invalid_regions(series) + _post_death_regions(flight)
     vne_kmh, vne_source = (None, "")
     if limits is not None:
@@ -3289,6 +3830,7 @@ def _build_flight_payload(
             annotations=annotations.get(spec["key"], ()),
             event_marks=chart_marks,
             event_legend=kill_events,
+            gap_events=gap_events,
         )
         if block is None:
             continue
@@ -3308,6 +3850,7 @@ def _build_flight_payload(
         regions=regions,
         event_marks=event_marks,
         event_legend=kill_events,
+        gap_events=gap_events,
     )
     if thumb is not None:
         panels.append(thumb["geometry"])
@@ -3346,6 +3889,7 @@ def _build_flight_payload(
         "annotations": annotations,
         "event_marks": event_marks,
         "kill_events": kill_events,
+        "gap_events": gap_events,
         "vne_kmh": vne_kmh,
         "vne_source": vne_source,
         "death_t": flight.death_t,
@@ -3391,16 +3935,20 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
     t1 = max(times_f)
     if t1 - t0 < 0.5:
         t1 = t0 + 0.5
-    events = [
+    all_events = [
         {
             "kind": e.kind,
             "label": EVENT_LABELS.get(e.kind, e.kind),
             "t": e.t,
             "target": e.target,
+            **({"gap": float(e.gap)} if e.gap is not None else {}),
         }
         for e in model.events
         if e.t is not None and t0 - 0.05 <= e.t <= t1 + 0.05
     ]
+    # gap 事件单独给曲线层做"中断"标注（不画竖线、不进事件条）
+    gap_events = [event for event in all_events if event["kind"] == "gap"]
+    events = [event for event in all_events if event["kind"] != "gap"]
     vlines: List[Dict[str, Any]] = []
     for flight in flights[1:]:
         vlines.append(
@@ -3426,6 +3974,9 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
         regions=regions,
         vlines=vlines,
         event_legend=kill_events,
+        gap_events=gap_events,
+        # 这里必须用**抽稀前**的原始时间轴做中断检测
+        gap_times=times,
     )
     if not kept:
         return None
@@ -3467,6 +4018,12 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
     ):
         if event_counts.get(kind):
             ev_bits.append("%s %d" % (label, event_counts[kind]))
+    if event_counts.get("gap"):
+        # 数据中断是录制诊断事件，单独说明；不计入"事件数"
+        ev_bits.append("数据中断 %d 处" % event_counts["gap"])
+    gameplay_events = sum(
+        count for kind, count in event_counts.items() if kind not in ("end", "gap")
+    )
 
     ralt_max: Optional[float] = None
     for flight in model.flights:
@@ -3534,7 +4091,7 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
         cards.append(
             {
                 "label": "事件数",
-                "value": str(counts["events"]),
+                "value": str(gameplay_events),
                 "sub": " · ".join(ev_bits) if ev_bits else "无事件",
             }
         )
@@ -3716,6 +4273,7 @@ def _overview_page_html(
     warnings_html: str,
     note_html: str = "",
     players_html: str = "",
+    integrity_html: str = "",
 ) -> str:
     views: List[str] = []
     for flight_payload in flight_payloads:
@@ -3739,11 +4297,13 @@ def _overview_page_html(
         '<div class="cards">%s</div>'
         "%s"
         "%s"
+        "%s"
         '<div class="ovchart">%s</div>'
         "</div></div></section>"
         % (
             note_html,
             cards_html,
+            integrity_html,
             players_html,
             warnings_html,
             "".join(views),
@@ -4079,6 +4639,7 @@ def _build_payload(
             warnings_html,
             note_html=note_html,
             players_html=players_html,
+            integrity_html=_integrity_html(model),
         )
     ]
     for spec in _flight_panel_specs():
@@ -4160,7 +4721,10 @@ def _build_payload(
         }
         if item not in vne_items:
             vne_items.append(item)
-    debrief_html = _debrief_host_html(model, flight_payloads, blueprint_meta)
+    debrief_html = _debrief_host_html(
+        model, flight_payloads, blueprint_meta,
+        player_name=(limits.player_name if limits is not None else ""),
+    )
     return {
         "title": "%s · %s" % (title_prefix, os.path.basename(model.path)),
         "file": os.path.basename(model.path),
@@ -4195,7 +4759,7 @@ def _card_polyline(
     yf: Any,
     limit: int = 460,
 ) -> str:
-    """复盘卡曲线：分段折线（None / 大缺口断开），抽稀到 ``limit`` 点以内。"""
+    """复盘卡曲线：分段三次贝塞尔（同报告页，不再画折线），抽稀到 ``limit`` 点以内。"""
     out: List[str] = []
     for segment in _iter_segments(times, values):
         segment = _decimate(segment, limit)
@@ -4204,14 +4768,14 @@ def _card_polyline(
             if y is not None:
                 out.append("M%.1f,%.1f L%.1f,%.1f" % (x, y, x + 0.1, y))
             continue
-        points = []
+        points: List[Tuple[float, float]] = []
         for t, v in segment:
             y = yf(v)
             if y is None:
                 continue
-            points.append("%.1f,%.1f" % (xf(t), y))
+            points.append((xf(t), y))
         if points:
-            out.append("M" + " L".join(points))
+            out.append(_bezier_path(points))
     return "".join(out)
 
 
@@ -4333,14 +4897,23 @@ def _debrief_card_svg(
     # ---------- 左列：任务字段 ----------
     mission = "FLT-%s" % (meta.get("dwg") or "LOG").replace("WT-FL-", "")
     outcome = "LOST · DEATH %s s" % _fmt_number(death_t, 1) if death_t is not None else "SURVIVED"
+    pilot = (
+        flight_payload.get("player")
+        or meta.get("player")
+        or "UNKNOWN"
+    )
+    pilot = str(pilot).strip() or "UNKNOWN"
+    if len(pilot) > 24:
+        pilot = pilot[:23] + "…"
     rows = [
         ("MISSION 任务", mission + "   · " + vehicle),
         ("DATE 日期", "%s   LOCAL" % (meta.get("date") or "—")),
         ("DURATION 时长", "%.1f s   · %d samples" % (duration, samples)),
         ("ACFT 机型", vehicle),
+        ("PILOT 飞行员", pilot),
         ("OUTCOME 结果", outcome),
     ]
-    row_y = 212.0
+    row_y = 208.0
     for label, value in rows:
         parts.append(
             '<text x="84" y="%.1f" font-family="Courier New,monospace" font-size="10"'
@@ -4360,7 +4933,7 @@ def _debrief_card_svg(
             '<line x1="84" y1="%.1f" x2="452" y2="%.1f" stroke="#C3B294"'
             ' stroke-width="0.8" stroke-dasharray="2 3"/>' % (row_y + 29, row_y + 29)
         )
-        row_y += 62.0
+        row_y += 50.0
 
     # ---------- 左列下部：关键数据 ----------
     def kpi(label: str, value: str, unit: str, x: float, y: float) -> None:
@@ -4674,7 +5247,7 @@ def _debrief_card_svg(
                 % note_y
             )
     # 印章
-    stamp_x, stamp_y = 1216.0, 792.0
+    stamp_x, stamp_y = 1216.0, 700.0
     parts.append(
         '<g transform="rotate(-10 %.1f %.1f)" opacity="0.82">'
         '<rect x="%.1f" y="%.1f" width="272" height="78" fill="none" stroke="#A8322B"'
@@ -4704,8 +5277,9 @@ def _debrief_card_svg(
         '<line x1="1180" y1="884" x2="1360" y2="884" stroke="#4A3D2A" stroke-width="1.2"/>'
     )
     parts.append(
-        '<text x="1270" y="900" text-anchor="middle" font-family="Courier New,monospace"'
-        ' font-size="9" fill="#6B5B41" letter-spacing="1.4">ANALYST SIGNATURE · 分析员签字</text>'
+        '<text x="1500" y="900" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="9" fill="#6B5B41" letter-spacing="1.4">ANALYST SIGNATURE · 分析员签字'
+        '<tspan fill="#8E2A24" letter-spacing="0.8">   ■■■■■ . Bulannikov</tspan></text>'
     )
     # 页脚
     parts.append(
@@ -4734,19 +5308,22 @@ def _debrief_host_html(
     model: LogModel,
     flight_payloads: Sequence[Dict[str, Any]],
     bp: Optional[Dict[str, str]],
+    player_name: str = "",
 ) -> str:
     """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。"""
     usable = [payload for payload in flight_payloads if payload.get("times")]
     if not usable:
         return ""
     main = max(usable, key=lambda item: len(item.get("times") or []))
-    meta = bp or {
+    meta = dict(bp) if bp else {
         "project": "WTHUD FLIGHT LOG",
         "vehicle": main.get("vehicle") or "—",
         "date": "",
         "rev": "C",
         "dwg": "WT-FL-LOG",
     }
+    if player_name:
+        meta["player"] = player_name
     stem = os.path.splitext(os.path.basename(model.path))[0]
     prefix = "debrief-%s-" % stem
     return (
@@ -5036,6 +5613,8 @@ body.no-annot .ann-legend{display:none!important}
 .avg-msg.warn{color:var(--avg-msg-warn)}
 /* SVG 里的平均速度图层不拦截悬停 */
 .avg-band,.avg-edge,.avg-line{pointer-events:none}
+/* 数据中断图层（淡灰竖带 / 斜纹 / 虚线贝塞尔桥）同样不拦截悬停 */
+.gap-band,.gap-hatch,.gap-bridge{pointer-events:none}
 .lg i.avgdash{
   background-image:linear-gradient(90deg,var(--avgdash-fg) 0 60%,transparent 60% 100%);
   background-size:7px 3px;background-repeat:repeat-x;
@@ -5055,6 +5634,12 @@ body.no-annot .ann-legend{display:none!important}
 .card span{
   display:block;font-size:11.5px;color:var(--muted);margin-top:1px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* 概览「数据完整性」：样本 / 空洞 / 最大间隔 / >1 s 中断（口径见 title 提示） */
+.integrity{
+  flex:0 0 auto;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;
+  font-family:var(--font-num);font-size:11.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em;margin-top:-2px;
 }
 .warn{
   flex:0 0 auto;background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-fg);

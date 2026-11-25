@@ -38,7 +38,7 @@ MFD_SCHEMA = 1
 
 #: ``tool`` 固定为 FlightLog；``tool_version`` 与 WtHud 发布版本对齐
 MFD_TOOL = "FlightLog"
-MFD_TOOL_VERSION = "0.5.2"
+MFD_TOOL_VERSION = "0.5.3"
 
 #: 平均值过滤：死亡事件前多少秒的样本不参与平均
 DEATH_WINDOW_S = 10.0
@@ -505,6 +505,11 @@ def _events_payload(model: LogModel) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     for event in model.events:
         if event.t is None or event.kind == "end":
+            continue
+        if event.kind == "gap":
+            # 数据中断（gap）是录制侧的诊断事件，不是"游戏事件"：MFD 的
+            # 事件时间轴只画死亡 / 击落 / 复活 / 换机型，导出时不带 gap，
+            # 老消费者看到的字段集合不变（0.5.3 起日志里才会有 gap）。
             continue
         if event.t < lo or event.t > hi:
             continue  # 记录结束后才发生的事件没有时间轴可放

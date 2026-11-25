@@ -6,8 +6,9 @@
 读取 ``wtlog-*.jsonl``（一行一个 JSON 记录），产出结构化模型：
 
 * ``meta``      —— 文件头信息（schema / app / vehicle / rate）
-* ``events``    —— death / spawn / vehicle_change / kill / end 等事件，统一换算成秒
-                   （``kill`` 带 ``target`` = 被击落目标名，旧日志没有该字段）
+* ``events``    —— death / spawn / vehicle_change / kill / gap / end 等事件，统一换算成秒
+                   （``kill`` 带 ``target`` = 被击落目标名，旧日志没有该字段；
+                   ``gap`` 带 ``gap`` = 该次 8111 轮询卡顿造成的空洞秒数，旧日志没有该字段）
 * ``flights``   —— 按 spawn / death / vehicle_change / 机型字段变化 / 时间跳变
                    切出来的"架次"，每个架次带逐样本序列与统计摘要
 * ``summary``   —— 可直接 ``json.dumps`` 的统计摘要（供 ``--summary`` 使用）
@@ -96,6 +97,7 @@ EVENT_LABELS = {
     "spawn": "复活/生成",
     "vehicle_change": "换机型",
     "kill": "击落",
+    "gap": "数据中断",
     "end": "记录结束",
 }
 
@@ -128,6 +130,10 @@ class Event:
 
     ``target`` 只对击落（``kill``）事件有意义 = 被击落的目标名；旧日志没有该字段，
     统一留空串，序列化时也不写空字段（保持旧摘要格式不变）。
+
+    ``gap`` 只对数据中断（``gap``，0.5.2 之后的新日志才有）事件有意义 =
+    该次空洞的秒数（C# 侧仅在 > 1 s 时写事件）；老日志读出来是 ``None``，
+    序列化时同样不写，因此旧摘要逐字节不变。
     """
 
     kind: str
@@ -136,6 +142,7 @@ class Event:
     t_source: Optional[str] = None  # "t" / "utc" / None
     utc_epoch: Optional[float] = None
     target: str = ""
+    gap: Optional[float] = None
 
     def as_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -146,6 +153,8 @@ class Event:
         }
         if self.target:
             data["target"] = self.target
+        if self.gap is not None:
+            data["gap"] = round(float(self.gap), 3)
         return data
 
 
@@ -288,6 +297,9 @@ def _coerce_event(obj: Dict[str, Any]) -> Optional[Event]:
         return None
     t = _num(obj.get("t"))
     source = "t" if t is not None else None
+    gap = _num(obj.get("gap"))
+    if gap is not None and not (gap > 0.0):
+        gap = None  # 0 / 负数没有意义：老日志 / 坏字段一律当"没有"
     return Event(
         kind=kind,
         t=t,
@@ -295,6 +307,7 @@ def _coerce_event(obj: Dict[str, Any]) -> Optional[Event]:
         t_source=source,
         utc_epoch=parse_utc(obj.get("utc")),
         target=_text(obj.get("target")) or "",
+        gap=gap,
     )
 
 
@@ -876,6 +889,7 @@ def compute_flight_stats(flight: Flight) -> Dict[str, Any]:
                 "label": EVENT_LABELS.get(e.kind, e.kind),
                 "t": _round(e.t, 3),
                 **({"target": e.target} if e.target else {}),
+                **({"gap": _round(e.gap, 3)} if e.gap is not None else {}),
             }
             for e in flight.events
         ],

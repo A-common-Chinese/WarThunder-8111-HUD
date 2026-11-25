@@ -1092,7 +1092,7 @@ public static partial class Program
     // 正常退出（关窗/结束进程）时把记录器缓冲落盘；被强杀仍可能丢最后几行。
     AppDomain.CurrentDomain.ProcessExit += (_, _) =>
     {
-        try { flightRecorder?.Stop(); } catch { }
+        try { lock (recGate) { flightRecorder?.Stop(); flightRecorder = null; } } catch { }
     };
 
         // 单实例：两个 WtHud 同时跑会互相偷热键（后起的那个 RegisterHotKey 报 err=1409，F10/F1 就
@@ -1153,6 +1153,12 @@ public static partial class Program
         Console.WriteLine($"overlay virtual {scrX},{scrY} {scrW}x{scrH}  game {(tracking ? $"{wx},{wy} {gw}x{gh}" : "not found")} " +
                           $"for {(seconds <= 0 ? "unlimited" : seconds + "s")} demo={demo}");
 
+        // 配置与地图先建好：轮询线程的回调里要用 cfg 和「map 里有没有自己」判断是否对局。
+        var opt = new HudOptions();
+        var cfg = HudConfig.Load();
+        using var mapData = new WtHud.Telemetry.MapData();
+        mapData.Start();
+
         telemetry = new TelemetryClient(0);
         fusion = new AttitudeFusion();
         telemetry.SnapshotReceived += s =>
@@ -1210,17 +1216,19 @@ public static partial class Program
             detectedPitchSign = fusion.DetectedPitchSign;
             pitchSignDecided = fusion.SignDecided;
             pitchSignVehicle = s.VehicleType;
+
+            // 飞行数据记录：拿到新快照就写样本（不再等渲染帧）。写在轮询线程上，
+            // 渲染卡顿就不会再把采样间距拉长；对局判定仍靠 map 里有没有自己。
+            UpdateFlightRecording(cfg, s, mapData.Self is not null);
         };
-        telemetry.Start();
-        using var mapData = new WtHud.Telemetry.MapData();
-        mapData.Start();
         hudMsgWatcher.OwnKill += t =>
         {
             splashQueue.Enqueue(t);
             // 自己击落别人也写进飞行记录（target = 被击落目标），FlightLog 据此画「击落」事件线。
             // 只写事件、不影响死亡/复活判定（OwnDeath 是另一条回调）。
-            if (flightRecorder is null) return;
-            flightRecorder.Event("kill", null, DateTime.UtcNow, t);
+            var rec = flightRecorder;
+            if (rec is null) return;
+            rec.Event("kill", null, DateTime.UtcNow, t);
             Console.WriteLine($"record event: kill {t}");
         };
     // 配了玩家昵称时，用 /hudmsg 的「被击落/击毁」作为飞行记录的死亡事件；
@@ -1232,8 +1240,7 @@ public static partial class Program
         Console.WriteLine($"record event: death detected via hudmsg (by {killer})");
     };
 
-        var opt = new HudOptions();
-        var cfg = HudConfig.Load();
+        telemetry.Start();
 
         // 数据链：只交换气压高度（map_obj 没有 z，单机拿不到）。
         // 节点 ID 首次自动生成并写回配置，以后一直沿用，不需要人工配对。
@@ -1751,8 +1758,13 @@ public static partial class Program
             double frac = cfg.Extrapolate ? ExtrapolationFraction(prevSnapshot, latest, DateTime.UtcNow) : 0;
             var snap = frac > 0.02 ? Extrapolate(prevSnapshot, rawSnap, frac) : rawSnap;
 
-            // 飞行数据记录：只本机、自动按对局；写盘在记录器自己的线程。
-            UpdateFlightRecording(cfg, rawSnap, mapData.Self is not null);
+            // 飞行数据记录：样本由轮询线程按「每个新快照」写（见 SnapshotReceived 回调），
+            // 这里只做断流看护 —— 轮询线程不再回调（游戏退出/8111 停了）时由主循环负责写 end。
+            if (flightRecorder != null && recLastPacketTicks != 0
+                && Environment.TickCount64 - recLastPacketTicks > 1000)
+            {
+                UpdateFlightRecording(cfg, rawSnap, mapData.Self is not null);
+            }
 
 
             // Animate the aiming-layout transition (~0.28 s) instead of snapping.
@@ -2373,8 +2385,12 @@ public static partial class Program
         }
 
         cursorStop = true;
-        flightRecorder?.Stop();
-        flightRecorder = null;
+        lock (recGate)
+        {
+            flightRecorder?.Stop();
+            flightRecorder = null;
+            recLastSampleUtc = null;
+        }
         configLink?.Dispose();
         telemetry.Dispose();
         Console.WriteLine($"overlay closed after {frames} frames");
@@ -3265,16 +3281,22 @@ public static partial class Program
     /// 结束 = 5 秒无新快照，或连续 60 秒不在对局（回大厅/结算）。
     /// 死亡不停止记录（复活模式同一文件继续），只写一行事件；复活/换机型也写事件。
     /// 注意：8111 在机库里仍报 valid=true、机型也在，所以「是否对局」只能靠 map self 判断。
+    /// <para>调用点有两个：轮询线程（每个新快照写样本）+ 主循环（断流看护），所以整个方法在锁里跑。</para>
     /// </summary>
     private static void UpdateFlightRecording(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
     {
+        lock (recGate) UpdateFlightRecordingLocked(cfg, snap, inBattle);
+    }
+
+    private static void UpdateFlightRecordingLocked(HudConfig cfg, TelemetrySnapshot snap, bool inBattle)
+    {
         long nowTicks = Environment.TickCount64;
 
-        // 「有没有新包」看快照时间戳：8111 退局后仍会应答，只是数据不再更新。
-        bool newPacket = latest is { } ls && ls.TimestampUtc != recLastStampUtc;
+        // 「有没有新包」看快照自己的时间戳：8111 退局后仍会应答，只是数据不再更新。
+        bool newPacket = snap.TimestampUtc != recLastStampUtc;
         if (newPacket)
         {
-            recLastStampUtc = latest!.TimestampUtc;
+            recLastStampUtc = snap.TimestampUtc;
             recLastPacketTicks = nowTicks;
         }
         bool packetsAlive = recLastPacketTicks != 0 && nowTicks - recLastPacketTicks < 5000;
@@ -3291,6 +3313,7 @@ public static partial class Program
                 flightRecorder = null;
                 recLastStampUtc = default;
                 recLastPacketTicks = 0;
+                recLastSampleUtc = null;
                 recOutSince = 0;
                 recInvalidTicks = 0;
                 recDeathLogged = false;
@@ -3307,12 +3330,13 @@ public static partial class Program
             if (!snap.Valid || !inBattle) return;
             flightRecorder = FlightRecorder.Start(cfg, snap);
             recLastPacketTicks = nowTicks;
+            recLastSampleUtc = null;        // 新文件：第一条样本不参与中断判定
             recVehiclePrev = snap.VehicleType;
             recOutSince = 0;
             recInvalidTicks = 0;
             recDeathLogged = false;
-                recHudmsgDeathUtc = default;
-                recDeathTicks = 0;
+            recHudmsgDeathUtc = default;
+            recDeathTicks = 0;
             Console.WriteLine($"recording -> {flightRecorder.FilePath}");
         }
 
@@ -3336,8 +3360,8 @@ public static partial class Program
                 {
                     flightRecorder.Event("spawn", snap.VehicleType);
                     recDeathLogged = false;
-                recHudmsgDeathUtc = default;
-                recDeathTicks = 0;
+                    recHudmsgDeathUtc = default;
+                    recDeathTicks = 0;
                     Console.WriteLine($"record event: spawn {snap.VehicleType}");
                 }
                 recInvalidTicks = 0;
@@ -3350,8 +3374,8 @@ public static partial class Program
                 {
                     flightRecorder.Event("spawn", snap.VehicleType);
                     recDeathLogged = false;
-                recHudmsgDeathUtc = default;
-                recDeathTicks = 0;
+                    recHudmsgDeathUtc = default;
+                    recDeathTicks = 0;
                     Console.WriteLine($"record event: spawn {snap.VehicleType}");
                 }
                 recInvalidTicks = 0;
@@ -3363,7 +3387,7 @@ public static partial class Program
                 if (recInvalidTicks == 0)
                 {
                     recInvalidTicks = nowTicks;
-                    recInvalidUtc = latest?.TimestampUtc ?? DateTime.UtcNow;
+                    recInvalidUtc = snap.TimestampUtc;
                 }
                 if (!recDeathLogged && nowTicks - recInvalidTicks >= 1500)
                 {
@@ -3374,7 +3398,18 @@ public static partial class Program
             }
 
             if (!string.IsNullOrEmpty(snap.VehicleType)) recVehiclePrev = snap.VehicleType;
-            if (snap.Valid && inBattle) flightRecorder.Add(snap, lastAttitude, EffectiveRadioAltM(snap, cfg));
+            if (snap.Valid && inBattle)
+            {
+                // 数据中断（>1 s）单独记一条 gap 事件：轮询线程停过 / 8111 断过。
+                // 样本照写 —— FlightLog 既能看到曲线，也能在中断处看到 gap 标记。
+                if (SampleGapSeconds(recLastSampleUtc, snap.TimestampUtc) is double gapS)
+                {
+                    flightRecorder.Event("gap", null, snap.TimestampUtc, null, gapS);
+                    Console.WriteLine(GapLogLine(gapS, snap.ElapsedSeconds));
+                }
+                recLastSampleUtc = snap.TimestampUtc;
+                flightRecorder.Add(snap, lastAttitude, EffectiveRadioAltM(snap, cfg));
+            }
         }
 
         // 对局结束 = 不再发包（5 秒无新快照）或 连续 60 秒不在对局（回大厅）。
@@ -3385,12 +3420,31 @@ public static partial class Program
             flightRecorder = null;
             recLastStampUtc = default;
             recLastPacketTicks = 0;
+            recLastSampleUtc = null;
             recOutSince = 0;
             Console.WriteLine(idleOut
                 ? "recording stopped (out of battle for 60 s)"
                 : "recording stopped (no telemetry)");
         }
     }
+
+    /// <summary>数据中断阈值（秒）：相邻样本间隔超过它才写 gap 事件。</summary>
+    internal const double RecordGapThresholdS = 1.0;
+
+    /// <summary>
+    /// 相邻样本间隔是否算「数据中断」。返回中断秒数；首样本或 ≤ 阈值返回 null。
+    /// 抽成纯函数是为了能在 selftest 里把 &lt;1 s / =1 s / &gt;1 s 三种边界都断言一遍。
+    /// </summary>
+    internal static double? SampleGapSeconds(DateTime? prevUtc, DateTime curUtc)
+    {
+        if (prevUtc is not { } prev) return null;
+        double gapS = (curUtc - prev).TotalSeconds;
+        return gapS > RecordGapThresholdS ? gapS : null;
+    }
+
+    /// <summary>数据中断日志行。样例：<c>record gap 2.66s at sample t=41.20</c></summary>
+    internal static string GapLogLine(double gapS, double sampleT)
+        => string.Create(CultureInfo.InvariantCulture, $"record gap {gapS:F2}s at sample t={sampleT:F2}");
 
     /// <summary>雷达高度原始值按设置换算成米：0 = 米，1 = 英尺（座舱单位随机型）。</summary>
     internal static double? EffectiveRadioAltM(TelemetrySnapshot s, HudConfig c)
@@ -3629,8 +3683,11 @@ public static partial class Program
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
     private static FlightRecorder? flightRecorder;
+    // 记录器状态由轮询线程（每个新快照）和主循环（断流看护）共同碰，统一在这把锁里改。
+    private static readonly object recGate = new();
     private static long recLastPacketTicks;
     private static DateTime recLastStampUtc;
+    private static DateTime? recLastSampleUtc;   // 上一条写入样本的快照时间，数据中断检测用
     private static string recVehiclePrev = "";
     private static long recOutSince;
     private static long recInvalidTicks;      // 本次 valid=false 的起点（0 = 当前有效）
