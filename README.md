@@ -8,7 +8,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 `http://127.0.0.1:8111`. Read-only: no injection, no memory reads, no file modification,
 no packet interception, no automation.
 
-[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **最新版本以 [Releases](../../releases) 为准**（版本号不再写死在 README 里） · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **最新版本以 [Releases](../../releases) 为准** · [版本历史](CHANGELOG.md) · [使用教程](使用教程.md) · [编队速查卡](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 ---
 
@@ -401,7 +401,7 @@ A military-style HUD overlay for **War Thunder**, driven entirely by the officia
 **Read-only by design**: no injection, no memory reads, no file modification, no packet
 interception, no automation. It never draws enemy positions (no ESP).
 
-[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **The latest version is always the [Releases](../../releases) page** (no version string hard-coded in the README) · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/A-common-Chinese/WarThunder-8111-HUD?label=latest)](../../releases) · **The latest version is always the [Releases](../../releases) page** · [Version history](CHANGELOG.md) · [Tutorial](使用教程.md) · [Formation cheat sheet](编队速查卡.md) · [AGPL-3.0](LICENSE)
 
 > **The interface defaults to Chinese.** Press `F1` → `LANGUAGE` to switch the panel, the HUD and
 > the alerts to English — step-by-step with a screenshot under
