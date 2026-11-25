@@ -150,17 +150,17 @@ ES_RANGE_MERGE_MIN_S = 10.0
 #: 区间批注的表现色（复盘卡红蜡笔，与批注圈同色）。
 ES_RANGE_COLOR = "#B0362A"
 #: 屏幕层「曲线加粗标红」的红色（比蜡笔红更亮，压在 Es 曲线上仍能看清）。
-ES_HIGHLIGHT_COLOR = "#E03A2F"
+ES_HIGHLIGHT_COLOR = "#FF7A6B"
 #: 打印 / PDF 层的深红墨色（打印态不发光，用深红更接近红笔）。
 ES_HIGHLIGHT_PRINT_COLOR = "#8E2A24"
 #: 加粗高亮线的线宽（px，带 ``vector-effect: non-scaling-stroke``）。
-ES_HIGHLIGHT_WIDTH = 5.0
+ES_HIGHLIGHT_WIDTH = 2.6
 #: 打印 / 复盘卡的线宽（略细一点，避免盖住打字机标注）。
 ES_HIGHLIGHT_PRINT_WIDTH = 4.2
 #: 高亮线不透明度（盖住原曲线但仍透出一点走向）。
-ES_HIGHLIGHT_OPACITY = 0.95
+ES_HIGHLIGHT_OPACITY = 0.62
 #: 端点小圆点半径（px）。
-ES_HIGHLIGHT_DOT_R = 3.2
+ES_HIGHLIGHT_DOT_R = 2.0
 
 # ---------------------------------------------------------------------------
 # PDF 导出：方案 A = 本机 Edge/Chrome headless 预生成 PDF；方案 B = 浏览器内联库

@@ -2513,9 +2513,9 @@ def test_es_range_annotations(tmp: Path) -> None:
         check(stroke.upper() == ES_HIGHLIGHT_COLOR.upper(),
               "高亮线用主题红色 %s（实际 %s）" % (ES_HIGHLIGHT_COLOR, stroke))
         check(abs(float(width) - ES_HIGHLIGHT_WIDTH) < 1e-6
-              and float(width) >= 4.5,
-              "高亮线加粗（%.1f px，约 5px）" % float(width))
-        check(abs(float(opacity) - 0.95) < 1e-6, "高亮线 opacity ≈ 0.95")
+              and float(width) <= 3.5,
+              "屏幕高亮较细（%.1f px，网页观感）" % float(width))
+        check(0.4 <= float(opacity) <= 0.75, "高亮线 opacity 较淡（%.2f）" % float(opacity))
         points = _path_points(path_d)
         check(abs(points[0][0] - xaxis(float(cliff_ann["t0"]))) < 0.2,
               "高亮段起点 = t0 像素 x（%.2f ≈ %.2f）"
