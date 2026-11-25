@@ -30,7 +30,8 @@
   legend 补 ``GAP 数据中断 <秒>s · T+mm:ss``（老日志没有 gap 事件也能按样本间隔自动检测）；
 * **6 套美术主题**（``--theme blueprint|glass|manual|tactical|clean|mfd``，
   默认 ``blueprint`` = A 工程蓝图：深蓝图纸底 + 坐标纸网格 + 每页图框/图号
-  （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9`` + 右下角标题栏）；
+  （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9``（屏幕）/ ``SHEET n/10``（打印、PDF）
+  + 右下角标题栏）；
   配色集中在 :data:`THEMES` 里，通过 CSS 变量输出，图表曲线/网格/事件线/统计卡
   全部取自同一份主题配置；
 * **审阅批注**：按日志自动计算每页最多 2 条（速度页 = 最大 IAS + 限速预警；高度页 =
@@ -284,6 +285,10 @@ section.page{counter-increment:fig}
   font-family:var(--font-num);font-size:9px;letter-spacing:.16em;color:var(--muted)}
 .bp-sheet{display:flex;align-items:center;border:1px solid #8fc6e859;padding:0 9px;
   color:#cfe6f8;white-space:nowrap}
+/* 打印/PDF 专用页脚：统一编号 (n+1)/10（PDF 第 1 页是封面）。屏幕隐藏，
+   只在 @media print 与方案 B 的 body.pdf-capture 里显示（见 BLUEPRINT_PRINT_CSS）。 */
+.bp-sheet-print{display:none;align-items:center;border:1px solid #8fc6e859;padding:0 9px;
+  color:#cfe6f8;white-space:nowrap}
 .bp-tb{display:flex;border:1px solid #8fc6e859;background:#08213a8c}
 .bp-tb span{display:flex;flex-direction:column;justify-content:center;gap:1px;padding:1px 9px;
   border-left:1px solid #8fc6e84d;min-width:0}
@@ -351,6 +356,12 @@ html{
   repeating-linear-gradient(90deg,transparent 0 99px,#8A734C2e 99px 100px)!important}
 .bp-foot{color:#6B5B41!important}
 .bp-sheet{border-color:#B7A483!important;color:#2B2418!important}
+.bp-sheet-print{border-color:#B7A483!important;color:#2B2418!important}
+/* 页脚统一编号：屏幕 .bp-sheet 写 n/9（和 9 页翻页一致）；打印 / PDF 换成
+   .bp-sheet-print 的 (n+1)/10 —— 第 1 页是封面，所以内容页从 02/10 起。
+   规则同时进 @media print（方案 A）与 body.pdf-capture（方案 B）。 */
+.bp-sheet{display:none!important}
+.bp-sheet-print{display:flex!important}
 .bp-tb{border-color:#B7A483!important;background:#FBF7EC!important}
 .bp-tb span{border-color:#B7A483!important}
 .bp-tb em{color:#8A734C!important}
@@ -1084,7 +1095,8 @@ header{background:#fff!important}
     ),
     # ------------------------------------------------------------------
     # 6) blueprint：A 工程蓝图（默认）——深蓝图纸 / 坐标纸网格 / 图框 / 图号 /
-    #    页脚 SHEET n/9 / 右下角标题栏；红色审阅标记，打印为白/米底档案纸。
+    #    页脚 SHEET n/9（屏幕）/ n/10（打印、PDF，封面算第 1 页）/ 右下角标题栏；
+    #    红色审阅标记，打印为白/米底档案纸。
     # ------------------------------------------------------------------
     "blueprint": Theme(
         key="blueprint",
@@ -5296,7 +5308,14 @@ def _blueprint_chrome_meta(model: LogModel) -> Dict[str, str]:
 
 def _blueprint_chrome_html(page_no: int, page_total: int,
                            bp: Dict[str, str]) -> str:
-    """每页的图框元素：坐标纸网格 + 注册标记 + 页脚 SHEET n/9 + 右下角标题栏。"""
+    """每页的图框元素：坐标纸网格 + 注册标记 + 页脚 SHEET + 右下角标题栏。
+
+    页脚输出两个 span，由打印 CSS 切换（两份 DOM 完全一致，A/B 两条 PDF 路径共用）：
+
+    * ``.bp-sheet``：屏幕态 ``SHEET n/9`` —— 和屏幕 9 页翻页一致；
+    * ``.bp-sheet-print``：打印 / PDF 态 ``SHEET (n+1)/10`` —— PDF 第 1 页是封面，
+      所以第 n 个内容页 = PDF 第 n+1 页、总页数 = page_total + 1。
+    """
     return (
         '<div class="bp-chrome" aria-hidden="true">'
         '<div class="bp-grid"></div>'
@@ -5304,6 +5323,7 @@ def _blueprint_chrome_html(page_no: int, page_total: int,
         '<i class="bp-reg bl"></i><i class="bp-reg br"></i>'
         '<div class="bp-foot">'
         '<span class="bp-sheet">%s</span>'
+        '<span class="bp-sheet-print">%s</span>'
         '<span class="bp-tb">'
         "<span><em>PROJECT</em><b>%s</b></span>"
         "<span><em>ACFT</em><b>%s</b></span>"
@@ -5313,6 +5333,7 @@ def _blueprint_chrome_html(page_no: int, page_total: int,
         "</span></div></div>"
         % (
             _html_escape("SHEET %02d/%02d" % (page_no, page_total)),
+            _html_escape("SHEET %02d/%02d" % (page_no + 1, page_total + 1)),
             _html_escape(bp["project"]),
             _html_escape(bp["vehicle"]),
             _html_escape(bp["date"]),
@@ -5432,7 +5453,8 @@ def _build_payload(
     # 每页写死页号（1 起）：曲线显示状态按页存 localStorage，翻页/打印都不串。
     pages = [_inject_page_no(page, index + 1) for index, page in enumerate(pages)]
 
-    # A 工程蓝图：每页注入图框 / 图号 / 页脚 SHEET n/9 / 右下角标题栏
+    # A 工程蓝图：每页注入图框 / 图号 / 页脚（屏幕 SHEET n/9、打印/PDF SHEET n+1/10）
+    # / 右下角标题栏
     blueprint_meta: Optional[Dict[str, str]] = None
     if ACTIVE_THEME.key == "blueprint" and pages:
         blueprint_meta = _blueprint_chrome_meta(model)
@@ -5489,8 +5511,10 @@ def _build_payload(
         model, flight_payloads, blueprint_meta, player_name=player,
     )
     # PDF 第 1 页封面：复用 PNG 复盘卡（annotated + clean 两份），屏幕隐藏、只打印。
+    # 封面是 PDF 第 1 页：页脚统一编号 SHEET 01/<PDF 总页数>（内容页从 02/10 起）。
     cover_html = _pdf_cover_html(
         model, flight_payloads, blueprint_meta, player_name=player,
+        pdf_total=len(pages) + 1,
     )
     pdf_page_count = len(pages) + (1 if cover_html else 0)
     return {
@@ -5568,6 +5592,7 @@ def _debrief_card_svg(
     clean: bool,
     meta: Dict[str, str],
     suffix: str = "",
+    sheet_text: str = "SHEET 01/01",
 ) -> str:
     """一张 1600×1000 的复盘卡（C 档案袋风格）：纸底 + 印章 + 关键数据 + 标注图 + 打字机注。
 
@@ -5577,6 +5602,10 @@ def _debrief_card_svg(
     PNG 复盘卡导出用的 ``debrief-svg-annotated`` / ``debrief-svg-clean`` 保持不变）；
     PDF 封面用 ``suffix="-cover"`` 复用同一份画法，避免和 ``#debrief-src`` 里的
     两份卡在同一个文档里撞 id。
+
+    ``sheet_text`` 是卡右上角的图号 / 页码文字：PNG 单张卡保持 ``SHEET 01/01``
+    （默认值，单张卡不是 PDF 页）；只有 PDF 封面（第 1 页 / 共 10 页）传
+    ``SHEET 01/10`` 覆盖。
     """
     times = [float(t) for t in (flight_payload.get("times") or []) if t is not None]
     series = flight_payload.get("series") or {}
@@ -5666,8 +5695,12 @@ def _debrief_card_svg(
     )
     parts.append(
         '<text x="1516" y="150" text-anchor="end" font-family="Courier New,monospace"'
-        ' font-size="10" fill="#6B5B41" letter-spacing="1">REV %s · SHEET 01/01 · %s</text>'
-        % (_html_escape(meta.get("rev") or "C"), _html_escape(meta.get("date") or "—"))
+        ' font-size="10" fill="#6B5B41" letter-spacing="1">REV %s · %s · %s</text>'
+        % (
+            _html_escape(meta.get("rev") or "C"),
+            _html_escape(sheet_text),
+            _html_escape(meta.get("date") or "—"),
+        )
     )
     parts.append('<line x1="84" y1="178" x2="1516" y2="178" stroke="#8A734C" stroke-width="2"/>')
 
@@ -6188,6 +6221,7 @@ def _pdf_cover_html(
     flight_payloads: Sequence[Dict[str, Any]],
     bp: Optional[Dict[str, str]],
     player_name: str = "",
+    pdf_total: int = 0,
 ) -> str:
     """PDF 第 1 页封面：**直接复用** PNG 复盘卡的 SVG（annotated + clean 两份）。
 
@@ -6200,16 +6234,22 @@ def _pdf_cover_html(
 
     两份卡的 SVG id / pattern id 都带 ``-cover`` 后缀，避免和 ``#debrief-src``
     里用于 PNG 导出的两份卡撞 id。
+
+    ``pdf_total`` 是完整 PDF 的总页数（封面 + 内容页）。>0 时把卡上的页脚改成
+    ``SHEET 01/<pdf_total>``（封面是 PDF 第 1 页）；PNG 复盘卡不传，仍写 01/01。
     """
     main, meta = _debrief_card_source(flight_payloads, bp, player_name)
     if main is None:
         return ""
+    sheet_text = "SHEET 01/%02d" % pdf_total if pdf_total > 0 else "SHEET 01/01"
     cards = "".join(
         '<div class="pdf-cover-card pdf-cover-%s" data-cover="%s">%s</div>'
         % (
             variant,
             variant,
-            _debrief_card_svg(model, main, clean, meta, suffix="-cover"),
+            _debrief_card_svg(
+                model, main, clean, meta, suffix="-cover", sheet_text=sheet_text,
+            ),
         )
         for variant, clean in PDF_COVER_VARIANTS
     )

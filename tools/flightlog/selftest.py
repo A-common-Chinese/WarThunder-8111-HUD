@@ -27,7 +27,8 @@
 13. MFD 导出（``--mfd-json``）：开关语义（两种用法）、stdout 纯 JSON、schema/字段集合、
     点数上限、缺失 ``null``，以及平均值的「死亡前 10 s 窗口排除 + 只在死亡前 30 s 窗口内
     生效的 MAD 3σ 尖峰过滤」（合成数据核对：窗口内尖峰剔除、窗口外低速段保留、无死亡不过滤）。
-14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET n/9/标题栏、打印分页 CSS、
+14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET 编号（屏幕 n/9、打印/PDF
+    (n+1)/10，PDF 封面 01/10、PNG 复盘卡 01/01）/标题栏、打印分页 CSS、
     保存设置二级页（PDF/PNG + 保留批注开关）、内嵌 PNG 复盘卡 SVG 与 canvas 导出钩子。
 15. 审阅批注规则：速度（最大 IAS + 首次超限速）、高度（最低气压高度）、Es（最低点 +
     断崖**区间**：2 s 滑动平均 dEs/dt 最负处向左右扩到恢复 30% 或最长 10 s，
@@ -2067,7 +2068,12 @@ def _cover_card_block(html: str, svg_id: str) -> str:
 
 
 def _behead_cover_svg(svg: str) -> str:
-    """把封面卡的 ``-cover`` id 后缀去掉，便于和 PNG 复盘卡逐字节比较（证明复用）。"""
+    """把封面卡的 ``-cover`` id 后缀去掉，便于和 PNG 复盘卡逐字节比较（证明复用）。
+
+    封面页脚按 PDF 统一编号写成 ``SHEET 01/10``（第 1 页 / 共 10 页），PNG 单张卡
+    保持 ``SHEET 01/01``；除这处页码外两份卡必须逐字节相同，比较前先把页脚归一化。
+    """
+    svg = re.sub(r"SHEET 01/\d{2}", "SHEET 01/01", svg)
     return (
         svg.replace("debrief-svg-annotated-cover", "debrief-svg-annotated")
         .replace("debrief-svg-clean-cover", "debrief-svg-clean")
@@ -2098,6 +2104,23 @@ def test_blueprint_report(tmp: Path) -> None:
     check(html.count('class="bp-chrome"') == 9, "9 页各有图框 chrome（%d）" % html.count('class="bp-chrome"'))
     for index in range(1, 10):
         check("SHEET %02d/09" % index in html, "页脚 SHEET %02d/09" % index)
+
+    # ---- 页脚统一编号：屏幕 01/09…09/09，打印/PDF 02/10…10/10（封面 = PDF 第 1 页） ----
+    screen_sheets = re.findall(r'<span class="bp-sheet">([^<]*)</span>', html)
+    print_sheets = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>', html)
+    check(screen_sheets == ["SHEET %02d/09" % index for index in range(1, 10)],
+          "屏幕页脚仍是 SHEET 01/09…09/09（%s）" % screen_sheets)
+    check(print_sheets == ["SHEET %02d/10" % index for index in range(2, 11)],
+          "打印/PDF 页脚 02/10…10/10（第 n 个内容页 = n+1；%s）" % print_sheets)
+    check(".bp-sheet-print{display:none" in html,
+          "屏幕态隐藏 .bp-sheet-print（不改屏幕版面）")
+    check(".bp-sheet{display:none!important}" in html
+          and ".bp-sheet-print{display:flex!important}" in html,
+          "打印态切换：隐藏 .bp-sheet、显示 .bp-sheet-print")
+    check("body.pdf-capture .bp-sheet{display:none!important}" in html
+          and "body.pdf-capture .bp-sheet-print{display:flex!important}" in html,
+          "方案 B 的 .pdf-capture 打印态仿真也按同一规则切换页脚")
+
     title_block = re.search(r'<span class="bp-tb">.*?</span></div>', html, re.S)
     block_text = title_block.group(0) if title_block else ""
     check("WTHUD FLIGHT LOG" in block_text and "ACFT" in block_text,
@@ -2140,6 +2163,8 @@ def test_blueprint_report(tmp: Path) -> None:
           "内联 JS 暴露导出/保存状态钩子（便于自动化验证）")
     check("function renderDebriefCanvas" in html and "function exportDebriefPNG" in html,
           "PNG 导出实现（canvas + a[download]）在页面内联")
+    check("SHEET 01/01" in annotated and "SHEET 01/10" not in annotated,
+          "PNG 复盘卡页脚保持 SHEET 01/01（单张卡不是 PDF 页）")
 
     # ---- PDF 第 1 页封面：复用 PNG 复盘卡（屏幕隐藏 / 打印显示 / 批注开关联动） ----
     cover = _pdf_cover_block(html)
@@ -2161,6 +2186,10 @@ def test_blueprint_report(tmp: Path) -> None:
           "方案 B 的打印态仿真（.pdf-capture）也显示封面")
     cover_ann = _cover_card_block(html, "debrief-svg-annotated-cover")
     cover_clean = _cover_card_block(html, "debrief-svg-clean-cover")
+    check("SHEET 01/10" in cover and "SHEET 01/01" not in cover,
+          "PDF 封面页脚 = SHEET 01/10（第 1 页 / 共 10 页）")
+    check(cover_ann.count("SHEET 01/10") == 1 and cover_clean.count("SHEET 01/10") == 1,
+          "封面 annotated / clean 两份卡的页脚都是 SHEET 01/10")
     check('viewBox="0 0 1600 1000"' in cover_ann and 'viewBox="0 0 1600 1000"' in cover_clean,
           "封面 = 1600×1000 复盘卡（annotated + clean 两份）")
     check(_behead_cover_svg(cover_ann) == annotated,
