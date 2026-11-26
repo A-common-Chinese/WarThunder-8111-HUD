@@ -169,6 +169,14 @@ public static partial class Program
             && !WtHud.Program.LooksLikeSteamOverlay("nvcontainer", "CEF-OSC-WIDGET")
             && !WtHud.Program.LooksLikeSteamOverlay("chrome", "Chrome_WidgetWin_1"));
 
+        // 光标启发式（无窗口的注入式覆盖层）：本次飞行曾连续隐藏 ≥2 s，之后可见 >900 ms 才认。
+        Check("cursor overlay ignores a cursor that was always visible",
+            !WtHud.Program.CursorOverlayReady(false, 100, 5000));
+        Check("cursor overlay ignores a short visible blip",
+            !WtHud.Program.CursorOverlayReady(true, 5000, 5400));
+        Check("cursor overlay triggers after hidden then visible long enough",
+            WtHud.Program.CursorOverlayReady(true, 5000, 6100));
+
         // 中文昵称 / 中文战队标签 / 昵称带括号：这三类以前都会让 actor 对不上设置里的名字
         const string zhLine = "^雄鹰^张三 (J-7E) 击落了 李四 (F-16)";
         Check("killfeed strips chinese squad tag",
@@ -835,6 +843,18 @@ public static partial class Program
         Check("role arms the assist but leaves the layout alone",
             roleLeadCfg.FormationAssist && !roleLeadCfg.FormationOnly);
 
+        // ---- 「只显示编队」只在编队辅助打开时生效（辅助是总开关）----
+        var fo = new HudConfig { FormationAssist = false, FormationOnly = true };
+        Check("formation-only is inert while the assist is off", !EffectiveFormationOnly(fo));
+        fo.FormationAssist = true;
+        Check("formation-only applies once the assist is on", EffectiveFormationOnly(fo));
+        fo.FormationOnly = false;
+        Check("formation-only stays off when unchecked", !EffectiveFormationOnly(fo));
+        fo.FormationAssist = false;
+        fo.FormationOnly = true;   // 值保留，但不生效
+        Check("formation-only keeps the stored value while inert",
+            fo.FormationOnly && !EffectiveFormationOnly(fo));
+
         // ---- 间距也要进差异表：两个预设的四个数值碰巧相同时，只有间距不同 ----
         var spaceCfg = new HudConfig
         {
@@ -1355,6 +1375,26 @@ public static partial class Program
         Check("no friendly means no lead",
             NearestFriendlyIndex(new System.Collections.Generic.List<FriendlyContact>()) == -1);
 
+        // ---- 编队辅助横向分层（issue #2）：方位接近的两架友机必须画在不同行 ----
+        // 纯逻辑：输入按显示 x 升序 + 各自估算半宽，贪心分配 lane。半宽 20px、中心距 3px → 必撞。
+        var laneClose = HudGeometry.AssignFormationLanes(
+            new[] { 100.0, 103.0 }, new[] { 20.0, 20.0 }, 4);
+        Check("close friendly markers take different lanes",
+            laneClose[0] == 0 && laneClose[1] == 1);
+        var laneFar = HudGeometry.AssignFormationLanes(
+            new[] { 100.0, 160.0 }, new[] { 20.0, 20.0 }, 4);
+        Check("far friendly markers share the base lane",
+            laneFar[0] == 0 && laneFar[1] == 0);
+        // 4 架挤在一起：4 行全用上；第 5 架超过「最多 4 档」→ -1（调用方少画）
+        var laneCrowd = HudGeometry.AssignFormationLanes(
+            new[] { 100.0, 100.0, 100.0, 100.0 }, new[] { 20.0, 20.0, 20.0, 20.0 }, 4);
+        Check("four stacked markers use four lanes",
+            laneCrowd.SequenceEqual(new[] { 0, 1, 2, 3 }));
+        var laneOverflow = HudGeometry.AssignFormationLanes(
+            new[] { 100.0, 100.0, 100.0, 100.0, 100.0 },
+            new[] { 20.0, 20.0, 20.0, 20.0, 20.0 }, 4);
+        Check("fifth stacked marker is dropped", laneOverflow[3] == 3 && laneOverflow[4] == -1);
+
         // ================= 单位制（0.4.37）：内部永远公制，只有显示/输入换算 =================
         // 老配置缺这两个键时必须还是公制 —— 默认值就是兼容性本身
         Check("units default to metric",
@@ -1564,6 +1604,66 @@ public static partial class Program
             !double.IsNaN(y0) && !double.IsNaN(y2) && Math.Abs((y2 - y0) - 2 * PxDeg(1080)) < 0.5);
         // 默认偏移是 0（配置缺键时行为不变）
         Check("ladder offset defaults to zero", new HudConfig().LadderOffsetYDeg == 0);
+
+        // ---- 编队辅助分层（issue #2）：真画一次，方位只差 1° 的两架友机必须落在不同行 ----
+        // 距离用两组不同文字（"1.2km" / "570"）标记身份；1° ≈ 5.8px，远小于文字宽度 → 必分层。
+        var laneOpt = new HudOptions { FormationOnly = true };
+        laneOpt.Friendlies.Add(new FriendlyContact(10, 1234, "Fighter"));
+        laneOpt.Friendlies.Add(new FriendlyContact(11, 567, "Fighter"));
+        var lanePrims = new HudGeometry(laneOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true, HeadingDeg = 0 }, default, 1920, 1080);
+        double PrimTextY(List<HudPrim> prims, string text)
+        {
+            foreach (var p in prims)
+                if (p.Kind == HudPrimKind.Text && p.Text == text) return p.Points[0].Y;
+            return double.NaN;
+        }
+        double yTextBase = PrimTextY(lanePrims, "1.2km"), yTextLane = PrimTextY(lanePrims, "570");
+        double laneStepPx = 2.6 * PxDeg(1080);
+        Check("rendered close friendlies take different rows",
+            !double.IsNaN(yTextBase) && !double.IsNaN(yTextLane)
+            && Math.Abs((yTextBase - yTextLane) - laneStepPx) < 0.5);
+        // 三角形必须和距离字同层移动：两个三角形顶点的 y 差 == 两行距离字的 y 差
+        var laneTriY = lanePrims
+            .Where(p => p.Kind == HudPrimKind.Polyline && p.Points.Count == 4
+                        && Math.Abs(p.Points[0].X - p.Points[3].X) < 1e-9
+                        && Math.Abs(p.Points[0].Y - p.Points[3].Y) < 1e-9)
+            .Select(p => p.Points[0].Y).OrderBy(y => y).ToList();
+        Check("formation triangle rides with its distance text",
+            laneTriY.Count == 2
+            && Math.Abs((laneTriY[1] - laneTriY[0]) - (yTextBase - yTextLane)) < 0.01);
+        // 分层行不能跑出屏幕（1080p 下两行都还在画面上）
+        Check("formation lanes stay on screen", laneTriY.Count == 2 && laneTriY[0] > 0 && yTextLane > 0);
+
+        // 4 架全挤在 ±3°：放不下的行按「超界就少画」丢弃，但保留基准行、且不许把行画到屏幕外。
+        // （45° FOV / 1080p 默认布局只放得下 3 行；这里只锁「不出屏 + 至少画基准行」，不锁具体行数。）
+        var crowdOpt = new HudOptions { FormationOnly = true };
+        crowdOpt.Friendlies.Add(new FriendlyContact(10, 1234, "Fighter"));
+        crowdOpt.Friendlies.Add(new FriendlyContact(11, 567, "Fighter"));
+        crowdOpt.Friendlies.Add(new FriendlyContact(12, 1800, "Fighter"));
+        crowdOpt.Friendlies.Add(new FriendlyContact(13, 2400, "Fighter"));
+        var crowdPrims = new HudGeometry(crowdOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true, HeadingDeg = 0 }, default, 1920, 1080);
+        string[] crowdTexts = { "1.2km", "570", "1.8km", "2.4km" };
+        var crowdShown = crowdPrims
+            .Where(p => p.Kind == HudPrimKind.Text && crowdTexts.Contains(p.Text))
+            .Select(p => p.Points[0].Y).ToList();
+        Check("crowded friendly rows stay on screen",
+            crowdShown.Count >= 1 && crowdShown.Count <= 4
+            && crowdShown.All(y => y > 8)
+            && crowdPrims.Any(p => p.Kind == HudPrimKind.Text && p.Text == "1.2km"));
+
+        // 带外箭头的距离字是「从带边缘向带内排」的单侧占位：贴近带边的带内标记必须和边缘箭头分层，
+        // 否则箭头文字压到带内文字上（只看箭头锚点会漏判）。
+        var edgeOpt = new HudOptions { FormationOnly = true };
+        edgeOpt.Friendlies.Add(new FriendlyContact(17.9, 1800, "Fighter"));   // 带内、离右边缘约 41px
+        edgeOpt.Friendlies.Add(new FriendlyContact(40, 567, "Fighter"));      // 带外 → 右端箭头
+        var edgePrims = new HudGeometry(edgeOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true, HeadingDeg = 0 }, default, 1920, 1080);
+        double yEdgeInner = PrimTextY(edgePrims, "1.8km"), yEdgeArrow = PrimTextY(edgePrims, "570");
+        Check("edge arrow lanes clear the near-edge marker",
+            !double.IsNaN(yEdgeInner) && !double.IsNaN(yEdgeArrow)
+            && Math.Abs(yEdgeInner - yEdgeArrow) > 0.5 * PxDeg(1080));
 
         // ---- 仪表块布局微调：默认全 0 / 1.0，clone 不共享 Layout 引用 ----
         Check("layout config defaults to no-op",
@@ -2474,6 +2574,94 @@ public static partial class Program
                     && e2eResult.Flights[0].Series?.T is { Length: > 0 });
             }
         }
+
+        // ---- HUD 隐藏状态机（issue #2）：每个来源独立、优先级、Esc/F5 语义、日志 ----
+        // 纯逻辑测试：不依赖 Windows / 游戏 / 任何按键状态。
+        var hide = new HudHideState();
+        Check("hide state starts visible", !hide.IsHidden && hide.ActiveReasons().Count == 0);
+        Check("hide reset key defaults to esc",
+            new HudConfig().HideResetKey == "ESC"
+            && WtHud.Input.KeyBinding.Parse(new HudConfig().HideResetKey, 0x74, "F5").VirtualKey == 0x1B);
+
+        hide.Set(HideReason.Manual, true);
+        Check("hide state manual hides", hide.IsHidden && hide.IsSet(HideReason.Manual));
+        hide.Set(HideReason.Manual, true);   // 幂等：重复写同一个值不产生第二个来源
+        Check("hide state set is idempotent", hide.ActiveReasons().Count == 1);
+        hide.Set(HideReason.Manual, false);
+        Check("hide state manual release shows", !hide.IsHidden);
+
+        // 多原因叠加：地图 + 记分板同时隐藏时，松开一个不能误放行
+        hide.Set(HideReason.Map, true);
+        hide.Set(HideReason.Scoreboard, true);
+        Check("hide state aggregates reasons",
+            hide.IsHidden
+            && hide.ActiveReasons().SequenceEqual(new[] { HideReason.Map, HideReason.Scoreboard })
+            && hide.LogLine() == "hud hide -> on (map,scoreboard)");
+        hide.Set(HideReason.Map, false);
+        Check("releasing one reason keeps the other hidden", hide.IsHidden);
+
+        Check("hide state priorities are p0<p1<p2",
+            HudHideState.PriorityOf(HideReason.Manual) < HudHideState.PriorityOf(HideReason.View)
+            && HudHideState.PriorityOf(HideReason.View) < HudHideState.PriorityOf(HideReason.Map)
+            && HudHideState.PriorityOf(HideReason.Map) == HudHideState.PriorityOf(HideReason.Scoreboard));
+        Check("hide log pure formatter",
+            HudHideState.FormatLog(true, new[] { HideReason.Map, HideReason.Scoreboard })
+                == "hud hide -> on (map,scoreboard)"
+            && HudHideState.FormatLog(true, Array.Empty<HideReason>()) == "hud hide -> on"
+            && HudHideState.FormatLog(false, new[] { HideReason.View }) == "hud hide -> off"
+            && HudHideState.ActiveText(new[] { HideReason.View }) == "view");
+
+        // 模拟：按住 M（地图）+ 记分板锁存 + 长按 U + 座舱视角同时生效 → Esc 只清 P2
+        hide.Set(HideReason.Map, true);
+        hide.Set(HideReason.Manual, true);
+        hide.Set(HideReason.View, true);
+        var clearedByEsc = hide.ClearAbovePriority(1);
+        Check("esc clears only priority above 1",
+            clearedByEsc.SequenceEqual(new[] { HideReason.Map, HideReason.Scoreboard })
+            && !hide.IsSet(HideReason.Map) && !hide.IsSet(HideReason.Scoreboard)
+            && hide.IsSet(HideReason.Manual) && hide.IsSet(HideReason.View) && hide.IsHidden);
+        Check("esc is a no-op when only p0/p1 remain",
+            hide.ClearAbovePriority(1).Count == 0 && hide.IsHidden);
+        Check("hide state log lists the remaining reasons",
+            hide.LogLine() == "hud hide -> on (manual,view)");
+
+        var clearedAll = hide.ClearAll();
+        Check("f5 clear-all clears p0 and p1 too",
+            clearedAll.SequenceEqual(new[] { HideReason.Manual, HideReason.View })
+            && !hide.IsHidden && hide.LogLine() == "hud hide -> off"
+            && hide.ClearAll().Count == 0);
+
+        // ---- 统一切换边沿（Z / V / TAB / 空速刹车）：一次真实按键只切换一次 ----
+        // 背景：Z/V 原来有 180 ms 冷却，快速双击的第二下被吞掉 → 游戏内状态和 HUD 反过来。
+        bool prevToggle = false;
+        int toggles = 0;
+        // 快速双击：按下 → 松开 → 按下 → 松开，必须得到 2 次切换
+        if (ToggleEdge(true, false, ref prevToggle)) toggles++;
+        if (ToggleEdge(false, false, ref prevToggle)) toggles++;
+        if (ToggleEdge(true, false, ref prevToggle)) toggles++;
+        if (ToggleEdge(false, false, ref prevToggle)) toggles++;
+        Check("toggle edge double click toggles twice", toggles == 2 && !prevToggle);
+
+        // 按住不放：只切一次（不会自动重复），prevDown 停在 true
+        prevToggle = false;
+        toggles = 0;
+        for (var i = 0; i < 5; i++)
+            if (ToggleEdge(true, i == 0, ref prevToggle)) toggles++;
+        Check("toggle edge hold toggles once", toggles == 1 && prevToggle);
+        if (ToggleEdge(false, false, ref prevToggle)) toggles++;
+        Check("toggle edge release does not toggle", toggles == 1 && !prevToggle);
+
+        // 两次轮询之间完成的超短按：nowDown=false + PressedSinceLastPoll=true → 一次切换
+        prevToggle = false;
+        int shortToggles = 0;
+        if (ToggleEdge(false, true, ref prevToggle)) shortToggles++;
+        if (ToggleEdge(false, false, ref prevToggle)) shortToggles++;
+        Check("toggle edge catches a sub-poll tap", shortToggles == 1 && !prevToggle);
+
+        // 按下边沿与短按标志同时为真时也只算一帧（不会按下瞬间切两次）
+        prevToggle = false;
+        Check("toggle edge press frame counts once",
+            ToggleEdge(true, true, ref prevToggle) && prevToggle);
 
         Console.WriteLine("selftest done");
         return Environment.ExitCode;

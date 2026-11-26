@@ -98,8 +98,14 @@ public sealed class HudConfig
     /// <summary>Cursor-hole cycle key.</summary>
     [JsonPropertyName("cursorHoleKey")] public string CursorHoleKey { get; set; } = "CTRL+ALT+H";
 
-    /// <summary>Custom key: reset the internal view / map state (default F5).</summary>
+    /// <summary>Custom key: reset every internal hide state (view / map / scoreboard / hold, default F5).</summary>
     [JsonPropertyName("resetKey")] public string ResetKey { get; set; } = "F5";
+
+    /// <summary>
+    /// Esc 键（可改）：只清 P2 隐藏状态（地图 / 记分板），P0 按住隐藏和 P1 视角隐藏不动。
+    /// 只在确实有可清状态时才生效并打日志，所以不会抢游戏自己的 Esc 菜单。
+    /// </summary>
+    [JsonPropertyName("hideResetKey")] public string HideResetKey { get; set; } = "ESC";
 
     /// <summary>Long-press this key to hide the HUD (default U).</summary>
     [JsonPropertyName("holdHideKey")] public string HoldHideKey { get; set; } = "U";

@@ -565,6 +565,8 @@ internal static class MfdPages
             Key("row.keyFormation", c => c.FormationKey, (c, v) => c.FormationKey = v),
             Key("row.keyExit", c => c.ExitKey, (c, v) => c.ExitKey = v),
             Key("row.keyHoldHide", c => c.HoldHideKey, (c, v) => c.HoldHideKey = v),
+            // Esc：只清 P2（地图 / 记分板），清完立刻打日志；没有可清状态时不动作
+            Key("row.keyHideReset", c => c.HideResetKey, (c, v) => c.HideResetKey = v),
             // 固定组合键（不可改，只读展示）
             Info("row.keyFix1", _ => "CTRL+ALT+\u2191/\u2193"),
             Info("row.keyFix2", _ => "CTRL+ALT+PgUp/PgDn"),

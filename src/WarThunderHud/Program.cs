@@ -1174,6 +1174,7 @@ public static partial class Program
 
             // View-state resync: a new vehicle or entering a match always starts in the
             // third-person camera, so the V counter must be reset.
+            // 换局还要把「为什么隐藏」全部清掉并复位锁存：上一局按住/按下的状态不会残留到新一局。
             if (!string.IsNullOrEmpty(s.VehicleType) && s.VehicleType != lastVehicle)
             {
                 lastVehicle = s.VehicleType;
@@ -1200,6 +1201,12 @@ public static partial class Program
             if (s.Valid && !prevValid)
             {
                 viewState = 0;
+                hideState.ClearAll();
+                mapHeld = false;
+                scoreboardLatched = false;
+                scoreboardHeld = false;
+                holdKeyStart = 0;
+                holdKeyHidden = false;
                 Console.WriteLine("view state reset: match entered");
                 if (!string.IsNullOrEmpty(s.VehicleType))
                 {
@@ -1435,9 +1442,15 @@ public static partial class Program
             }
             else if (id == 13)
             {
+                // F5 热键路径（与 input-watcher 的轮询路径同语义）：清全部隐藏状态 + 视角计数。
                 viewState = 0;
                 mapHeld = false;
-                Console.WriteLine("F5 -> view state + map state reset");
+                scoreboardLatched = false;
+                scoreboardHeld = false;
+                holdKeyStart = 0;
+                holdKeyHidden = false;
+                hideState.ClearAll();
+                Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> all hide states cleared");
             }
             else if (id == 12)
             {
@@ -1482,14 +1495,15 @@ public static partial class Program
         {
             bool prevZoom = false;
             bool prevView = false;
+            bool prevEsc = false;
             RebindeKeys(cfg);   // parse from config at startup (and again after F1 saves)
-            long lastViewToggleTicks = 0;
-            long lastToggleTicks = 0;
             bool wasForeground = false;
             bool panelBelowHud = false;
             bool steamOverlayPrev = false;
             bool cursorOverlayPrev2 = false;
             long cursorVisibleSince = 0;
+            long cursorHiddenSince = 0;
+            bool cursorSeenHiddenLong = false;
             bool cursorOverlayMode = false;
             IntPtr arrow = NativeMethods.LoadCursor(IntPtr.Zero, (IntPtr)32512);
             while (!cursorStop)
@@ -1514,17 +1528,31 @@ public static partial class Program
                 bool steamOverlay = SteamOverlayActive(gamePid);
                 // 没有可枚举窗口的覆盖层（Steam 新版注入游戏进程）：飞行中系统光标
                 // 持续可见 >900ms 仍收不回去 → 认定有外部 UI 要鼠标，放开光标并隐藏 HUD。
+                // 但只有「光标先保持隐藏 ≥2s」才认：窗口化玩家的光标从进对局起就一直可见，
+                // 不满足前置条件，不会被误判成覆盖层（0.5.1 之前的永久隐藏问题）。
                 if (latest?.InFlight == true && show && !settingsOpen && !steamOverlay)
                 {
                     bool showing = NativeMethods.DescribeCursor().Contains("showing=True");
                     long tick = Environment.TickCount64;
                     if (showing)
                     {
-                        if (cursorVisibleSince == 0) cursorVisibleSince = tick;
-                        else if (tick - cursorVisibleSince > 900) cursorOverlayMode = true;
+                        if (cursorVisibleSince == 0)
+                        {
+                            // 光标从隐藏变可见：记录「本次飞行曾经连续隐藏 ≥2 s」。
+                            // 窗口化玩家光标一直可见，这个标志永远不会置上。
+                            if (cursorHiddenSince != 0 && tick - cursorHiddenSince >= 2000)
+                                cursorSeenHiddenLong = true;
+                            cursorVisibleSince = tick;
+                        }
+                        else if (CursorOverlayReady(cursorSeenHiddenLong, cursorVisibleSince, tick))
+                        {
+                            cursorOverlayMode = true;
+                        }
                     }
                     else
                     {
+                        if (cursorVisibleSince != 0) cursorHiddenSince = tick; // 可见 → 隐藏：开始新的隐藏区间
+                        else if (cursorHiddenSince == 0) cursorHiddenSince = tick;
                         cursorVisibleSince = 0;
                         cursorOverlayMode = false;
                     }
@@ -1533,6 +1561,8 @@ public static partial class Program
                 {
                     cursorVisibleSince = 0;
                     cursorOverlayMode = false;
+                    cursorHiddenSince = 0;
+                    cursorSeenHiddenLong = false;
                 }
                 bool cursorOverlay = steamOverlay || cursorOverlayMode;
                 // 紧急开关：覆盖层检测导致 HUD 不显示时，用环境变量彻底关掉它
@@ -1567,7 +1597,9 @@ public static partial class Program
                 // HUD。但那个分支正好造出注释里说的不可用状态：反馈者实测——切到另一块屏之后，
                 // 游戏那块屏（主屏）"什么都点不了，像被蒙住了"，单实例也一样。现在隐藏是无条件的，
                 // 那个开关连同字段已经删除（见 HudConfig 注释），别再给它加回来的口子。
-                bool wantVisible = (foreground || settingsOpen) && !steamOverlay;
+                // 覆盖层窗口检测优先；无窗口的注入式覆盖层（Steam 新版）靠光标启发式。
+                // 面板打开时强制显示，避免调设置时被覆盖层状态挡住。
+                bool wantVisible = ((foreground && !cursorOverlayMode) || settingsOpen) && !steamOverlay;
                 if (overlay.IsVisible != wantVisible) overlay.SetVisible(wantVisible);
 
                 // 面板打开时把覆盖层压到面板下面：HUD 仍可见（预览设置效果），
@@ -1583,6 +1615,22 @@ public static partial class Program
                 {
                     Console.WriteLine($"foreground -> {(foreground ? "game (overlay shown)" : "other app (overlay hidden)")}");
                     wasForeground = foreground;
+
+                    // 失焦：输入轮询在别的程序前台时 armed=false，收不到的「松开」会让隐藏状态
+                    // 永远卡住（issue #2 的另一类）。这里直接清全部，并复位记分板锁存 / 长按计时，
+                    // 免得回到游戏后又被上一局的锁存立刻隐藏。视角隐藏会在回焦后按 viewState 重算。
+                    if (!foreground)
+                    {
+                        var cleared = hideState.ClearAll();
+                        mapHeld = false;
+                        scoreboardLatched = false;
+                        scoreboardHeld = false;
+                        holdKeyStart = 0;
+                        holdKeyHidden = false;
+                        if (cleared.Count > 0)
+                            Console.WriteLine(
+                                $"foreground lost -> hide states cleared ({HudHideState.ActiveText(cleared)})");
+                    }
 
                     // Coming back from another app the OS may still be drawing that app's arrow
                     // (War Thunder pins the pointer to the screen centre, so no new WM_SETCURSOR
@@ -1622,29 +1670,32 @@ public static partial class Program
                         cursorNudges = 0;
                     }
                 }
-                bool armed = foreground && !settingsOpen && !cursorOverlay && show;
+                // 输入/隐藏按键的「armed」只看真正的前台与总开关。
+                // 不要把 cursorOverlay（光标启发式）混进来：打开记分板时游戏会显示光标，
+                // 900 ms 后启发式会判定「需要释放光标」，若 armed 因此变 false，记分板锁存
+                // 会被清掉 → HUD 在记分板打开后又自己冒出来，Tab/Esc 也一起失灵。
+                // Steam 覆盖层（steamOverlay）仍然抑制按键，它是可靠的窗口检测。
+                bool armed = foreground && !settingsOpen && !steamOverlay && show;
 
                 // Aiming layout: Z/key toggles it, holding the right mouse button forces it on
                 // for as long as it is held (momentary), which matches how most players look
                 // through the sight.
+                // 切换只看「按下」边沿：以前 180 ms 冷却会把快速双击的第二下吞掉，Z/V 就反了。
                 bool zoomNow = _zoomKeyBinding.IsDown();
-                bool zoomEdge = (zoomNow && !prevZoom) || _zoomKeyBinding.PressedSinceLastPoll();
-                if (zoomEdge && armed && now - lastToggleTicks > 180)
+                bool zoomEdge = ToggleEdge(zoomNow, _zoomKeyBinding.PressedSinceLastPoll(), ref prevZoom);
+                if (zoomEdge && armed)
                 {
-                    lastToggleTicks = now;
                     zoomLatched = !zoomLatched;
                     Console.WriteLine($"aim key -> layout {(zoomLatched ? "on" : "off")}");
                 }
-                prevZoom = zoomNow;
 
                 bool rightHeld = cfg.AimOnRightMouse && WtHud.Input.KeyBinding.IsVirtualKeyDown(0x02);
                 opt.ZoomLayout = zoomLatched || (armed && rightHeld);
 
                 bool viewNow = _viewKeyBinding.IsDown();
-                bool viewEdge = (viewNow && !prevView) || _viewKeyBinding.PressedSinceLastPoll();
-                if (viewEdge && armed && now - lastViewToggleTicks > 180)
+                bool viewEdge = ToggleEdge(viewNow, _viewKeyBinding.PressedSinceLastPoll(), ref prevView);
+                if (viewEdge && armed)
                 {
-                    lastViewToggleTicks = now;
                     viewState = (viewState + 1) % 3;   // 0 third person, 1 cockpit, 2 nose
                     if (zoomLatched)
                     {
@@ -1653,7 +1704,6 @@ public static partial class Program
                     }
                     Console.WriteLine($"view key -> view state {viewState} ({ViewName(viewState)})");
                 }
-                prevView = viewNow;
 
                 // Both the map and the scoreboard are hold-to-hide in this setup. The map key
                 // ignores modifier state: pressing M together with another key used to fall
@@ -1663,23 +1713,27 @@ public static partial class Program
                 bool mapHasMods = _mapKeyBinding.Ctrl || _mapKeyBinding.Shift || _mapKeyBinding.Alt;
                 mapHeld = armed && (mapHasMods ? _mapKeyBinding.IsDown() : _mapKeyBinding.IsKeyDownIgnoringModifiers());
 
-                // Scoreboard is a toggle rather than hold-to-show: press once to hide the HUD,
-                // press again to bring it back.
+                // 记分板是「按一次切换」：游戏里 Tab 切换记分板，HUD 跟着 latch 同步切换。
+                // 只认按下边沿（统一走 ToggleEdge），不做时间冷却：以前用 200 ms 冷却，快速双击的
+                // 第二下会被吞掉，游戏已经关掉记分板而 HUD 还停在隐藏状态（issue #2）。
                 bool scoreNow = _scoreKeyBinding.IsDown();
-                bool scoreEdge = (scoreNow && !prevScore) || _scoreKeyBinding.PressedSinceLastPoll();
-                if (scoreEdge && armed && now - lastScoreToggle > 200)
+                bool scoreEdge = ToggleEdge(scoreNow, _scoreKeyBinding.PressedSinceLastPoll(), ref prevScore);
+                if (scoreEdge && armed)
                 {
-                    lastScoreToggle = now;
                     scoreboardLatched = !scoreboardLatched;
                     Console.WriteLine($"scoreboard key -> hidden {(scoreboardLatched ? "on" : "off")}");
                 }
-                prevScore = scoreNow;
                 scoreboardHeld = armed && scoreboardLatched;
+                hideState.Set(HideReason.Map, mapHeld);
+                hideState.Set(HideReason.Scoreboard, scoreboardHeld);
 
                 // A-10 family: airbrake box follows the key (deceleron telemetry is unusable).
-                if (armed && latest is { } abSnap
-                    && abSnap.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase)
-                    && _airbrakeKeyBinding.PressedSinceLastPoll())
+                // 与 Z/V/TAB 用同一个切换边沿：按住不会自动重复，极短按也不会丢。
+                bool airbrakeNow = _airbrakeKeyBinding.IsDown();
+                bool airbrakeEdge = ToggleEdge(airbrakeNow, _airbrakeKeyBinding.PressedSinceLastPoll(),
+                                               ref prevAirbrake);
+                if (airbrakeEdge && armed && latest is { } abSnap
+                    && abSnap.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase))
                 {
                     airbrakeKeyOn = !airbrakeKeyOn;
                     Console.WriteLine("airbrake key (" + _airbrakeKeyBinding.Text + ") -> " + (airbrakeKeyOn ? "ON" : "off"));
@@ -1694,13 +1748,17 @@ public static partial class Program
                     Console.WriteLine($"stall key -> {cur.VehicleType} stall AOA = {cur.AoaDeg:F1} deg (saved)");
                 }
 
-                // Reset key (default F5, configurable): clear view counter / map / scoreboard state.
+                // Reset key (default F5, configurable): clear every hide state + the view counter.
                 if (armed && _resetKeyBinding.PressedSinceLastPoll())
                 {
                     viewState = 0;
                     mapHeld = false;
                     scoreboardLatched = false;
-                    Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> view/map/scoreboard state cleared");
+                    scoreboardHeld = false;
+                    holdKeyStart = 0;
+                    holdKeyHidden = false;
+                    hideState.ClearAll();
+                    Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> all hide states cleared");
                 }
 
                 // Long-press hide key (default U): hold it to blank the HUD.
@@ -1714,6 +1772,30 @@ public static partial class Program
                     holdKeyStart = 0;
                 }
                 holdKeyHidden = holdKeyStart != 0 && now - holdKeyStart > HoldHideDelayMs;
+                hideState.Set(HideReason.Manual, holdKeyHidden);
+
+                // Esc (P1): only clears priority > 1, i.e. the P2 map / scoreboard states. P0 manual
+                // hold and P1 view are untouched. When nothing is clearable it does NOT act or log,
+                // so the game's own Esc menu is never disturbed. Polled edge; no hotkey registered.
+                bool escCombo = _hideResetKeyBinding.Ctrl || _hideResetKeyBinding.Shift || _hideResetKeyBinding.Alt;
+                bool escNow = escCombo
+                    ? _hideResetKeyBinding.IsDown()
+                    : _hideResetKeyBinding.IsKeyDownIgnoringModifiers();
+                bool escEdge = (escNow && !prevEsc)
+                               || (!escCombo && _hideResetKeyBinding.PressedSinceLastPoll());
+                if (escEdge && armed)
+                {
+                    var cleared = hideState.ClearAbovePriority(1);
+                    if (cleared.Count > 0)
+                    {
+                        // 记分板是锁存：清状态必须同时清锁存，否则 5 ms 后的下一轮轮询立刻又写回隐藏。
+                        if (cleared.Contains(HideReason.Scoreboard)) scoreboardLatched = false;
+                        if (cleared.Contains(HideReason.Map)) mapHeld = false;
+                        scoreboardHeld = armed && scoreboardLatched;
+                        Console.WriteLine($"esc -> cleared hide states ({HudHideState.ActiveText(cleared)})");
+                    }
+                }
+                prevEsc = escNow;
 
                 Thread.Sleep(5);
             }
@@ -1785,11 +1867,20 @@ public static partial class Program
             bool flying = snap.Valid;   // ground counts too: tapes/gear/flaps are useful while taxiing
             bool onGround = snap.Valid && !snap.InFlight;
             bool hiddenByView = (viewState == 1 && cfg.HideInCockpit) || (viewState == 2 && cfg.HideInNose);
-            bool hiddenByPanels = mapHeld || scoreboardHeld || holdKeyHidden;
+            // 视角隐藏每帧由视角现算，单独写回状态机；地图/记分板/长按由 input-watcher 线程写入。
+            // 聚合只看 hideState：多来源叠加时清掉一个不会误放行（issue #2）。
+            hideState.Set(HideReason.View, hiddenByView);
+            bool hiddenByGameUi = hideState.IsHidden;
             // Only hide once the aircraft has actually stopped: taxiing still shows the HUD.
             bool stationary = snap.IasKmh < cfg.GroundHideSpeedKmh;
             bool hiddenOnGround = cfg.HideOnGround && onGround && stationary && !demo;
-            bool draw = show && !hiddenByView && !hiddenByPanels && !hiddenOnGround && (flying || demo);
+            bool draw = show && !hiddenByGameUi && !hiddenOnGround && (flying || demo);
+            // 隐藏状态变化打一行日志（带生效来源），排查「按了键 HUD 不放行」时只看这一行。
+            if (hiddenByGameUi != hideLogged)
+            {
+                hideLogged = hiddenByGameUi;
+                Console.WriteLine(hideState.LogLine());
+            }
 
             // Pitch sign for the next update: manual config wins, then the sign learned for this
             // vehicle; whatever the detector decides is stored per vehicle so it never flips again.
@@ -2505,10 +2596,14 @@ public static partial class Program
         vertSmoothT = -1;                 // 平滑器一起重置，否则会从上一段的旧值慢慢爬过来
     }
 
+    /// <summary>「只显示编队」是否生效：编队辅助是总开关，辅助关掉时它的值保留但失效。</summary>
+    internal static bool EffectiveFormationOnly(HudConfig cfg) => cfg.FormationAssist && cfg.FormationOnly;
+
     private static void UpdateNavigation(HudOptions opt, WtHud.Telemetry.MapData map, TelemetrySnapshot snap, HudConfig cfg)
     {
-        // 编队开关：关掉时既不解析友机（MapData.CollectFriendlies），也不做方位/距离计算。
-        bool formationOn = cfg.FormationAssist || cfg.FormationOnly;
+        // 编队开关：编队辅助是总开关。「只显示编队」只在编队辅助打开时生效；
+        // 辅助关掉时它的配置值保留但失效（HUD 正常显示），重新打开辅助后恢复。
+        bool formationOn = cfg.FormationAssist;
         map.CollectFriendlies = formationOn;
         // 「长机机型」只在数据链不生效时用来筛友机：
         //   数据链能收到节点 → 靠位置配对认长机（同机型多机也分得开）；
@@ -2519,7 +2614,7 @@ public static partial class Program
         bool linkUsable = cfg.DataLinkEnabled && dataLink != null && dataLink.NodeCount > 0;
         map.LeadIconFilter = EffectiveLeadIcon(linkUsable, cfg.LeadIcon);
         opt.FormationAssist = formationOn;
-        opt.FormationOnly = cfg.FormationOnly;
+        opt.FormationOnly = EffectiveFormationOnly(cfg);
         opt.Friendlies.Clear();
         friendPos.Clear();          // 与 opt.Friendlies 同序的归一化位置，配对用
         opt.Guide = null;
@@ -3223,6 +3318,13 @@ public static partial class Program
     /// <summary>Steam 游戏内覆盖层是否打开：枚举可见顶层窗口，按「浏览器类名 + Steam 进程」判定。
     /// 覆盖层打开时 HUD 隐藏并停止抢光标；候选窗口首次出现会打进日志，便于后续适配。</summary>
     /// <summary>
+    /// 无窗口的注入式覆盖层（Steam 新版）：光标先保持隐藏 ≥2 s，再持续可见 &gt;900 ms 才认。
+    /// 纯函数便于自检；窗口化玩家光标一直可见（hiddenStart=0），永远返回 false。
+    /// </summary>
+    internal static bool CursorOverlayReady(bool seenHiddenLong, long visibleStartTick, long nowTick)
+        => seenHiddenLong && visibleStartTick != 0 && nowTick - visibleStartTick > 900;
+
+    /// <summary>
     /// 判断一个浏览器类窗口是不是 Steam 游戏内覆盖层。
     /// 不能只看「名字里带 overlay」：NVIDIA Overlay（CEF-OSC-WIDGET）会被误判，
     /// 导致 HUD 一启动就被当成「Steam 覆盖层打开」而永久隐藏。
@@ -3713,6 +3815,25 @@ public static partial class Program
 
     private static string B(bool v) => v ? "T" : "F";
 
+    /// <summary>
+    /// 统一的「按一下切换」边沿判定（Z / V / TAB / 空速刹车共用）。
+    /// <para>一次真实按键只返回一次 true：</para>
+    /// <list type="bullet">
+    /// <item>本轮看到按下边沿（<paramref name="nowDown"/> &amp;&amp; !prevDown）→ 切换；</item>
+    /// <item>两次轮询之间完成的极短按（!nowDown &amp;&amp; <paramref name="pressedSincePoll"/>）→ 切换一次，
+    /// 因为调用方每轮都会消费这个标志，下一轮不会再触发；</item>
+    /// <item>按住不放（nowDown &amp;&amp; prevDown）→ 不触发，避免自动重复把状态反复翻转。</item>
+    /// </list>
+    /// <para>以前 Z/V 用 180 ms 冷却来判断，快速双击的第二下会被吞掉 → 游戏内状态和 HUD 反过来
+    ///（issue #2）。这个函数无冷却、无 Windows 依赖，自检直接覆盖。</para>
+    /// </summary>
+    private static bool ToggleEdge(bool nowDown, bool pressedSincePoll, ref bool prevDown)
+    {
+        bool edge = (nowDown && !prevDown) || (!nowDown && !prevDown && pressedSincePoll);
+        prevDown = nowDown;
+        return edge;
+    }
+
     private static double Lerp(double a, double b, double f) => a + (b - a) * f;
 
     private static TelemetrySnapshot Extrapolate(TelemetrySnapshot? prev, TelemetrySnapshot curr, double f)
@@ -3787,10 +3908,12 @@ public static partial class Program
     private static WtHud.Input.KeyBinding _mapKeyBinding = WtHud.Input.KeyBinding.Parse("M", 0x4D, "M");
     private static WtHud.Input.KeyBinding _scoreKeyBinding = WtHud.Input.KeyBinding.Parse("TAB", 0x09, "TAB");
     private static WtHud.Input.KeyBinding _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse("U", 0x55, "U");
+    private static WtHud.Input.KeyBinding _hideResetKeyBinding = WtHud.Input.KeyBinding.Parse("ESC", 0x1B, "ESC");
     private static WtHud.Input.KeyBinding _resetKeyBinding = WtHud.Input.KeyBinding.Parse("F5", 0x74, "F5");
     private static WtHud.Input.KeyBinding _stallKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+S", 0x53, "CTRL+ALT+S");
     private static WtHud.Input.KeyBinding _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse("H", 0x48, "H");
     private static bool airbrakeKeyOn;
+    private static bool prevAirbrake;   // 切换边沿的上一次按下状态（ToggleEdge 用）
     private static WtHud.Input.KeyBinding _formationKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+SHIFT+F", 0x46, "CTRL+SHIFT+F");
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
@@ -3824,17 +3947,17 @@ public static partial class Program
         _mapKeyBinding = WtHud.Input.KeyBinding.Parse(c.MapKey, 0x4D, "M");
         _scoreKeyBinding = WtHud.Input.KeyBinding.Parse(c.ScoreboardKey, 0x09, "TAB");
         _holdHideKeyBinding = WtHud.Input.KeyBinding.Parse(c.HoldHideKey, 0x55, "U");
+        _hideResetKeyBinding = WtHud.Input.KeyBinding.Parse(c.HideResetKey, 0x1B, "ESC");
         _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
         _stallKeyBinding = WtHud.Input.KeyBinding.Parse(c.StallKey, 0x53, "CTRL+ALT+S");
         _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
         _formationKeyBinding = WtHud.Input.KeyBinding.Parse(
             string.IsNullOrWhiteSpace(c.FormationKey) ? "CTRL+SHIFT+F" : c.FormationKey, 0x46, "CTRL+SHIFT+F");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
-                          $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text}");
+                          $"score={_scoreKeyBinding.Text} hold={_holdHideKeyBinding.Text} esc={_hideResetKeyBinding.Text}");
     }
 
     private static bool prevScore;
-    private static long lastScoreToggle;
     private static bool scoreboardLatched;
     private static bool radioAltLogged;
     private static string gridDebug = "";
@@ -3873,6 +3996,15 @@ public static partial class Program
     private static bool prevValid;
     private static int viewState;   // 0 third person, 1 cockpit, 2 nose
     private static volatile bool mapHeld;
+
+    /// <summary>
+    /// 统一的 HUD 隐藏状态机（issue #2）：每个隐藏来源独立记 bool，任一为 true 即隐藏。
+    /// 输入轮询线程写 manual/map/scoreboard，渲染线程写 view；Esc/F5/失焦/换局清状态。
+    /// </summary>
+    private static readonly HudHideState hideState = new();
+
+    /// <summary>上一次打日志的聚合隐藏状态，只在渲染线程读写，用来把日志压成「变化时一行」。</summary>
+    private static bool hideLogged;
 
     // SPLASH：自己击落敌机时的播报（4 Hz 轮询 /hudmsg，只认「击落了」）
     private static readonly WtHud.Telemetry.HudMsgWatcher hudMsgWatcher = new();
@@ -4045,9 +4177,10 @@ public static partial class Program
             return;
         }
 
-        // 没有链路但地图上有友军：明确写清「现在跟的是地图上最近的那架」，
-        // 否则飞行员会以为链路在起作用，回头查为什么距离数不对。
-        if (target.Source == FormationSource.Map)
+        // 没有链路但地图上有友军：明确写清「现在跟的是地图上最近的那架」。
+        // 数据链开关本身关掉时不显示——用户主动关了链路，这行只是噪音；
+        // 链路开着但没收到长机广播时才提示。
+        if (cfg.DataLinkEnabled && target.Source == FormationSource.Map)
         {
             opt.FormationLinkText = WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "formation.linkMapOnly");
             opt.FormationLinkOk = false;

@@ -770,10 +770,99 @@ public sealed class HudGeometry
         });
     }
 
+    // ---- 编队辅助：友机标记的横向分层（lane）----
+
+    /// <summary>最多同时画几个友机标记（沿用原来的显示上限，不改数据来源）。</summary>
+    private const int FormationMarkCap = 4;
+
+    /// <summary>横向防重叠最多分几行。友机显示上限 4 架，4 行足够。</summary>
+    private const int FormationMaxLanes = 4;
+
+    /// <summary>
+    /// 每层的纵向行距（度）。一层 = 「三角形/箭头 + 距离字」整组。
+    /// <para>★ 为什么不是更小的 1.35：整组从三角形顶点（带上方 1.0°）到距离字顶边
+    /// （中心 2.4° + 半字高 ≈ 2.675°）约 1.7° 高。行距小于整组高度时，上一行的三角形
+    /// 会压进下一行的距离字里 —— 实测 1.35 仍重叠约 8 px，1.75 只差 2 px 且三角形紧贴
+    /// 下一行文字（看起来像在给下面那行编号）。2.6 让三角形离自己的距离字更近，读起来不串行。
+    /// 代价：45° FOV 下上方只放得下 3 行，第 4 架挤不进来时按「超界就少画」丢弃；
+    /// FOV 更大或编队块下移时仍能放满 4 行（上限由 <see cref="MaxLanesFittingAboveTape"/> 决定）。</para>
+    /// </summary>
+    private const double FormationLaneStepDeg = 2.6;
+
+    /// <summary>距离字中心到航向带的垂直距离（度），和三角形底边留出视觉间隙。</summary>
+    private const double FormationRangeTextDeg = 2.4;
+
+    /// <summary>
+    /// 一个友机标记的绘制参数（排序 + 分层用的中间结果）。
+    /// <para><see cref="DisplayX"/> 是三角/箭头的锚点 x；<see cref="CenterX"/> + <see cref="HalfWidthPx"/>
+    /// 是整块标记（图形 + 距离字）在横向上的占位区间 —— 带内标记居中，带外标记的箭头钉在带边缘、
+    /// 距离字向带内排，所以占位区间的中心不等于锚点。</para>
+    /// </summary>
+    private readonly record struct FormationMark(
+        double RelBearingDeg, double DisplayX, double CenterX, double HalfWidthPx,
+        bool OnTape, string RangeText, int SourceIndex);
+
+    /// <summary>
+    /// 给一组横向可能重叠的标记分配行（lane）。输入必须按显示 x 升序（调用方按相对方位排好）；
+    /// 每个标记带自己的估算半宽，贪心取第一个与已放标记不重叠的行。
+    /// <para>返回每个标记的行号；-1 = 行数不够，调用方应少画这个标记（不叠字、不出屏）。</para>
+    /// <para>纯逻辑、不碰渲染，所以自检可以直接断言「两个接近方位必落在不同行」。</para>
+    /// </summary>
+    internal static int[] AssignFormationLanes(IReadOnlyList<double> centerX, IReadOnlyList<double> halfWidthPx,
+                                               int maxLanes)
+    {
+        int n = centerX.Count;
+        var lanes = new int[n];
+        if (n == 0) return lanes;
+        if (maxLanes <= 0 || halfWidthPx.Count != n)
+        {
+            for (int i = 0; i < n; i++) lanes[i] = -1;
+            return lanes;
+        }
+
+        // 每行记已放标记的最右边缘。x 升序下，后放的标记只要和最右边缘比 ——
+        // 能放进这一行，说明它和这一行里所有更靠左的标记都不相交。
+        var laneRightEdge = new double[maxLanes];
+        var laneUsed = new bool[maxLanes];
+        for (int i = 0; i < n; i++)
+        {
+            double left = centerX[i] - halfWidthPx[i];
+            int lane = -1;
+            for (int k = 0; k < maxLanes; k++)
+            {
+                if (laneUsed[k] && left < laneRightEdge[k]) continue;   // 和这一行撞了
+                lane = k;
+                laneUsed[k] = true;
+                laneRightEdge[k] = centerX[i] + halfWidthPx[i];
+                break;
+            }
+            lanes[i] = lane;
+        }
+        return lanes;
+    }
+
+    /// <summary>
+    /// 航向带上方还能放几行（含基准行）。距离字的顶边不能跑出屏幕（含 2~4 px 安全边，
+    /// 避免贴边被裁），按 <see cref="FormationLaneStepDeg"/> 一档往下数。
+    /// <para>基准行永远保留：航向带本身被布局微调顶到屏幕上方时按旧行为被裁掉，不在这里额外隐藏。</para>
+    /// </summary>
+    private static int MaxLanesFittingAboveTape(double tapeY, double pxDeg, double fontSmall)
+    {
+        double textHalfPx = 0.5 * fontSmall + 1.0;
+        double topMarginPx = Math.Max(1.5, 0.15 * pxDeg);
+        double baseTextTopPx = tapeY - FormationRangeTextDeg * pxDeg - textHalfPx;
+        if (baseTextTopPx < topMarginPx) return 1;
+        int lanes = 1 + (int)((baseTextTopPx - topMarginPx) / (FormationLaneStepDeg * pxDeg));
+        return Math.Clamp(lanes, 1, FormationMaxLanes);
+    }
+
     /// <summary>
     /// 编队辅助：友机三角标在航向带**上方**（标在带上会和刻度数字打架）。
     /// 超出航向带可见范围（±25°）就退化成端头指向箭头，提示往哪边转能看到他。
     /// 这里没有高度差：map_obj 不含 z 坐标，单机拿不到，只能等数据链。
+    /// <para>★ 为什么分层：友机相对方位接近时，x 只差几个像素，三角形和距离字会直接叠成一团
+    /// （issue #2）。所以按方位排序后，若和已放好的标记横向重叠，就把这个标记整体抬到上一行；
+    /// 三角形/箭头和距离字同层移动、保持垂直对齐，颜色不变。</para>
     /// </summary>
     private void AddFormationAssist(List<HudPrim> prims, TelemetrySnapshot s, double cx, double cy,
                                     double pxDeg, double line, double fontSmall)
@@ -785,57 +874,108 @@ public sealed class HudGeometry
         double pxPerDeg = 0.24 * pxDeg;          // 与 AddHeadingTape 的刻度比例必须一致
         var col = _opt.FriendlyColor;
 
-        int shown = 0;
-        foreach (var f in _opt.Friendlies)
+        // 1) 收集本帧要画的标记。数量和来源沿用原规则（Friendlies 前 4 个），只做方位归一化。
+        int n = Math.Min(_opt.Friendlies.Count, FormationMarkCap);
+        var marks = new FormationMark[n];
+        for (int i = 0; i < n; i++)
         {
-            if (shown >= 4) break;
-
+            var f = _opt.Friendlies[i];
             double d = f.RelBearingDeg;
             while (d > 180) d -= 360;
             while (d < -180) d += 360;
 
-            double x = cx + d * pxPerDeg;
-            bool onTape = Math.Abs(x - cx) <= span;
-
+            double rawX = cx + d * pxPerDeg;
+            bool onTape = Math.Abs(rawX - cx) <= span;
+            // 带外标记的 x 钉在带边缘：同侧多架友机的 x 完全一样，比带内更容易叠，同样走分层。
+            double dir = d > 0 ? 1.0 : -1.0;
+            double x = onTape ? rawX : cx + dir * span;
+            string text = FormatRange(f.RangeM);
+            // 估算标记横向占位：三角形底边 1.1° 宽；距离字按 HUD 字体 0.62 em/字符估。
+            // 带内标记图形/文字都居中；带外标记的距离字从带边缘向带内排（右对齐还留 0.75° 间距），
+            // 所以整块的中心要往带内挪，否则「带边缘箭头」和旁边的带内标记会漏判重叠。
+            double textWidthPx = TextWidthEm(text) * fontSmall;
+            double centerX, halfWidthPx;
             if (onTape)
+            {
+                centerX = x;
+                halfWidthPx = Math.Max(1.1 * pxDeg, textWidthPx) / 2.0;
+            }
+            else
+            {
+                double innerOffsetPx = 0.75 * pxDeg + textWidthPx;
+                centerX = x - dir * innerOffsetPx / 2.0;
+                halfWidthPx = innerOffsetPx / 2.0;
+            }
+            marks[i] = new FormationMark(d, x, centerX, halfWidthPx, onTape, text, i);
+        }
+
+        // 2) 横向防重叠：按标记占位中心（≈ 相对方位；带内单调）排序后贪心分行。
+        //    同方位时按原顺序稳定排，避免同帧内顺序抖动。
+        Array.Sort(marks, (a, b) =>
+        {
+            int byCenter = a.CenterX.CompareTo(b.CenterX);
+            if (byCenter != 0) return byCenter;
+            int byBearing = a.RelBearingDeg.CompareTo(b.RelBearingDeg);
+            return byBearing != 0 ? byBearing : a.SourceIndex.CompareTo(b.SourceIndex);
+        });
+        var centers = new double[n];
+        var halfWidths = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            centers[i] = marks[i].CenterX;
+            halfWidths[i] = marks[i].HalfWidthPx;
+        }
+        int maxLanes = Math.Min(FormationMaxLanes, MaxLanesFittingAboveTape(y, pxDeg, fontSmall));
+        int[] lanes = AssignFormationLanes(centers, halfWidths, maxLanes);
+
+        // 3) 画：同一标记的三角/箭头与距离字共用 lane 的纵向偏移（-y = 屏幕上更靠上）。
+        for (int i = 0; i < n; i++)
+        {
+            int lane = lanes[i];
+            if (lane < 0) continue;      // 上方放不下新的一行：少画一个，也不叠字/不出屏
+            var m = marks[i];
+            double x = m.DisplayX;
+            double laneY = y - lane * FormationLaneStepDeg * pxDeg;
+            double textY = laneY - FormationRangeTextDeg * pxDeg;
+
+            if (m.OnTape)
             {
                 prims.Add(new HudPrim
                 {
                     Kind = HudPrimKind.Polyline, Width = line, Color = col,
                     Points =
                     {
-                        (x, y - 1.0 * pxDeg), (x - 0.55 * pxDeg, y - 1.65 * pxDeg),
-                        (x + 0.55 * pxDeg, y - 1.65 * pxDeg), (x, y - 1.0 * pxDeg),
+                        (x, laneY - 1.0 * pxDeg), (x - 0.55 * pxDeg, laneY - 1.65 * pxDeg),
+                        (x + 0.55 * pxDeg, laneY - 1.65 * pxDeg), (x, laneY - 1.0 * pxDeg),
                     },
                 });
                 prims.Add(new HudPrim
                 {
-                    Kind = HudPrimKind.Text, Text = FormatRange(f.RangeM), Align = HudAlign.Center,
-                    FontSize = fontSmall, Color = col, Points = { (x, y - 2.4 * pxDeg) },
+                    Kind = HudPrimKind.Text, Text = m.RangeText, Align = HudAlign.Center,
+                    FontSize = fontSmall, Color = col, Points = { (x, textY) },
                 });
             }
             else
             {
-                double dir = d > 0 ? 1 : -1;
-                double ex = cx + dir * span;
+                double dir = m.RelBearingDeg > 0 ? 1.0 : -1.0;
+                double ex = x;           // 已经在带边缘
                 prims.Add(new HudPrim
                 {
                     Kind = HudPrimKind.Polyline, Width = line, Color = col,
                     Points =
                     {
-                        (ex - dir * 0.5 * pxDeg, y - 1.6 * pxDeg), (ex, y - 1.05 * pxDeg),
-                        (ex - dir * 0.5 * pxDeg, y - 0.5 * pxDeg),
+                        (ex - dir * 0.5 * pxDeg, laneY - 1.6 * pxDeg), (ex, laneY - 1.05 * pxDeg),
+                        (ex - dir * 0.5 * pxDeg, laneY - 0.5 * pxDeg),
                     },
                 });
                 prims.Add(new HudPrim
                 {
-                    Kind = HudPrimKind.Text, Text = FormatRange(f.RangeM),
+                    Kind = HudPrimKind.Text, Text = m.RangeText,
                     Align = dir > 0 ? HudAlign.Right : HudAlign.Left,
                     FontSize = fontSmall, Color = col,
-                    Points = { (ex - dir * 0.75 * pxDeg, y - 2.4 * pxDeg) },
+                    Points = { (ex - dir * 0.75 * pxDeg, textY) },
                 });
             }
-            shown++;
         }
     }
 
@@ -1013,11 +1153,13 @@ public sealed class HudGeometry
         else if (_opt.FormationLinkText.Length > 0)
         {
             // 连上谁了：正常状态的一行确认，不抢眼（比错误提示小一号）
+            // 放在 +4.9°：+7.2° 是「左转/右转」引导大字、+7.6° 是找不到长机的提示，
+            // 原来也挤在 +7.6°，和转向那一行直接叠在一起。
             prims.Add(new HudPrim
             {
                 Kind = HudPrimKind.Text, Text = _opt.FormationLinkText, Align = HudAlign.Center,
-                FontSize = font * 1.0, Color = _opt.FormationLinkOk ? _opt.Color : _opt.WarnColor,
-                Points = { (cx, cy + 7.6 * pxDeg) },
+                FontSize = font * 0.95, Color = _opt.FormationLinkOk ? _opt.Color : _opt.WarnColor,
+                Points = { (cx, cy + 4.9 * pxDeg) },
             });
         }
 

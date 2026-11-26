@@ -289,6 +289,7 @@ public static class L10n
         ["row.keyBankFlip"] = ("坡度方向翻转", "BANK FLIP"),
         ["row.keyBodyFixed"] = ("纯机体固连", "BODY FIXED"),
         ["row.keyReset"] = ("状态复位", "STATE RESET"),
+        ["row.keyHideReset"] = ("Esc 清除地图/记分板", "ESC CLEAR MAP/BOARD"),
         ["row.keyHoldHide"] = ("长按隐藏 HUD", "HOLD HIDE HUD"),
         ["row.keyStall"] = ("失速迎角校准", "STALL AOA CAL"),
         ["row.keyFix1"] = ("固定：上下偏移", "FIXED: VERT OFFSET"),
