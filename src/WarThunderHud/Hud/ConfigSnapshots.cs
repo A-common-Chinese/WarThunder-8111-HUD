@@ -40,7 +40,7 @@ public static class ConfigSnapshots
                 System.IO.Directory.Delete(SessionDirectory, true);
             EnsureDirectory();
         }
-        catch (Exception ex) { Console.WriteLine("session init failed: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("配置快照会话初始化失败（只影响撤销历史）", ("error", ex.Message)); }
     }
 
     /// <summary>One snapshot per edit while the panel is open (newest 10 kept).</summary>
@@ -59,7 +59,7 @@ public static class ConfigSnapshots
                 .ToList();
             foreach (var old in stale) File.Delete(old);
         }
-        catch (Exception ex) { Console.WriteLine("session snapshot failed: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("配置快照写入会话快照失败（只影响撤销历史）", ("error", ex.Message)); }
     }
 
     public static void EndSession()
@@ -69,7 +69,7 @@ public static class ConfigSnapshots
             if (System.IO.Directory.Exists(SessionDirectory))
                 System.IO.Directory.Delete(SessionDirectory, true);
         }
-        catch (Exception ex) { Console.WriteLine("session cleanup failed: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("配置快照会话清理失败（只影响撤销历史）", ("error", ex.Message)); }
     }
 
     private static void EnsureDirectory() => System.IO.Directory.CreateDirectory(Directory);
@@ -82,7 +82,7 @@ public static class ConfigSnapshots
             EnsureDirectory();
             File.WriteAllText(CancelPath, JsonSerializer.Serialize(cfg, Options));
         }
-        catch (Exception ex) { Console.WriteLine("snapshot mark failed: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("取消点快照写入失败（只影响撤销历史）", ("error", ex.Message)); }
     }
 
     /// <summary>Restores the cancel point into <paramref name="target"/>; returns false when unavailable.</summary>
@@ -101,7 +101,7 @@ public static class ConfigSnapshots
         }
         catch (Exception ex)
         {
-            Console.WriteLine("snapshot restore failed: " + ex.Message);
+            Log.Error("取消点快照恢复失败", ("error", ex.Message));
             return false;
         }
     }
@@ -124,7 +124,7 @@ public static class ConfigSnapshots
                 .ToList();
             foreach (var stale in keep) File.Delete(stale);
         }
-        catch (Exception ex) { Console.WriteLine("snapshot save failed: " + ex.Message); }
+        catch (Exception ex) { Log.Warn("历史快照保存失败（只影响撤销历史）", ("error", ex.Message)); }
     }
 
     /// <summary><c>*-restore.json</c> 只是恢复动作的审计留痕，不占历史快照的名额、也不进列表。</summary>
@@ -169,7 +169,7 @@ public static class ConfigSnapshots
         }
         catch (Exception ex)
         {
-            Console.WriteLine("snapshot list failed: " + ex.Message);
+            Log.Warn("快照列表读取失败（只影响撤销历史）", ("error", ex.Message));
             return Array.Empty<SnapshotEntry>();
         }
     }
@@ -201,13 +201,13 @@ public static class ConfigSnapshots
                 var name = $"{DateTime.Now.ToString(StampFormat)}-restore.json";
                 File.WriteAllText(Path.Combine(Directory, name), JsonSerializer.Serialize(target, Options));
             }
-            catch (Exception ex) { Console.WriteLine("restore audit failed: " + ex.Message); }
+            catch (Exception ex) { Log.Warn("恢复审计文件写入失败（不影响恢复结果）", ("error", ex.Message)); }
 
             return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine("snapshot restore-from failed: " + ex.Message);
+            Log.Error("快照恢复失败", ("error", ex.Message));
             return false;
         }
     }

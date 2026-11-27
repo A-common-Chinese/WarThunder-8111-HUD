@@ -385,6 +385,27 @@ public sealed class HudOptions
     /// <summary>True for a sustained high descent rate at low altitude (estimate-based warning).</summary>
     public bool SinkRateAlert { get; set; }
 
+    /// <summary>
+    /// 轻量提示行（空 = 不画）：一次性校准/自检结果用，2.5 s 后自己消失。
+    /// <para>★ 不复用击杀 splash 队列：splash 是「击落」播报，有动画和优先级，
+    /// 一套东西两种用途会互相挤掉。</para>
+    /// </summary>
+    public string NoticeText { get; set; } = "";
+
+    /// <summary>提示到期时刻（<see cref="System.Environment.TickCount64"/>）。过期的提示不画。</summary>
+    public long NoticeUntilTicks { get; set; }
+
+    /// <summary>提示是否用警告色（失败=琥珀，成功=主色）。</summary>
+    public bool NoticeWarn { get; set; }
+
+    /// <summary>显示一条 HUD 提示（覆盖上一条，2.5 s 过期）。任一位置线程都可调用。</summary>
+    public void ShowNotice(string text, bool warn, int durationMs = 2500)
+    {
+        NoticeText = text ?? "";
+        NoticeWarn = warn;
+        NoticeUntilTicks = Environment.TickCount64 + Math.Max(0, durationMs);
+    }
+
     /// <summary>Map grid cell under the aircraft, e.g. "F6" (empty when unknown).</summary>
     public string GridText { get; set; } = "";
 
@@ -506,6 +527,7 @@ public sealed class HudGeometry
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddStallAlert(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
+            AddNotice(prims, cx, cy, pxDeg, font);
             return prims;
         }
 
@@ -534,6 +556,7 @@ public sealed class HudGeometry
             AddTerrainAlerts(prims, cx, cy, pxDeg, font);
             AddOverspeedAlert(prims, cx, cy, pxDeg, font);
             AddStallAlert(prims, cx, cy, pxDeg, font);
+            AddNotice(prims, cx, cy, pxDeg, font);
             AddSplash(prims, cx, cy, pxDeg, font, line);
             return prims;
         }
@@ -559,6 +582,7 @@ public sealed class HudGeometry
         AddTerrainAlerts(prims, cx, cy, pxDeg, font);
         AddOverspeedAlert(prims, cx, cy, pxDeg, font);
         AddStallAlert(prims, cx, cy, pxDeg, font);
+        AddNotice(prims, cx, cy, pxDeg, font);
         AddSplash(prims, cx, cy, pxDeg, font, line);
 
         return prims;
@@ -2039,6 +2063,23 @@ public sealed class HudGeometry
             AddBoxedText(prims, cx, cy + 4.8 * pxDeg, L10n.Get(LangScope.Alerts, "sinkrate"), font, HudAlign.Center,
                 _opt.WarnColor, lineWidth, pxDeg);
         }
+    }
+
+    /// <summary>
+    /// 一次性提示行：画在屏幕中下（构型提示块下方）。成功/失败共用同一格，
+    /// 内容由宿主（<see cref="HudOptions.NoticeText"/>）决定，2.5 s 自动过期。
+    /// <para>不闪烁：它是「刚才那件事的结果」，不是持续告警 —— 闪起来反而像 STALL。</para>
+    /// </summary>
+    private void AddNotice(List<HudPrim> prims, double cx, double cy, double pxDeg, double font)
+    {
+        if (string.IsNullOrEmpty(_opt.NoticeText)) return;
+        if (Environment.TickCount64 >= _opt.NoticeUntilTicks) return;
+
+        double lineWidth = Math.Max(1.0, 0.045 * pxDeg);
+        var col = _opt.NoticeWarn ? _opt.WarnColor : Fade(_opt.Color, 0.95);
+        // 构型提示列的最下面一行（brakeY = baseY + 2×1.9 ≈ cy+12.1）再往下 2°：不压任何读数。
+        double y = cy + 14.4 * pxDeg + 2.0 * _blend * pxDeg;
+        AddBoxedText(prims, cx, y, _opt.NoticeText, font * 0.92, HudAlign.Center, col, lineWidth, pxDeg);
     }
 
     /// <summary>Blinking STALL boxes, same column as REDUCE SPEED but one row higher.</summary>

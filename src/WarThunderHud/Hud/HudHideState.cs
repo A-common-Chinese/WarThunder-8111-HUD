@@ -15,8 +15,12 @@ public enum HideReason
     /// <summary>P0：按住隐藏键（默认 U，按住超过 220 ms 生效，松开恢复）。</summary>
     Manual = 0,
 
-    /// <summary>P1：视角隐藏（座舱 / 机头），每帧由 viewState + HideInCockpit/HideInNose 计算。</summary>
+    /// <summary>P1：视角隐藏（座舱 / 机头 / 导引头 / 吊舱），每帧由
+    /// <see cref="PodViewState.HidesHud"/> 计算。</summary>
     View = 1,
+
+    /// <summary>P1：人在回路（武器操作员视角）隐藏：独立锁存，按一下切换。</summary>
+    ManLoop = 4,
 
     /// <summary>P2：地图键（默认 M，按住隐藏）。</summary>
     Map = 2,
@@ -27,7 +31,7 @@ public enum HideReason
 
 /// <summary>
 /// HUD 隐藏状态机：把「为什么隐藏」拆成互相独立的状态，任一为 true 即隐藏。
-/// <para>优先级（数字越小越强）：P0 手动按住 &gt; P1 视角 &gt; P2 地图 / 记分板。
+/// <para>优先级（数字越小越强）：P0 手动按住 &gt; P1 视角 / 人在回路 &gt; P2 地图 / 记分板。
 /// Esc 只清 P2；F5 / 失焦 / 换局清全部。地面静止自动隐藏不在这里 —— 它仍然是
 /// 渲染循环里的每帧条件，不进状态机。</para>
 /// <para>输入轮询线程（5 ms）和渲染线程（每帧）都会读写，所以内部用一把锁；
@@ -38,12 +42,13 @@ public sealed class HudHideState
     /// <summary>固定顺序：日志、ActiveReasons 都按这个顺序输出，测试和日志才稳定。</summary>
     private static readonly HideReason[] AllReasons =
     {
-        HideReason.Manual, HideReason.View, HideReason.Map, HideReason.Scoreboard,
+        HideReason.Manual, HideReason.View, HideReason.ManLoop, HideReason.Map, HideReason.Scoreboard,
     };
 
     private readonly object _gate = new();
     private bool _manual;
     private bool _view;
+    private bool _manLoop;
     private bool _map;
     private bool _scoreboard;
 
@@ -52,6 +57,7 @@ public sealed class HudHideState
     {
         HideReason.Manual => 0,
         HideReason.View => 1,
+        HideReason.ManLoop => 1,
         HideReason.Map => 2,
         HideReason.Scoreboard => 2,
         _ => int.MaxValue,
@@ -62,6 +68,7 @@ public sealed class HudHideState
     {
         HideReason.Manual => "manual",
         HideReason.View => "view",
+        HideReason.ManLoop => "manloop",
         HideReason.Map => "map",
         HideReason.Scoreboard => "scoreboard",
         _ => "unknown",
@@ -72,7 +79,7 @@ public sealed class HudHideState
     {
         get
         {
-            lock (_gate) return _manual || _view || _map || _scoreboard;
+            lock (_gate) return _manual || _view || _manLoop || _map || _scoreboard;
         }
     }
 
@@ -91,6 +98,7 @@ public sealed class HudHideState
             {
                 case HideReason.Manual: _manual = hidden; break;
                 case HideReason.View: _view = hidden; break;
+                case HideReason.ManLoop: _manLoop = hidden; break;
                 case HideReason.Map: _map = hidden; break;
                 case HideReason.Scoreboard: _scoreboard = hidden; break;
                 default: throw new ArgumentOutOfRangeException(nameof(reason), reason, "unknown hide reason");
@@ -159,7 +167,7 @@ public sealed class HudHideState
     }
 
     // ---- 锁内使用（调用方已持锁）----
-    private bool IsHiddenUnsafe() => _manual || _view || _map || _scoreboard;
+    private bool IsHiddenUnsafe() => _manual || _view || _manLoop || _map || _scoreboard;
 
     private List<HideReason> ActiveReasonsUnsafe()
     {
@@ -173,6 +181,7 @@ public sealed class HudHideState
     {
         HideReason.Manual => _manual,
         HideReason.View => _view,
+        HideReason.ManLoop => _manLoop,
         HideReason.Map => _map,
         HideReason.Scoreboard => _scoreboard,
         _ => false,
@@ -184,6 +193,7 @@ public sealed class HudHideState
         {
             case HideReason.Manual: _manual = hidden; break;
             case HideReason.View: _view = hidden; break;
+            case HideReason.ManLoop: _manLoop = hidden; break;
             case HideReason.Map: _map = hidden; break;
             case HideReason.Scoreboard: _scoreboard = hidden; break;
         }

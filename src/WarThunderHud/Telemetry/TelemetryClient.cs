@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.Http;
 using System.Text;
+using WtHud.Hud;
 
 namespace WtHud.Telemetry;
 
@@ -216,7 +217,7 @@ public sealed class TelemetryClient : IDisposable
         catch (Exception ex)
         {
             // 专用线程的异常会带走整个进程，这里必须兜住（含 Dispose 竞态）。
-            if (!_cts.IsCancellationRequested) Console.WriteLine("poll: thread stopped: " + ex.Message);
+            if (!_cts.IsCancellationRequested) Log.Error("轮询线程退出（8111 数据将停止更新）", ("error", ex.Message));
         }
     }
 
@@ -266,7 +267,9 @@ public sealed class TelemetryClient : IDisposable
         double hz = elapsedS > 0 ? _windowSamples / elapsedS : 0;
         Console.WriteLine(FormatPollLine(hz, p50, p95, p99, _windowMaxMs, _windowErrors));
         if (_windowErrors > 0)
-            Console.WriteLine(FormatPollErrors(_windowTimeouts, _windowHttpErrors, _windowOtherErrors));
+            // 保留 "poll error: ..." 关键字：自检断言（以及老用户的日志搜索习惯）都认它。
+            Log.Warn($"poll error: {FormatPollErrors(_windowTimeouts, _windowHttpErrors, _windowOtherErrors)}"
+                     + "（8111 轮询偶发失败，可恢复）");
 
         _windowStartTicks = nowTicks;
         _windowLatCount = 0;
@@ -313,7 +316,7 @@ public sealed class TelemetryClient : IDisposable
         _cts.Cancel();
         var t = _thread;
         if (t != null && t != Thread.CurrentThread && !t.Join(1500))
-            Console.WriteLine("poll: thread did not stop in 1.5 s");
+            Log.Warn("轮询线程 1.5 s 内未退出");
         _http.Dispose();
         _cts.Dispose();
     }

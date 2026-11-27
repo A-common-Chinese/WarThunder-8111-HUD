@@ -116,6 +116,26 @@ internal sealed class DetailPage : MfdPageBase
         var shownSign = WtHud.Hud.SettingsRouter.GetFor(cfg, id, "row.pitchSign", out var storedSign) ? storedSign : cfg.PitchSign;
         Row(L10n.Get(LangScope.Screen, "airframe.pitchSign"),
             shownSign == 0 ? (zh ? "自动" : "AUTO") : (shownSign > 0 ? "+1" : "-1"));
+
+        // AOA 指示器量纲（0.5.11）：机型覆盖（自检/手选）> 全局 > 默认。
+        // 「自检」和「手选」都写在 perVehicleOverrides 的 row.aoaIndexer 上，靠 aoaIndexerAuto
+        // 这个 1/0 标记区分来源；面板里手动改一次就会把标记清 0。
+        bool hasAoaOverride = WtHud.Hud.SettingsRouter.GetFor(cfg, id, "row.aoaIndexer", out var storedAoaUnit);
+        bool aoaAuto = hasAoaOverride
+                       && WtHud.Hud.SettingsRouter.GetFor(cfg, id, "row.aoaIndexerAuto", out var autoFlag)
+                       && autoFlag != 0;
+        var aoaUnit = (WtHud.Hud.AoaIndexerUnit)Math.Clamp(
+            hasAoaOverride ? storedAoaUnit : cfg.AoaIndexerUnit, 0, 2);
+        var aoaUnitText = aoaUnit switch
+        {
+            WtHud.Hud.AoaIndexerUnit.Degrees => zh ? "度数" : "DEGREES",
+            WtHud.Hud.AoaIndexerUnit.Off => zh ? "关闭" : "OFF",
+            _ => zh ? "默认（归一）" : "DEFAULT (0-1)",
+        };
+        var aoaSourceText = hasAoaOverride
+            ? (aoaAuto ? (zh ? "自检" : "CHECKED") : (zh ? "手动" : "MANUAL"))
+            : (cfg.AoaIndexerUnit != 0 ? (zh ? "全局" : "GLOBAL") : (zh ? "默认" : "DEFAULT"));
+        Row(L10n.Get(LangScope.Screen, "airframe.aoaIndexer"), $"{aoaUnitText}（{aoaSourceText}）");
         ScopedRow(L10n.Get(LangScope.Screen, "airframe.stall"), "row.stallAoa",
             prof.StallAoa, cfg.StallAoaDeg, "F1", "°", zh ? "未校准" : "DEFAULT");
 

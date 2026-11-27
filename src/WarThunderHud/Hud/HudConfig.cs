@@ -147,11 +147,60 @@ public sealed class HudConfig
     /// </summary>
     [JsonPropertyName("airbrakeKey")] public string AirbrakeKey { get; set; } = "H";
 
+    /// <summary>
+    /// 直升机减速板键（.blk 的 <c>ID_AIR_BRAKE_HELICOPTER</c>）：与主键分开存，运行时两个都轮询，
+    /// 同键时去重（只 toggle 一次）。
+    /// </summary>
+    [JsonPropertyName("airbrakeKeyHeli")] public string AirbrakeKeyHeli { get; set; } = "";
+
+    // ---- 导引头 / 瞄准吊舱视角（全局配置，不是机型级）----
+
+    /// <summary>导引头/吊舱视角总开关（V 序列加长、直键生效的前提）。默认关 = 旧序列。</summary>
+    [JsonPropertyName("podViewEnabled")] public bool PodViewEnabled { get; set; }
+
+    /// <summary>吊舱视角数量 1–2（默认 1）。关闭总开关时保留数值，重新打开立刻生效。</summary>
+    [JsonPropertyName("podViewCount")] public int PodViewCount { get; set; } = 1;
+
+    /// <summary>导引头快速开关状态（默认开）。关闭后 V 序列里没有导引头，直键也不生效。</summary>
+    [JsonPropertyName("seekerViewEnabled")] public bool SeekerViewEnabled { get; set; } = true;
+
+    /// <summary>导引头视角直键（.blk: <c>ID_CAMERA_SEEKER</c>），默认不绑定。</summary>
+    [JsonPropertyName("seekerViewKey")] public string SeekerViewKey { get; set; } = "";
+
+    /// <summary>吊舱视角直键（.blk: <c>ID_CAMERA_OPTICS</c>），默认不绑定。</summary>
+    [JsonPropertyName("podViewKey")] public string PodViewKey { get; set; } = "";
+
+    /// <summary>第三人称直键（.blk: <c>ID_CAMERA_TPS</c>），默认不绑定。</summary>
+    [JsonPropertyName("tpsViewKey")] public string TpsViewKey { get; set; } = "";
+
+    /// <summary>HUD 自己的导引头快速开关（toggle <see cref="SeekerViewEnabled"/>），默认不绑定。</summary>
+    [JsonPropertyName("seekerToggleKey")] public string SeekerToggleKey { get; set; } = "";
+
+    /// <summary>人在回路隐藏·飞机（.blk: <c>ID_CAMERA_SHELL_FPV</c>），按下切换隐藏，默认不绑定。</summary>
+    [JsonPropertyName("manLoopKey")] public string ManLoopKey { get; set; } = "";
+
+    /// <summary>人在回路隐藏·直升机（.blk: <c>ID_CAMERA_SHELL_FPV_HELICOPTER</c>），默认不绑定。</summary>
+    [JsonPropertyName("manLoopKeyHeli")] public string ManLoopKeyHeli { get; set; } = "";
+
     /// <summary>Stall warning key: records the current AOA as this vehicle''s stall AOA.</summary>
     [JsonPropertyName("stallKey")] public string StallKey { get; set; } = "CTRL+ALT+S";
 
     /// <summary>Generic stall AOA used before a per-vehicle calibration exists (deg).</summary>
     [JsonPropertyName("stallAoaDeg")] public double StallAoaDeg { get; set; } = 22;
+
+    /// <summary>
+    /// 座舱 AOA 指示器（<c>/indicators</c> 的 <c>aoa_indexer1</c>）量纲的全局默认：
+    /// 0 = 归一值（旧行为）/ 1 = 迎角度数 / 2 = 关闭。
+    /// <para>★ 按机型自检的结果存在 <see cref="PerVehicleOverrides"/> 的 <c>row.aoaIndexer</c>；
+    /// 默认 0 = 未自检机型与 0.5.10 完全一致。</para>
+    /// </summary>
+    [JsonPropertyName("aoaIndexer")] public int AoaIndexerUnit { get; set; }
+
+    /// <summary>
+    /// AOA 指示器自检键（默认不绑定，用户自己绑）。按下后采样约 1 s 判量纲，
+    /// 成功则写入当前机型的 <c>row.aoaIndexer</c>。
+    /// </summary>
+    [JsonPropertyName("aoaIndexerCheckKey")] public string AoaIndexerCheckKey { get; set; } = "";
 
     /// <summary>Per-vehicle calibrated stall AOA, keyed by the API vehicle id.</summary>
     [JsonPropertyName("stallAoaByVehicle")] public System.Collections.Generic.Dictionary<string, double> StallAoaByVehicle { get; set; } = new();
@@ -610,8 +659,8 @@ public sealed class HudConfig
                     // 失败只影响「下次再迁一次」，不该因此拒绝启动 —— 但要留痕。
                     var migrated = cfg.SaveTo(path);
                     if (!migrated.Ok)
-                        Console.WriteLine($"config migration: ** could not write {path} ({migrated.Error}) - "
-                                          + "will migrate again next launch **");
+                        Log.Warn("配置迁移结果写盘失败，下次启动会再迁一次",
+                            ("file", path), ("reason", migrated.Error.ToString()), ("detail", migrated.Detail));
                 }
                 return cfg;
             }
@@ -625,9 +674,9 @@ public sealed class HudConfig
             //   现象就是「重启之后设置全变回去了」，而且没有任何提示，查都没法查。
             //   现在：原文件先留一份 .bad，再把失败原因喊出来。
             try { File.Copy(path, path + ".bad", overwrite: true); } catch { }
-            Console.WriteLine($"config load FAILED ({ex.GetType().Name}: {ex.Message})");
-            Console.WriteLine("  original kept as hud-config.json.bad; this session runs on DEFAULTS");
-            Console.WriteLine("  -> saving from the panel will overwrite hud-config.json");
+            Log.Error("配置加载失败：原文件保留为 hud-config.json.bad，本次以默认配置运行；"
+                      + "在面板保存会覆盖 hud-config.json",
+                ("error", $"{ex.GetType().Name}: {ex.Message}"));
             return new HudConfig();
         }
     }

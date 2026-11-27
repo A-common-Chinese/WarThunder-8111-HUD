@@ -1059,19 +1059,20 @@ public static partial class Program
                     if (cfg.PitchSign != 0 && !string.IsNullOrEmpty(AirframeDb.CurrentVehicle))
                     {
                         WtHud.Hud.SettingsRouter.SetFor(cfg, AirframeDb.CurrentVehicle, "row.pitchSign", cfg.PitchSign);
-                        Console.WriteLine($"pitch sign saved for {AirframeDb.CurrentVehicle}: {cfg.PitchSign}");
+                        Log.InfoFor(AirframeDb.CurrentVehicle, "俯仰符号已按机型保存",
+                            ("pitchSign", cfg.PitchSign.ToString(CultureInfo.InvariantCulture)));
                     }
 
                     RebindeKeys(cfg);
                     pendingHotkeyRefresh = true;     // 由 overlay 线程重建热键（线程亲和性）
                     overlayRef?.SetCursorHole(cfg.CursorHoleHalfPx);
                     overlayRef?.SetCursorHoleCenter(cfg.CursorHoleOffsetX, cfg.CursorHoleOffsetY);
-                    Console.WriteLine("MFD settings saved (keys rebound)");
+                    Log.Info("面板设置已保存，热键已重新绑定");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("MFD settings error: " + ex.Message);
+                Log.Error("MFD 设置保存失败", ("error", ex.Message));
             }
             finally
             {
@@ -1112,9 +1113,8 @@ public static partial class Program
         catch (AbandonedMutexException) { owned = true; }   // 上一个实例是被强杀的，锁归我们
         if (!owned)
         {
-            Console.WriteLine("another WtHud overlay is already running -- exiting (single instance).\n" +
-                              "  已经有一个 WtHud 在跑了。两个实例会互相抢热键（F10 失灵）、叠加 HUD，\n" +
-                              "  旧实例还会把游戏窗口上的点击吃掉。请在任务管理器里结束所有 WtHud.exe 后只开一个。");
+            Log.Warn("已有另一个 WtHud 在运行，本实例退出：两个实例会互相抢热键（F10 失灵）、"
+                     + "叠加 HUD，旧实例还会吃掉游戏窗口上的点击。请在任务管理器里结束所有 WtHud.exe 后只开一个。");
             // 双击启动时没有可见控制台，必须弹窗，否则用户只看到"双击了没反应"。
             if (!elevatedRetry)
             {
@@ -1194,20 +1194,21 @@ public static partial class Program
                         s.Caps.HasNativeAttitude,
                         s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry",
                         s.AoaDeg);
-                    Console.WriteLine($"airframe: {s.VehicleType}  RA={(created.RadarAltitude ? "yes" : "no")}  " +
-                                      $"ATT={created.Attitude}  AB={created.Airbrake}");
+                    Log.InfoFor(s.VehicleType, "机型数据已刷新", ("RA", created.RadarAltitude ? "yes" : "no"),
+                        ("ATT", created.Attitude), ("AB", created.Airbrake));
                 }
                 }
             if (s.Valid && !prevValid)
             {
-                viewState = 0;
+                SetView(ViewState.Third);
+                manLoopLatched = false;
                 hideState.ClearAll();
                 mapHeld = false;
                 scoreboardLatched = false;
                 scoreboardHeld = false;
                 holdKeyStart = 0;
                 holdKeyHidden = false;
-                Console.WriteLine("view state reset: match entered");
+                Log.Info("对局开始，视角状态已复位");
                 if (!string.IsNullOrEmpty(s.VehicleType))
                 {
                     var p2 = AirframeDb.Refresh(
@@ -1215,13 +1216,17 @@ public static partial class Program
                         s.RadioAltM.HasValue,
                         s.Caps.HasNativeAttitude,
                         s.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase) ? "key" : "telemetry");
-                    Console.WriteLine($"airframe(match): {s.VehicleType} ATT={p2.Attitude} " +
-                                      $"RA={(p2.RadarAltitude ? "yes" : "no")} AB={p2.Airbrake}");
+                    Log.InfoFor(s.VehicleType, "进入对局，机型数据已刷新",
+                        ("ATT", p2.Attitude), ("RA", p2.RadarAltitude ? "yes" : "no"), ("AB", p2.Airbrake));
                 }
             }
             prevValid = s.Valid;
 
             latest = s;
+            // 统一日志的机型上下文：0.5.11 起 INFO/WARN/ERROR 行都带 [机型]。
+            Log.CurrentVehicle = s.VehicleType;
+            // AOA 指示器自检：按键请求在这里消费，采样状态机跟着快照走（见 UpdateAoaIndexerCheck）。
+            UpdateAoaIndexerCheck(cfg, s, opt);
             // Pitch sign: manual config first, then the sign learned for this vehicle, then the
             // automatic vote; the result is written back per vehicle so it never flips again.
             fusion.ForcedPitchSign = pendingPitchSign;
@@ -1337,7 +1342,7 @@ public static partial class Program
             {
                 var alt = Path.Combine(AppContext.BaseDirectory, $"wthud-overlay-{Environment.ProcessId}.log");
                 Console.SetOut(TextWriter.Synchronized(new StreamWriter(alt, false, new System.Text.UTF8Encoding(false)) { AutoFlush = true }));
-                Console.WriteLine($"(main log busy -> writing to {Path.GetFileName(alt)})");
+                Log.Warn("主日志文件被占用，本次日志改写到带 pid 的备用文件", ("file", Path.GetFileName(alt)));
             }
             catch { }
         }
@@ -1442,15 +1447,16 @@ public static partial class Program
             }
             else if (id == 13)
             {
-                // F5 热键路径（与 input-watcher 的轮询路径同语义）：清全部隐藏状态 + 视角计数。
-                viewState = 0;
+                // F5 热键路径（与 input-watcher 的轮询路径同语义）：清全部隐藏状态 + 视角回第三人称。
+                SetView(ViewState.Third);
+                ClearManLoopLatch();
                 mapHeld = false;
                 scoreboardLatched = false;
                 scoreboardHeld = false;
                 holdKeyStart = 0;
                 holdKeyHidden = false;
                 hideState.ClearAll();
-                Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> all hide states cleared");
+                Log.Info("状态复位：隐藏状态与视角已重置", ("key", _resetKeyBinding.Text));
             }
             else if (id == 12)
             {
@@ -1495,6 +1501,12 @@ public static partial class Program
         {
             bool prevZoom = false;
             bool prevView = false;
+            bool prevSeeker = false;
+            bool prevPod = false;
+            bool prevTps = false;
+            bool prevSeekerToggle = false;
+            bool prevManLoop = false;
+            bool prevManLoopHeli = false;
             bool prevEsc = false;
             RebindeKeys(cfg);   // parse from config at startup (and again after F1 saves)
             bool wasForeground = false;
@@ -1618,18 +1630,20 @@ public static partial class Program
 
                     // 失焦：输入轮询在别的程序前台时 armed=false，收不到的「松开」会让隐藏状态
                     // 永远卡住（issue #2 的另一类）。这里直接清全部，并复位记分板锁存 / 长按计时，
-                    // 免得回到游戏后又被上一局的锁存立刻隐藏。视角隐藏会在回焦后按 viewState 重算。
+                    // 免得回到游戏后又被上一局的锁存立刻隐藏。视角按需求回第三人称。
                     if (!foreground)
                     {
                         var cleared = hideState.ClearAll();
+                        SetView(ViewState.Third);
+                        manLoopLatched = false;
                         mapHeld = false;
                         scoreboardLatched = false;
                         scoreboardHeld = false;
                         holdKeyStart = 0;
                         holdKeyHidden = false;
                         if (cleared.Count > 0)
-                            Console.WriteLine(
-                                $"foreground lost -> hide states cleared ({HudHideState.ActiveText(cleared)})");
+                            Log.Info("失焦：隐藏状态与视角已重置",
+                                ("cleared", HudHideState.ActiveText(cleared)));
                     }
 
                     // Coming back from another app the OS may still be drawing that app's arrow
@@ -1692,17 +1706,72 @@ public static partial class Program
                 bool rightHeld = cfg.AimOnRightMouse && WtHud.Input.KeyBinding.IsVirtualKeyDown(0x02);
                 opt.ZoomLayout = zoomLatched || (armed && rightHeld);
 
+                // V：视角序列。0.5.11 起序列由 PodViewState 纯函数决定：
+                //   默认（旧行为）第三人称 → 座舱 → 机头 → 第三人称
+                //   开总开关：第三人称 →（导引头）→ 吊舱1..N → 座舱 → 机头 → 第三人称
+                // 修饰键必须匹配，否则按 CTRL+V（吊舱组合键）会同时触发一次 V 循环。
                 bool viewNow = _viewKeyBinding.IsDown();
-                bool viewEdge = ToggleEdge(viewNow, _viewKeyBinding.PressedSinceLastPoll(), ref prevView);
+                bool viewEdge = ToggleEdge(viewNow, _viewKeyBinding.PressedSinceLastPollMatchingModifiers(), ref prevView);
                 if (viewEdge && armed)
                 {
-                    viewState = (viewState + 1) % 3;   // 0 third person, 1 cockpit, 2 nose
+                    // 按 V 清「人在回路」锁存（需求：V/F5/失焦清，Esc 不清）。
+                    ClearManLoopLatch();
                     if (zoomLatched)
                     {
                         zoomLatched = false;
                         Console.WriteLine("view key -> aiming layout reset");
                     }
-                    Console.WriteLine($"view key -> view state {viewState} ({ViewName(viewState)})");
+                    ApplyView(PodViewState.Next(CurrentView, cfg.PodViewEnabled, cfg.SeekerViewEnabled,
+                                                cfg.PodViewCount), "V 视角循环");
+                }
+
+                // 导引头 / 吊舱 / 第三人称直键（默认不绑定）：直键幂等 —— 反复按同一视角键不变化；
+                // 离开导引头/吊舱主要靠 V，唯一例外是吊舱/第三人称同键时的组合语义。
+                bool seekerEdge = PollEdge(_seekerViewKeyBinding, ref prevSeeker);
+                bool podEdge = PollEdge(_podViewKeyBinding, ref prevPod);
+                bool tpsEdge = PollEdge(_tpsViewKeyBinding, ref prevTps);
+                if (armed && (seekerEdge || podEdge || tpsEdge))
+                {
+                    if (seekerEdge)
+                        ApplyView(PodViewState.JumpSeeker(CurrentView, cfg.PodViewEnabled, cfg.SeekerViewEnabled),
+                                  "导引头直键");
+                    if (podEdge || tpsEdge)
+                    {
+                        bool sameKey = _podViewKeyBinding.SameAs(_tpsViewKeyBinding);
+                        ApplyView(PodViewState.ApplyPodTps(CurrentView, cfg.PodViewEnabled, sameKey, podEdge, tpsEdge),
+                                  sameKey ? "吊舱/第三人称组合键" : (podEdge ? "吊舱直键" : "第三人称直键"));
+                    }
+                }
+
+                // 导引头快速开关：切换配置并立刻保存（游戏里这个开关是快捷键，不该要用户再按 F12）。
+                // 关闭时若正停在导引头视角，强制回第三人称并提示。
+                if (armed && PollEdge(_seekerToggleKeyBinding, ref prevSeekerToggle))
+                {
+                    cfg.SeekerViewEnabled = PodViewState.ToggleSeeker(cfg.SeekerViewEnabled);
+                    LogSave(cfg.Save(), "seeker view toggle");
+                    if (!cfg.SeekerViewEnabled && CurrentView.Kind == ViewKind.Seeker)
+                    {
+                        SetView(ViewState.Third);
+                        Log.Info("导引头视角：关（当前在导引头，已回第三人称）");
+                        opt.ShowNotice("导引头视角：关（已回第三人称）", warn: true);
+                    }
+                    else
+                    {
+                        Log.Info("导引头视角：" + (cfg.SeekerViewEnabled ? "开" : "关"));
+                        opt.ShowNotice("导引头视角：" + (cfg.SeekerViewEnabled ? "开" : "关"),
+                                       warn: !cfg.SeekerViewEnabled);
+                    }
+                }
+
+                // 人在回路隐藏：飞机/直升机两套键任一按下边沿 → 切换锁存；两键同键时同帧只算一次。
+                bool manLoopEdge = PollEdge(_manLoopKeyBinding, ref prevManLoop);
+                bool manLoopHeliEdge = PollEdge(_manLoopKeyHeliBinding, ref prevManLoopHeli);
+                if (armed && (manLoopEdge || manLoopHeliEdge))
+                {
+                    manLoopLatched = PodViewState.Toggle(manLoopLatched, manLoopEdge, manLoopHeliEdge);
+                    hideState.Set(HideReason.ManLoop, manLoopLatched);
+                    Log.Info("人在回路隐藏：" + (manLoopLatched ? "开" : "关"),
+                             ("key", manLoopEdge ? _manLoopKeyBinding.Text : _manLoopKeyHeliBinding.Text));
                 }
 
                 // Both the map and the scoreboard are hold-to-hide in this setup. The map key
@@ -1729,14 +1798,19 @@ public static partial class Program
 
                 // A-10 family: airbrake box follows the key (deceleron telemetry is unusable).
                 // 与 Z/V/TAB 用同一个切换边沿：按住不会自动重复，极短按也不会丢。
+                // 主键/直升机键两个都轮询；同键时同帧只 toggle 一次（否则会互相抵消）。
                 bool airbrakeNow = _airbrakeKeyBinding.IsDown();
                 bool airbrakeEdge = ToggleEdge(airbrakeNow, _airbrakeKeyBinding.PressedSinceLastPoll(),
                                                ref prevAirbrake);
-                if (airbrakeEdge && armed && latest is { } abSnap
+                bool airbrakeHeliNow = _airbrakeKeyHeliBinding.IsDown();
+                bool airbrakeHeliEdge = ToggleEdge(airbrakeHeliNow,
+                    _airbrakeKeyHeliBinding.PressedSinceLastPoll(), ref prevAirbrakeHeli);
+                if (armed && (airbrakeEdge || airbrakeHeliEdge) && latest is { } abSnap
                     && abSnap.VehicleType.StartsWith("a_10", StringComparison.OrdinalIgnoreCase))
                 {
-                    airbrakeKeyOn = !airbrakeKeyOn;
-                    Console.WriteLine("airbrake key (" + _airbrakeKeyBinding.Text + ") -> " + (airbrakeKeyOn ? "ON" : "off"));
+                    airbrakeKeyOn = PodViewState.Toggle(airbrakeKeyOn, airbrakeEdge, airbrakeHeliEdge);
+                    Console.WriteLine("airbrake key (" + (airbrakeEdge ? _airbrakeKeyBinding.Text : _airbrakeKeyHeliBinding.Text)
+                                      + ") -> " + (airbrakeKeyOn ? "ON" : "off"));
                 }
 
                 // Stall calibration: press while the aircraft is at the buffet to remember this
@@ -1745,20 +1819,27 @@ public static partial class Program
                 {
                     cfg.StallAoaByVehicle[cur.VehicleType] = Math.Round(cur.AoaDeg, 1);
                     LogSave(cfg.Save(), "stall calibration");
-                    Console.WriteLine($"stall key -> {cur.VehicleType} stall AOA = {cur.AoaDeg:F1} deg (saved)");
+                    Log.InfoFor(cur.VehicleType, "失速迎角已标定并保存", ("aoa", Log.Num(cur.AoaDeg, "F1")));
                 }
 
-                // Reset key (default F5, configurable): clear every hide state + the view counter.
+                // AOA 指示器自检键（默认不绑定）：只置请求，条件（飞行中/非地面/单位=默认）
+                // 由轮询线程用新鲜快照校验，避免输入线程拿到的 latest 已经过时。
+                if (armed && _aoaIndexerCheckKeyBinding.PressedSinceLastPoll())
+                    RequestAoaIndexerCheck();
+
+                // Reset key (default F5, configurable): clear every hide state, the man-loop latch
+                // and the view (back to third person).
                 if (armed && _resetKeyBinding.PressedSinceLastPoll())
                 {
-                    viewState = 0;
+                    SetView(ViewState.Third);
+                    ClearManLoopLatch();
                     mapHeld = false;
                     scoreboardLatched = false;
                     scoreboardHeld = false;
                     holdKeyStart = 0;
                     holdKeyHidden = false;
                     hideState.ClearAll();
-                    Console.WriteLine($"reset key ({_resetKeyBinding.Text}) -> all hide states cleared");
+                    Log.Info("状态复位：隐藏状态与视角已重置", ("key", _resetKeyBinding.Text));
                 }
 
                 // Long-press hide key (default U): hold it to blank the HUD.
@@ -1866,7 +1947,30 @@ public static partial class Program
 
             bool flying = snap.Valid;   // ground counts too: tapes/gear/flaps are useful while taxiing
             bool onGround = snap.Valid && !snap.InFlight;
-            bool hiddenByView = (viewState == 1 && cfg.HideInCockpit) || (viewState == 2 && cfg.HideInNose);
+
+            // 配置可能被面板实时改（关总开关 / 关导引头 / 改吊舱数量）：把视角收敛回合法状态。
+            // 总开关关或导引头关导致离开外部相机时，HUD 回第三人称并提示 —— 不能把用户留在黑屏相机里。
+            var viewBefore = CurrentView;
+            var viewAfter = PodViewState.Normalize(viewBefore, cfg.PodViewEnabled, cfg.SeekerViewEnabled,
+                                                   cfg.PodViewCount);
+            if (viewAfter != viewBefore)
+            {
+                SetView(viewAfter);
+                if (viewAfter.Kind == ViewKind.Third && viewBefore.Kind == ViewKind.Seeker
+                    && !cfg.SeekerViewEnabled)
+                {
+                    Log.Info("导引头视角已关闭，HUD 回第三人称");
+                    opt.ShowNotice("导引头视角已关闭：已回第三人称", warn: true);
+                }
+                else if (viewAfter.Kind == ViewKind.Third && viewBefore.IsPodCamera && !cfg.PodViewEnabled)
+                {
+                    Log.Info("导引头/吊舱视角已关闭，HUD 回第三人称");
+                    opt.ShowNotice("导引头/吊舱视角已关闭：已回第三人称", warn: true);
+                }
+            }
+
+            // 视角隐藏：导引头/吊舱外部相机总是隐藏；座舱/机头照旧看开关；第三人称显示。
+            bool hiddenByView = PodViewState.HidesHud(CurrentView, cfg.HideInCockpit, cfg.HideInNose);
             // 视角隐藏每帧由视角现算，单独写回状态机；地图/记分板/长按由 input-watcher 线程写入。
             // 聚合只看 hideState：多来源叠加时清掉一个不会误放行（issue #2）。
             hideState.Set(HideReason.View, hiddenByView);
@@ -1895,7 +1999,8 @@ public static partial class Program
             {
                 WtHud.Hud.SettingsRouter.SetFor(cfg, pitchSignVehicle, "row.pitchSign", detectedPitchSign);
                 LogSave(cfg.Save(), "pitch sign");
-                Console.WriteLine($"pitch sign for {pitchSignVehicle} = {detectedPitchSign} (saved to config)");
+                    Log.InfoFor(pitchSignVehicle, "俯仰符号已按机型保存",
+                        ("pitchSign", detectedPitchSign.ToString(CultureInfo.InvariantCulture)));
             }
 
             // Apply the live calibration on top of the raw solution. 校准值可以是机型覆盖
@@ -1910,6 +2015,11 @@ public static partial class Program
             };
             opt.FpmTrimDeg = WtHud.Hud.EffectiveSettings.FpmTrimDeg(cfg, liveVehicle);
 
+            // 自检看门狗：采样中 8111 断流/游戏暂停时不会再有快照回调，这里用渲染帧兜底收尾，
+            // 否则 aoaCheckActive 会一直为 true，indexer 分支永远被跳过。
+            if (aoaCheckActive && Environment.TickCount64 - Interlocked.Read(ref aoaCheckStartTicks) > 3000)
+                AbortAoaIndexerCheck(opt);
+
             // ---- stall warning ----
             //   calibrated per vehicle (B) > cockpit AOA indexer (C) > generic rule (A)
             // High-speed pulls reach a high AOA without stalling, so the AOA test alone is not
@@ -1920,16 +2030,15 @@ public static partial class Program
             {
                 // Calibrations below 12 deg are meaningless for a wing stall (they come from pressing the
 // key while cruising); ignore them instead of spamming false warnings.
-                bool hasCal = cfg.StallAoaByVehicle.TryGetValue(snap.VehicleType, out double calibratedAoa)
-                              && calibratedAoa >= 12;
-                if (cfg.StallAoaByVehicle.TryGetValue(snap.VehicleType, out double storedAoa) && storedAoa < 12 && stallCalWarned != snap.VehicleType)
+                if (cfg.StallAoaByVehicle.TryGetValue(snap.VehicleType, out double storedAoa) && storedAoa < 12
+                    && stallCalWarned != snap.VehicleType)
                 {
                     stallCalWarned = snap.VehicleType;
-                    Console.WriteLine($"stall calibration for {snap.VehicleType} ignored ({storedAoa:F1} deg < 12); recalibrate in a buffet");
+                    Log.WarnFor(snap.VehicleType,
+                        "失速迎角标定值过低已忽略（<12°），请在抖振（buffet）状态下重新标定",
+                        ("aoa", Log.Num(storedAoa, "F1")));
                 }
-                double threshold = hasCal
-                    ? calibratedAoa
-                    : WtHud.Hud.EffectiveSettings.StallAoaDeg(cfg, snap.VehicleType, AirframeDb.Get(snap.VehicleType));
+                var (threshold, hasCal) = EffectiveStallAoa(cfg, snap.VehicleType);
                 double aoa = snap.AoaDeg;
                 bool decel = accelMs2 < -0.6;                 // losing speed
                 // A hard pull at high speed reaches a big AOA while still loaded (Ny well above 1).
@@ -1953,11 +2062,19 @@ public static partial class Program
                     opt.StallWarnLevel = hardStall ? 2 : 1;
                 }
 
-                if (snap.AoaIndexer is double idx)
+                // 座舱 AOA 指示器：不同机型语义不同（0.5.11 起按机型配置量纲），而且拉杆瞬间会抖。
+                // 之前是「单帧 >0.9 立刻点亮」→ F/A-18A 这种指示器在 0.9 附近抖的机型会一拉就闪。
+                // 现在要求持续 200 ms 才点亮，回落 0.85 以下才复位。
+                //   默认 = 0–1 归一（0.5.10 行为一字不差）；度数 = idx / stallAoa 后走同一套阈值；
+                //   关闭 = 整条分支跳过。自检采样期间也不走这里 —— 否则自检本身就会点亮 STALL。
+                var aoaUnit = WtHud.Hud.EffectiveSettings.AoaIndexerUnit(cfg, snap.VehicleType);
+                if (aoaCheckActive)
                 {
-                    // 座舱 AOA 指示器：不同机型语义不同，而且拉杆瞬间会抖。
-                    // 之前是「单帧 >0.9 立刻点亮」→ F/A-18A 这种指示器在 0.9 附近抖的机型会一拉就闪。
-                    // 现在要求持续 200 ms 才点亮，回落 0.85 以下才复位。
+                    aoaIdxSince = 0;
+                }
+                else if (snap.AoaIndexer is double idxRaw
+                         && WtHud.Hud.AoaIndexerCheck.ToNormalized(idxRaw, aoaUnit, threshold) is double idx)
+                {
                     if (idx > 0.9)
                     {
                         if (aoaIdxSince == 0) aoaIdxSince = Environment.TickCount64;
@@ -1968,6 +2085,16 @@ public static partial class Program
                     {
                         aoaIdxSince = 0;
                     }
+
+                    // 疑似度数制（只提示一次、**不改配置**）：值域推断本身不可靠（归一机型在大迎角
+                    // 时 idx 也可能 >1.2），所以这里只把「可以自检校准」告诉用户，判定权留给他。
+                    if (TakeSuspectedDegreesHint(snap.VehicleType, aoaUnit, idxRaw))
+                    {
+                        Log.InfoFor(snap.VehicleType, "疑似度数制，可绑定「AOA 指示器自检」键校准",
+                            ("idx", Log.Num(idxRaw)), ("AoA", Log.Num(aoa, "F1")),
+                            ("Ny", Log.Num(snap.NyG, "F1")));
+                        opt.ShowNotice("疑似度数制：可绑定「AOA 指示器自检」键校准", warn: true);
+                    }
                 }
                 else
                 {
@@ -1977,9 +2104,17 @@ public static partial class Program
                 if (opt.StallWarnLevel != stallLogged)
                 {
                     stallLogged = opt.StallWarnLevel;
-                    Console.WriteLine($"stall level {opt.StallWarnLevel}: AoA={aoa:F1} thr={threshold:F1}" +
-                                      $" cal={(hasCal ? "yes" : "no")} Ny={snap.NyG:F1} accel={accelMs2:F1} vy={snap.VyMs:F0}" +
-                                      $" idx={(snap.AoaIndexer?.ToString("F2") ?? "-")}");
+                    Log.InfoFor(snap.VehicleType,
+                        opt.StallWarnLevel == 0 ? "失速告警解除" : "失速告警",
+                        ("stallLevel", opt.StallWarnLevel.ToString(CultureInfo.InvariantCulture)),
+                        ("AoA", Log.Num(aoa, "F1")),
+                        ("thr", Log.Num(threshold, "F1")),
+                        ("cal", hasCal ? "yes" : "no"),
+                        ("Ny", Log.Num(snap.NyG, "F1")),
+                        ("accel", Log.Num(accelMs2, "F1")),
+                        ("vy", Log.Num(snap.VyMs, "F0")),
+                        ("idx", snap.AoaIndexer is double logIdx ? Log.Num(logIdx) : "-"),
+                        ("unit", WtHud.Hud.AoaIndexerCheck.UnitTextZh(aoaUnit)));
                 }
             }
             else
@@ -1995,9 +2130,14 @@ public static partial class Program
             if (opt.OverspeedAlert != overspeedLogged)
             {
                 overspeedLogged = opt.OverspeedAlert;
-                Console.WriteLine(opt.OverspeedAlert
-                    ? $"overspeed ON: M={snap.Mach:F2} IAS={snap.IasKmh:F0} km/h (thr={opt.OverspeedMach:F2}M/{opt.OverspeedKmh:F0}kmh)"
-                    : "overspeed off");
+                if (opt.OverspeedAlert)
+                    Log.Info("超速告警",
+                        ("Mach", Log.Num(snap.Mach, "F2")),
+                        ("IAS", Log.Num(snap.IasKmh, "F0")),
+                        ("thrMach", Log.Num(opt.OverspeedMach, "F2")),
+                        ("thrKmh", Log.Num(opt.OverspeedKmh, "F0")));
+                else
+                    Log.Info("超速告警解除");
             }
 
             // Longitudinal acceleration: least-squares slope of TAS over a 3 s window. The raw
@@ -2041,7 +2181,8 @@ public static partial class Program
                 if (vneLogged != snap.VehicleType)
                 {
                     vneLogged = snap.VehicleType;
-                    Console.WriteLine($"Vne from cockpit on {snap.VehicleType}: {vneMs:F1} m/s = {vneMs * 3.6:F0} km/h");
+                    Log.InfoFor(snap.VehicleType, "座舱 VNE 读数已用于限速",
+                        ("vneMs", Log.Num(vneMs, "F1")), ("vneKmh", Log.Num(vneMs * 3.6, "F0")));
                 }
             }
             else
@@ -2154,9 +2295,13 @@ public static partial class Program
             bool sinkNow = sinkRateSince != 0 && alertTicks - sinkRateSince > 1000;
 
             if (pullUpNow != opt.PullUpAlert)
-                Console.WriteLine($"PULL UP {(pullUpNow ? "ON" : "off")}: ralt={EffectiveRadioAltM(snap, cfg):F0} m vy={snap.VyMs:F0} m/s tti={tti:F1} s");
+                Log.Info(pullUpNow ? "PULL UP 地形告警" : "PULL UP 告警解除",
+                    ("ralt", Log.Num(EffectiveRadioAltM(snap, cfg) ?? double.NaN, "F0")),
+                    ("vy", Log.Num(snap.VyMs, "F0")), ("tti", Log.Num(tti, "F1")));
             if (sinkNow != opt.SinkRateAlert)
-                Console.WriteLine($"SINK RATE {(sinkNow ? "ON" : "off")}: alt={snap.AltM:F0} m vy={snap.VyMs:F0} m/s thr={sinkThr:F0}");
+                Log.Info(sinkNow ? "下沉率告警开启" : "下沉率告警关闭",
+                    ("sinkRate", Log.Num(sinkThr, "F0")), ("alt", Log.Num(snap.AltM, "F0")),
+                    ("vy", Log.Num(snap.VyMs, "F0")));
 
             opt.PullUpAlert = pullUpNow;
             opt.SinkRateAlert = !pullUpNow && sinkNow;
@@ -3418,7 +3563,7 @@ public static partial class Program
         if (rec is null) return;
         RecorderStopProbe?.Invoke(rec);   // 自检断言点：这里必须还没持有 recGate
         try { rec.Stop(); }
-        catch (Exception ex) { Console.WriteLine("recorder: stop failed: " + ex.Message); }
+        catch (Exception ex) { Log.Error("记录器停止失败", ("error", ex.Message)); }
     }
 
     /// <summary>
@@ -3455,7 +3600,7 @@ public static partial class Program
             recHudmsgDeathUtc = default;
             recDeathTicks = 0;
             ResetZeroSnapshotGuard();
-            Console.WriteLine("recording stopped (toggle off)");
+            Log.Info("录制停止：开关已关闭");
             return pendingStop;   // 锁外 Stop
         }
 
@@ -3463,7 +3608,17 @@ public static partial class Program
         if (flightRecorder == null)
         {
             if (!snap.Valid || !inBattle) return null;
-            flightRecorder = FlightRecorder.Start(cfg, snap);
+            try
+            {
+                flightRecorder = FlightRecorder.Start(cfg, snap);
+            }
+            catch (Exception ex)
+            {
+                // 建目录/写 meta 失败（只读目录、杀软锁文件）：不能把异常抛回轮询线程，
+                // 否则整个回调链断掉；这一局就不录，报 ERROR 让用户能查。
+                Log.Error("记录器启动失败（本局不录制）", ("error", ex.Message));
+                return null;
+            }
             recLastPacketTicks = nowTicks;
             recLastSampleElapsed = null;    // 新文件：第一条样本不参与中断判定
             recVehiclePrev = snap.VehicleType;
@@ -3473,7 +3628,7 @@ public static partial class Program
             recHudmsgDeathUtc = default;
             recDeathTicks = 0;
             ResetZeroSnapshotGuard();
-            Console.WriteLine($"recording -> {flightRecorder.FilePath}");
+            Log.Info("开始录制本机飞行数据", ("file", System.IO.Path.GetFileName(flightRecorder.FilePath)));
         }
 
         if (newPacket)
@@ -3577,9 +3732,7 @@ public static partial class Program
             recOutSince = 0;
             // 缓冲中的单帧全 0 直接丢掉：没有下一帧可确认，写进去反而会在文件末尾多一个 0 点。
             ResetZeroSnapshotGuard();
-            Console.WriteLine(idleOut
-                ? "recording stopped (out of battle for 60 s)"
-                : "recording stopped (no telemetry)");
+            Log.Info(idleOut ? "录制停止：已离开对局 60 s" : "录制停止：没有遥测数据");
             return pendingStop;   // 锁外 Stop
         }
 
@@ -3712,8 +3865,7 @@ public static partial class Program
         if (Environment.GetCommandLineArgs().Any(a => a == "--elevated-retry")) return;
         if (!IsProcessElevated(gamePid) || IsProcessElevated(Environment.ProcessId)) return;
 
-        Console.WriteLine("game is elevated but WtHud is not -> restarting WtHud as administrator " +
-                          "(UIPI blocks hotkeys while an elevated window has focus)");
+        Log.Info("游戏以管理员运行而 WtHud 不是，正在以管理员身份重启 WtHud（否则热键会被 UIPI 挡住）");
         try
         {
             string exe = Environment.ProcessPath ?? "WtHud.exe";
@@ -3728,8 +3880,8 @@ public static partial class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine("elevation relaunch cancelled/failed: " + ex.Message +
-                              " -- in-game hotkeys will NOT work; run WtHud as administrator manually");
+            Log.Error("提权重启失败，游戏内热键将不可用；请手动以管理员身份运行 WtHud",
+                ("error", ex.Message));
             return;
         }
         Environment.Exit(0);
@@ -3780,6 +3932,11 @@ public static partial class Program
             MixStr(o.NavFriendly);
             MixStr(o.NavEnemy);
             MixStr(o.EdgeArrow);
+            // 一次性提示（AOA 自检结果/疑似度数制）：出现、换字、到期都要重绘，否则
+            // 帧缓存会把提示压在旧帧上一直不出现，或者过期了还挂着。
+            MixStr(o.NoticeText);
+            Mix(o.NoticeWarn ? 1 : 0, 1);
+            Mix(o.NoticeUntilTicks != 0 && Environment.TickCount64 < o.NoticeUntilTicks ? 1 : 0, 1);
             Mix(o.EdgeWarning ? 1 : 0, 1);
             Mix(o.EnemyAirfieldAlert ? 1 : 0, 1);
             Mix(o.OverspeedAlert ? 1 : 0, 1);
@@ -3914,9 +4071,23 @@ public static partial class Program
     private static WtHud.Input.KeyBinding _hideResetKeyBinding = WtHud.Input.KeyBinding.Parse("ESC", 0x1B, "ESC");
     private static WtHud.Input.KeyBinding _resetKeyBinding = WtHud.Input.KeyBinding.Parse("F5", 0x74, "F5");
     private static WtHud.Input.KeyBinding _stallKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+ALT+S", 0x53, "CTRL+ALT+S");
+    // 默认不绑定（VirtualKey = 0 → 永远不会触发）：用户自己决定要不要用自检。
+    private static WtHud.Input.KeyBinding _aoaIndexerCheckKeyBinding =
+        new WtHud.Input.KeyBinding();
     private static WtHud.Input.KeyBinding _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse("H", 0x48, "H");
+    // 直升机减速板键（.blk 的 ID_AIR_BRAKE_HELICOPTER）：默认空 = 不绑定。
+    private static WtHud.Input.KeyBinding _airbrakeKeyHeliBinding = new WtHud.Input.KeyBinding();
+    // 导引头 / 吊舱 / 第三人称直键：游戏里默认都没绑，HUD 默认也留空（空 = VirtualKey 0 → 永不触发）。
+    private static WtHud.Input.KeyBinding _seekerViewKeyBinding = new WtHud.Input.KeyBinding();
+    private static WtHud.Input.KeyBinding _podViewKeyBinding = new WtHud.Input.KeyBinding();
+    private static WtHud.Input.KeyBinding _tpsViewKeyBinding = new WtHud.Input.KeyBinding();
+    private static WtHud.Input.KeyBinding _seekerToggleKeyBinding = new WtHud.Input.KeyBinding();
+    // 人在回路隐藏（飞机 / 直升机两套键）：默认空。
+    private static WtHud.Input.KeyBinding _manLoopKeyBinding = new WtHud.Input.KeyBinding();
+    private static WtHud.Input.KeyBinding _manLoopKeyHeliBinding = new WtHud.Input.KeyBinding();
     private static bool airbrakeKeyOn;
     private static bool prevAirbrake;   // 切换边沿的上一次按下状态（ToggleEdge 用）
+    private static bool prevAirbrakeHeli;   // 直升机减速板键的边沿状态
     private static WtHud.Input.KeyBinding _formationKeyBinding = WtHud.Input.KeyBinding.Parse("CTRL+SHIFT+F", 0x46, "CTRL+SHIFT+F");
     private static bool formationKeyPrev;   // 边沿检测：按一下切换，不是按住生效
 
@@ -3942,6 +4113,192 @@ public static partial class Program
     private static long recZeroLastLogTicks;            // 上一条 skip 汇总的时刻（TickCount64）
     private static int recZeroSinceLog;                 // 距上一条汇总跳过的条数
 
+    /// <summary>
+    /// 「疑似度数制」提示：每机型本次运行只提示一次。
+    /// <para>返回 true = 本次调用应该提示（并已记入去重集合）。只提示，不改任何配置。</para>
+    /// </summary>
+    internal static bool TakeSuspectedDegreesHint(string vehicle, AoaIndexerUnit unit, double idx)
+    {
+        if (string.IsNullOrEmpty(vehicle) || !AoaIndexerCheck.SuspectedDegrees(unit, idx)) return false;
+        return aoaSuspectedHinted.Add(vehicle);
+    }
+
+    /// <summary>输入线程按下自检键时调用（只置请求；条件校验用新鲜快照在轮询线程做）。</summary>
+    private static void RequestAoaIndexerCheck() => Interlocked.Exchange(ref aoaCheckRequest, 1);
+
+    /// <summary>
+    /// 该机型的有效失速迎角：标定（≥12° 才可信）&gt; 机型覆盖/档案 &gt; 全局。
+    /// <para>索引器度数换算与失速判定共用这一处，避免出现两套「stallAoa」口径。</para>
+    /// </summary>
+    private static (double Threshold, bool Calibrated) EffectiveStallAoa(HudConfig cfg, string vehicle)
+    {
+        bool hasCal = cfg.StallAoaByVehicle.TryGetValue(vehicle, out double calibrated) && calibrated >= 12;
+        double threshold = hasCal
+            ? calibrated
+            : WtHud.Hud.EffectiveSettings.StallAoaDeg(cfg, vehicle, AirframeDb.Get(vehicle));
+        return (threshold, hasCal);
+    }
+
+    /// <summary>
+    /// 每个新快照推进一次 AOA 指示器自检：开始（校验条件）→ 采样 → 到点判定。
+    /// <para>采样期间 <see cref="aoaCheckActive"/>=true，渲染线程据此跳过 indexer 分支
+    /// （否则自检过程中指示器一旦越过阈值就会误报 STALL）。AoA 阈值兜底判定照常。</para>
+    /// <para>判定用纯函数 <see cref="AoaIndexerCheck.Classify"/>；这里只管线程状态、落盘和提示。</para>
+    /// </summary>
+    private static void UpdateAoaIndexerCheck(HudConfig cfg, TelemetrySnapshot s, HudOptions opt)
+    {
+        bool requested = Interlocked.Exchange(ref aoaCheckRequest, 0) != 0;
+        AoaIndexerResult? result = null;
+        string resultVehicle = "";
+        string? reject = null;
+
+        lock (aoaCheckGate)
+        {
+            if (requested && aoaCheckStartTicks == 0)
+            {
+                var unit = WtHud.Hud.EffectiveSettings.AoaIndexerUnit(cfg, s.VehicleType);
+                bool ground = WtHud.Hud.AoaIndexerCheck.IsGround(s.GearPercent, EffectiveRadioAltM(s, cfg));
+                if (!WtHud.Hud.AoaIndexerCheck.ShouldSample(s.InFlight, s.VehicleType, ground, unit))
+                {
+                    reject = !s.InFlight ? "不在飞行中"
+                        : string.IsNullOrWhiteSpace(s.VehicleType) ? "机型未知"
+                        : ground ? "在地面（起落架放下且雷达高度 <30 m）"
+                        : "当前机型单位不是「默认」，无需自检";
+                }
+                else
+                {
+                    aoaCheckStartTicks = Environment.TickCount64;
+                    aoaCheckVehicle = s.VehicleType;
+                    aoaCheckSamples.Clear();
+                    aoaCheckActive = true;
+                }
+            }
+
+            if (aoaCheckStartTicks != 0)
+            {
+                if (s.VehicleType != aoaCheckVehicle)
+                {
+                    aoaCheckStartTicks = 0;
+                    aoaCheckActive = false;
+                    aoaCheckSamples.Clear();
+                    reject = "机型变化，自检中断";
+                }
+                else
+                {
+                    if (s.AoaIndexer is double idx && double.IsFinite(idx))
+                        aoaCheckSamples.Add(new AoaIndexerSample(idx, s.AoaDeg));
+
+                    bool full = aoaCheckSamples.Count >= WtHud.Hud.AoaIndexerCheck.MaxSamples;
+                    bool timeUp = Environment.TickCount64 - aoaCheckStartTicks
+                                  >= WtHud.Hud.AoaIndexerCheck.SampleWindowMs;
+                    if (full || timeUp)
+                    {
+                        var (stallAoa, _) = EffectiveStallAoa(cfg, aoaCheckVehicle);
+                        result = WtHud.Hud.AoaIndexerCheck.Classify(aoaCheckSamples, stallAoa);
+                        resultVehicle = aoaCheckVehicle;
+                        aoaCheckStartTicks = 0;
+                        aoaCheckActive = false;
+                        aoaCheckSamples.Clear();
+                    }
+                }
+            }
+        }
+
+        if (reject is not null)
+        {
+            Log.InfoFor(s.VehicleType, "AOA 指示器自检未开始：" + reject);
+            opt.ShowNotice("AOA 自检未开始：" + reject, warn: true);
+            return;
+        }
+
+        if (result is not { } r) return;
+
+        var unitText = WtHud.Hud.AoaIndexerCheck.UnitTextZh(r.Unit);
+        var fields = new (string, string)[]
+        {
+            ("samples", r.Samples.ToString(CultureInfo.InvariantCulture)),
+            ("aoaSpan", Log.Num(r.AoaSpanDeg, "F1")),
+            ("degRes", Log.Num(r.DegResidualP90, "F2")),
+            ("normRes", Log.Num(r.NormResidualP90, "F3")),
+        };
+
+        if (r.Ok)
+        {
+            // 成功：写机型表（per-airframe override）。普通机型不碰全局，未自检机型零变化。
+            WtHud.Hud.SettingsRouter.SetFor(cfg, resultVehicle, "row.aoaIndexer", (int)r.Unit);
+            // 来源标记：详情页据此显示「自检」而不是「手动」；面板手动改一次会清回 0。
+            WtHud.Hud.SettingsRouter.SetFor(cfg, resultVehicle, "row.aoaIndexerAuto", 1);
+            LogSave(cfg.Save(), "aoa indexer check");
+            Log.InfoFor(resultVehicle, $"AOA 指示器自检完成：单位={unitText}（已按机型保存）", fields);
+            opt.ShowNotice($"AOA 指示器：{unitText}（已保存）", warn: false);
+        }
+        else
+        {
+            Log.InfoFor(resultVehicle, "AOA 指示器自检失败：" + r.Reason, fields);
+            opt.ShowNotice("AOA 自检失败：保持 5–10° 迎角、速度稳定后再按一次", warn: true);
+        }
+    }
+
+    /// <summary>
+    /// 自检看门狗：采样期间 8111 断流/游戏暂停时不会再有快照，indexer 分支会一直被跳过。
+    /// 超过 3 s 由渲染线程强制收尾（失败，不改配置）。
+    /// </summary>
+    private static void AbortAoaIndexerCheck(HudOptions opt)
+    {
+        lock (aoaCheckGate)
+        {
+            if (aoaCheckStartTicks == 0)
+            {
+                aoaCheckActive = false;
+                return;
+            }
+            aoaCheckStartTicks = 0;
+            aoaCheckActive = false;
+            aoaCheckSamples.Clear();
+        }
+        Log.Info("AOA 指示器自检中断：8111 数据中断");
+        opt.ShowNotice("AOA 自检中断：8111 数据中断，稍后再试", warn: true);
+    }
+
+    /// <summary>空字符串 = 不绑定：Parse(null, 0, "") 得到 VirtualKey 0，所有轮询恒 false。</summary>
+    private static WtHud.Input.KeyBinding ParseOptionalKey(string? text) =>
+        WtHud.Input.KeyBinding.Parse(string.IsNullOrWhiteSpace(text) ? null : text, 0, "");
+
+    // ---- 视角状态（0.5.11）----
+    // 旧的 int viewState 0/1/2 换成 ViewKind + 吊舱序号（PodViewState 纯函数里判断序列）。
+    private static volatile int viewKindId;             // (int)ViewKind
+    private static volatile int viewPodIndex = 1;       // 1 起
+    private static bool manLoopLatched;                 // 人在回路隐藏锁存（飞机/直升机共用）
+
+    private static ViewState CurrentView => new((ViewKind)viewKindId, Math.Max(1, viewPodIndex));
+
+    private static void SetView(ViewState view)
+    {
+        viewKindId = (int)view.Kind;
+        viewPodIndex = Math.Max(1, view.PodIndex);
+    }
+
+    /// <summary>应用视角变化；有变化才写日志（视角切换是游戏内事件 → INFO）。</summary>
+    private static void ApplyView(ViewState next, string reason)
+    {
+        var prev = CurrentView;
+        if (next == prev) return;
+        SetView(next);
+        Log.Info($"{reason}：{PodViewState.DescribeZh(next)}", ("view", next.ToString()), ("from", prev.ToString()));
+    }
+
+    /// <summary>清人在回路锁存（V / F5 / 失焦 / 换局清；Esc 是 P2 清理，不清）。</summary>
+    private static void ClearManLoopLatch()
+    {
+        if (!manLoopLatched) return;
+        manLoopLatched = false;
+        hideState.Set(HideReason.ManLoop, false);
+    }
+
+    /// <summary>轮询一个键的按下边沿：修饰键必须匹配（避免 CTRL+V 误触发 V 的超短按）。</summary>
+    private static bool PollEdge(in WtHud.Input.KeyBinding binding, ref bool prev) =>
+        ToggleEdge(binding.IsDown(), binding.PressedSinceLastPollMatchingModifiers(), ref prev);
+
     /// <summary>Re-parse every key binding from the config (called on startup and after F1 save).</summary>
     private static void RebindeKeys(HudConfig c)
     {
@@ -3953,7 +4310,17 @@ public static partial class Program
         _hideResetKeyBinding = WtHud.Input.KeyBinding.Parse(c.HideResetKey, 0x1B, "ESC");
         _resetKeyBinding = WtHud.Input.KeyBinding.Parse(c.ResetKey, 0x74, "F5");
         _stallKeyBinding = WtHud.Input.KeyBinding.Parse(c.StallKey, 0x53, "CTRL+ALT+S");
+        // 空 = 不绑定：Parse(null, 0, "") 得到 VirtualKey 0，PressedSinceLastPoll 恒 false。
+        _aoaIndexerCheckKeyBinding = WtHud.Input.KeyBinding.Parse(
+            string.IsNullOrWhiteSpace(c.AoaIndexerCheckKey) ? null : c.AoaIndexerCheckKey, 0, "");
         _airbrakeKeyBinding = WtHud.Input.KeyBinding.Parse(c.AirbrakeKey, 0x48, "H");
+        _airbrakeKeyHeliBinding = ParseOptionalKey(c.AirbrakeKeyHeli);
+        _seekerViewKeyBinding = ParseOptionalKey(c.SeekerViewKey);
+        _podViewKeyBinding = ParseOptionalKey(c.PodViewKey);
+        _tpsViewKeyBinding = ParseOptionalKey(c.TpsViewKey);
+        _seekerToggleKeyBinding = ParseOptionalKey(c.SeekerToggleKey);
+        _manLoopKeyBinding = ParseOptionalKey(c.ManLoopKey);
+        _manLoopKeyHeliBinding = ParseOptionalKey(c.ManLoopKeyHeli);
         _formationKeyBinding = WtHud.Input.KeyBinding.Parse(
             string.IsNullOrWhiteSpace(c.FormationKey) ? "CTRL+SHIFT+F" : c.FormationKey, 0x46, "CTRL+SHIFT+F");
         Console.WriteLine($"keys: view={_viewKeyBinding.Text} zoom={_zoomKeyBinding.Text} map={_mapKeyBinding.Text} " +
@@ -3974,6 +4341,17 @@ public static partial class Program
     private static long aoaIdxSince;      // 座舱 AOA 指示器持续超限计时（防抖）
     private static int stallLogged = -1;
     private static string stallCalWarned = "";
+
+    // ---- AOA 指示器自检（0.5.11）----
+    // ★ 产品决策：不做系统自动判断。值域推断不可靠（归一机型在大迎角时 idx 也可能 >1.2），
+    //   所以只在用户主动按自检键时采样判定，结果按机型写进 hud-config.json。
+    private static int aoaCheckRequest;                  // input-watcher 置 1，轮询线程消费
+    private static readonly object aoaCheckGate = new();
+    private static long aoaCheckStartTicks;              // 0 = 没在采样
+    private static string aoaCheckVehicle = "";
+    private static readonly List<AoaIndexerSample> aoaCheckSamples = new();
+    private static volatile bool aoaCheckActive;         // 采样中：渲染线程据此跳过 indexer 分支
+    private static readonly HashSet<string> aoaSuspectedHinted = new();
     private static double fuelLastSample = -1;
     private static double fuelFlowAt;
     private static OverlayWindow? overlayRef;
@@ -3997,7 +4375,6 @@ public static partial class Program
 
     private static string lastVehicle = "";
     private static bool prevValid;
-    private static int viewState;   // 0 third person, 1 cockpit, 2 nose
     private static volatile bool mapHeld;
 
     /// <summary>
@@ -4885,7 +5262,8 @@ public static partial class Program
     private static void LogSave(HudConfig.SaveResult result, string what)
     {
         if (result.Ok) return;
-        Console.WriteLine($"{what}: ** SAVE FAILED ({result.Error}) - {result.Detail} **");
+        Log.Error("配置保存失败（SAVE FAILED）", ("what", what), ("reason", result.Error.ToString()),
+            ("detail", result.Detail));
     }
 
     private static string CfgText(string key)
@@ -5301,11 +5679,10 @@ public static partial class Program
         link.LeadId = EffectiveLeadId(cfg.LeadMode, cfg.DataLinkLeadId);
 
         foreach (var b in bad)
-            Console.WriteLine($"data link: bad peer \"{b}\" ignored (want ip:port)");
+            Log.Warn("数据链节点地址无效，已忽略", ("peer", b));
         Console.WriteLine($"data link: targets -> {dataLinkPeerNote}");
     }
 
-    private static string ViewName(int state) => state switch { 0 => "third person", 1 => "cockpit", 2 => "nose", _ => "?" };
     private static TelemetrySnapshot? prevSnapshot;
     private static AttitudeSolution prevAttitude;
 
@@ -5565,6 +5942,14 @@ public static partial class Program
                 }
             }
         }
+        // 一次性提示样张（0.5.11 AOA 自检/疑似度数制）：WT_PREVIEW_NOTICE="文本"，
+        // 文本前加 ! 表示警告色（失败提示）。
+        var noticeSpec = Environment.GetEnvironmentVariable("WT_PREVIEW_NOTICE");
+        if (!string.IsNullOrWhiteSpace(noticeSpec))
+        {
+            bool noticeWarn = noticeSpec[0] == '!';
+            opt.ShowNotice(noticeWarn ? noticeSpec[1..] : noticeSpec, noticeWarn, 60_000);
+        }
         if (variant == "turnassist")
         {
             // 长机转向辅助样张：WT_PREVIEW_TURN="方向,当前坡度,目标坡度,G,指令(0多压1回杆2正好),待锁(0/1),目标转向率"
@@ -5780,6 +6165,12 @@ public static partial class Program
             else if (view == "diag") { form.PreviewOpen(10, 0); }   // 模块顺序：… Snapshots(8) → FlightLog(9) → Diag(10)，此前写的 8/9 都会错位
             else if (view == "keys") { form.PreviewOpen(3, 0); }
             else if (view == "keys2") { form.PreviewOpen(3, 0); form.PreviewItemPage(1); }
+            // 0.5.11：按键页第 2/3 页（导引头/吊舱/第三人称/人在回路 6 行都在这里）
+            else if (view is "keyspage2" or "keyspage3")
+            {
+                form.PreviewOpen(5, 0);
+                form.PreviewItemPage(view == "keyspage2" ? 1 : 2);
+            }
             else if (view == "editscoped") { form.PreviewEdit(2, 0); }   // 告警页首行（按机型）
             else if (view == "capture") { form.PreviewCapture(3, 0); }
             else if (view == "discard")

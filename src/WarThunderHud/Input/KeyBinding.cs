@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 A-common-Chinese
 // This file is part of War Thunder HUD (8111), licensed under the GNU AGPL v3.0 or later.
 
@@ -111,6 +111,12 @@ public readonly struct KeyBinding
     public bool IsDown()
     {
         if (VirtualKey == 0 || !Down(VirtualKey)) return false;
+        return ModifiersMatch();
+    }
+
+    /// <summary>修饰键当前是否与绑定要求一致（不检查主键）。</summary>
+    public bool ModifiersMatch()
+    {
         if (Ctrl != (Down(0x11) || Down(0xA2) || Down(0xA3))) return false;
         if (Shift != (Down(0x10) || Down(0xA0) || Down(0xA1))) return false;
         if (Alt != (Down(0x12) || Down(0xA4) || Down(0xA5))) return false;
@@ -125,6 +131,18 @@ public readonly struct KeyBinding
 
     /// <summary>True if the key was pressed since the previous call (catches very short taps).</summary>
     public bool PressedSinceLastPoll() => VirtualKey != 0 && PressedSince(VirtualKey);
+
+    /// <summary>
+    /// 「跨轮询超短按」标志，但要求修饰键与绑定一致。
+    /// <para>不检查修饰键时，按 CTRL+V 会让 V 键的 <see cref="PressedSinceLastPoll"/> 变成 true，
+    /// V 的视角循环和 CTRL+V 的吊舱组合键会在同一帧一起触发。所有带组合键语义的轮询都要用它。</para>
+    /// </summary>
+    public bool PressedSinceLastPollMatchingModifiers() => VirtualKey != 0 && PressedSince(VirtualKey) && ModifiersMatch();
+
+    /// <summary>解析后是否指向同一个键（含修饰键）；空绑定（VirtualKey=0）永远不相等。</summary>
+    public bool SameAs(in KeyBinding other) =>
+        VirtualKey != 0 && VirtualKey == other.VirtualKey
+        && Ctrl == other.Ctrl && Shift == other.Shift && Alt == other.Alt;
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(uint vKey);

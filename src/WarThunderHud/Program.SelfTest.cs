@@ -2743,6 +2743,382 @@ public static partial class Program
         Check("toggle edge press frame counts once",
             ToggleEdge(true, true, ref prevToggle) && prevToggle);
 
+        // ---- 0.5.11 AOA 指示器量纲（自检纯函数 + 运行时映射 + 机型表 + 提示去重 + 日志格式）----
+        // 背景：/indicators 的 aoa_indexer1 多数机型是 0–1 归一值，少数（su_34/su_25tm/su_27sm/
+        // f_16c/f_5e）是迎角度数；旧代码假设归一，度数机型一动杆就点亮 STALL。
+        // 产品决策：**不做系统自动判断**，只在用户按自检键时采样判定。
+        static List<AoaIndexerSample> MkSamples(Func<double, double> idxOf, params double[] aoas) =>
+            aoas.Select(a => new AoaIndexerSample(idxOf(a), a)).ToList();
+
+        // 度数制：idx = AoA + 1.5° 固定偏置（偏置必须允许：su_34 实测差 1–3°）
+        var degSamples = MkSamples(a => a + 1.5, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+        var deg = AoaIndexerCheck.Classify(degSamples, 25);
+        Check("aoa check: degrees with 1.5deg bias", deg.Ok && deg.Verdict == AoaIndexerVerdict.Degrees);
+        // 度数制 + 3° 偏置
+        var deg3 = AoaIndexerCheck.Classify(MkSamples(a => a + 3, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 25);
+        Check("aoa check: degrees with 3deg bias", deg3.Ok && deg3.Verdict == AoaIndexerVerdict.Degrees);
+        // 度数制即使 stallAoa 无效（0）也必须能判成度数（归一假设不成立）
+        var degNoStall = AoaIndexerCheck.Classify(degSamples, 0);
+        Check("aoa check: degrees works without a valid stall aoa",
+            degNoStall.Ok && degNoStall.Verdict == AoaIndexerVerdict.Degrees);
+        // 归一制：idx = AoA / stallAoa
+        var normSamples = MkSamples(a => a / 25.0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20);
+        var norm = AoaIndexerCheck.Classify(normSamples, 25);
+        Check("aoa check: normalized machine", norm.Ok && norm.Verdict == AoaIndexerVerdict.Normalized);
+        // 噪声：±2° 抖动 → 两种假设都不成立 → 失败（不许乱改配置）
+        var noiseSamples = MkSamples(a => a + (Math.Abs(a % 4 - 2) < 0.1 ? 2 : -2),
+            2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+        var noise = AoaIndexerCheck.Classify(noiseSamples, 25);
+        Check("aoa check: noise fails instead of guessing",
+            !noise.Ok && noise.Verdict == AoaIndexerVerdict.Failed);
+        // 低迎角不足：跨度 <1.5° 且 |AoA|<3° → 失败
+        var lowAoa = MkSamples(a => a, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9);
+        var low = AoaIndexerCheck.Classify(lowAoa, 25);
+        Check("aoa check: low aoa is not enough", !low.Ok && low.Reason.Contains("迎角变化不足"));
+        // 样本不足：9 个有效样本 → 失败
+        var few = AoaIndexerCheck.Classify(degSamples.Take(9).ToList(), 25);
+        Check("aoa check: too few samples fails", !few.Ok && few.Samples == 9);
+        // 坏值（NaN/Inf）不参与计数
+        var dirty = degSamples.ToList();
+        dirty.Add(new AoaIndexerSample(double.NaN, 5));
+        dirty.Add(new AoaIndexerSample(6, double.PositiveInfinity));
+        Check("aoa check: non-finite samples ignored",
+            AoaIndexerCheck.Classify(dirty, 25).Samples == degSamples.Count);
+
+        // 地面判定：起落架放下 **且** 雷达高度 <30 m
+        Check("aoa check ground rule: down and below 30 m",
+            AoaIndexerCheck.IsGround(100, 10) && AoaIndexerCheck.IsGround(60, 29.9));
+        Check("aoa check ground rule: high or gear up is not ground",
+            !AoaIndexerCheck.IsGround(100, 30) && !AoaIndexerCheck.IsGround(0, 5)
+            && !AoaIndexerCheck.IsGround(100, null));
+        Check("aoa check should-sample matrix",
+            AoaIndexerCheck.ShouldSample(true, "su_34", false, AoaIndexerUnit.Default)
+            && !AoaIndexerCheck.ShouldSample(true, "su_34", true, AoaIndexerUnit.Default)
+            && !AoaIndexerCheck.ShouldSample(false, "su_34", false, AoaIndexerUnit.Default)
+            && !AoaIndexerCheck.ShouldSample(true, "", false, AoaIndexerUnit.Default)
+            && !AoaIndexerCheck.ShouldSample(true, "su_34", false, AoaIndexerUnit.Degrees)
+            && !AoaIndexerCheck.ShouldSample(true, "su_34", false, AoaIndexerUnit.Off));
+
+        // 运行时映射：度数制 stallAoa=25 → AoA 24 报警 / AoA 5 不报警；默认=旧逻辑；关闭=跳过
+        double? degNorm24 = AoaIndexerCheck.ToNormalized(24, AoaIndexerUnit.Degrees, 25);
+        double? degNorm5 = AoaIndexerCheck.ToNormalized(5, AoaIndexerUnit.Degrees, 25);
+        Check("aoa runtime: degrees 24 of 25 warns",
+            degNorm24 is double n24 && Math.Abs(n24 - 0.96) < 1e-9
+            && AoaIndexerCheck.LevelOf(n24) == 1);
+        Check("aoa runtime: degrees 5 of 25 stays quiet",
+            degNorm5 is double n5 && AoaIndexerCheck.LevelOf(n5) == 0);
+        Check("aoa runtime: degrees 24.5 of 25 is level 2",
+            AoaIndexerCheck.ToNormalized(24.5, AoaIndexerUnit.Degrees, 25) is double n245
+            && AoaIndexerCheck.LevelOf(n245) == 2);
+        Check("aoa runtime: default unit keeps the old thresholds",
+            AoaIndexerCheck.ToNormalized(0.91, AoaIndexerUnit.Default, 25) == 0.91
+            && AoaIndexerCheck.ToNormalized(0.5, AoaIndexerUnit.Default, 25) == 0.5
+            && AoaIndexerCheck.LevelOf(0.9) == 0        // 旧逻辑是 >0.9，边界不算
+            && AoaIndexerCheck.LevelOf(0.91) == 1
+            && AoaIndexerCheck.LevelOf(0.98) == 2);
+        Check("aoa runtime: off skips the indexer branch",
+            AoaIndexerCheck.ToNormalized(24, AoaIndexerUnit.Off, 25) is null
+            && AoaIndexerCheck.ToNormalized(0.95, AoaIndexerUnit.Off, 25) is null);
+        Check("aoa runtime: degrees without a valid stall aoa falls back to raw value",
+            AoaIndexerCheck.ToNormalized(1.2, AoaIndexerUnit.Degrees, 0) == 1.2);
+
+        // 机型表：默认全 0（未自检 = 0.5.10 行为）、自检结果写 per-airframe、手动覆盖优先
+        var aoaCfg = new HudConfig();
+        Check("aoa indexer defaults to normalized and unbound key",
+            aoaCfg.AoaIndexerUnit == 0 && aoaCfg.AoaIndexerCheckKey == ""
+            && WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "su_34") == AoaIndexerUnit.Default
+            && WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, null) == AoaIndexerUnit.Default);
+        // 模拟自检成功后的落盘动作：row.aoaIndexer=1 + row.aoaIndexerAuto=1
+        WtHud.Hud.SettingsRouter.SetFor(aoaCfg, "su_34", "row.aoaIndexer", 1);
+        WtHud.Hud.SettingsRouter.SetFor(aoaCfg, "su_34", "row.aoaIndexerAuto", 1);
+        Check("aoa indexer self-check result reads back per airframe",
+            WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "su_34") == AoaIndexerUnit.Degrees
+            && WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "f_16c_block_52_aesa") == AoaIndexerUnit.Default
+            && WtHud.Hud.SettingsRouter.GetFor(aoaCfg, "su_34", "row.aoaIndexerAuto", out var aoaAuto) && aoaAuto == 1);
+        // JSON 往返：配置里的机型表真的是 "row.aoaIndexer": 1
+        string? aoaJsonPath = null;
+        try
+        {
+            aoaJsonPath = Path.Combine(Path.GetTempPath(), "wthud-aoa-selftest-" + Guid.NewGuid().ToString("N") + ".json");
+            var aoaSave = aoaCfg.SaveTo(aoaJsonPath);
+            var aoaJson = File.ReadAllText(aoaJsonPath);
+            var aoaRound = System.Text.Json.JsonSerializer.Deserialize<HudConfig>(aoaJson);
+            Check("aoa indexer airframe table round-trips through json",
+                aoaSave.Ok && aoaJson.Contains("\"row.aoaIndexer\": 1")
+                && aoaJson.Contains("\"row.aoaIndexerAuto\": 1")
+                && aoaRound is not null
+                && WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaRound, "su_34") == AoaIndexerUnit.Degrees);
+        }
+        finally
+        {
+            if (aoaJsonPath != null) { try { File.Delete(aoaJsonPath); } catch { } }
+        }
+        // 手动覆盖优先：全局关闭也压不过该机型的自检结果；再手动改就把自检结果顶掉
+        aoaCfg.AoaIndexerUnit = 2;
+        Check("aoa indexer: global default never overrides the airframe result",
+            WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "su_34") == AoaIndexerUnit.Degrees);
+        WtHud.Hud.SettingsRouter.SetFor(aoaCfg, "su_34", "row.aoaIndexer", 2);
+        Check("aoa indexer: manual airframe override wins",
+            WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "su_34") == AoaIndexerUnit.Off);
+        // 手改 json 写成 9：回落默认（旧行为），不是崩溃/乱选
+        WtHud.Hud.SettingsRouter.SetFor(aoaCfg, "j_16", "row.aoaIndexer", 9);
+        Check("aoa indexer: out-of-range value falls back to default",
+            WtHud.Hud.EffectiveSettings.AoaIndexerUnit(aoaCfg, "j_16") == AoaIndexerUnit.Default);
+
+        // 疑似度数制：只提示一次/机型，只提示不改配置
+        Check("aoa suspected degrees fires once per airframe",
+            TakeSuspectedDegreesHint("selftest-aoa-suspect-1", AoaIndexerUnit.Default, 4.41)
+            && !TakeSuspectedDegreesHint("selftest-aoa-suspect-1", AoaIndexerUnit.Default, 4.41)
+            && TakeSuspectedDegreesHint("selftest-aoa-suspect-2", AoaIndexerUnit.Default, 4.41));
+        Check("aoa suspected degrees ignores normal readings and other units",
+            !TakeSuspectedDegreesHint("selftest-aoa-suspect-3", AoaIndexerUnit.Default, 0.8)
+            && !TakeSuspectedDegreesHint("selftest-aoa-suspect-4", AoaIndexerUnit.Degrees, 4.41));
+
+        // 日志格式：LEVEL: [机型] HH:mm:ss.fff key=value… 中文内容
+        var logStamp = new DateTime(2026, 11, 27, 19, 5, 12, 345);
+        Check("log format: WARN row matches the spec",
+            Log.Format(LogLevel.Warn, "su_34", logStamp, "疑似度数制", ("idx", "4.41"), ("AoA", "5.6"))
+            == "WARN: [su_34] 19:05:12.345 idx=4.41 AoA=5.6 疑似度数制");
+        Check("log format: empty vehicle is a dash",
+            Log.Format(LogLevel.Error, "", logStamp, "配置加载失败")
+            == "ERROR: [-] 19:05:12.345 配置加载失败"
+            && Log.Format(LogLevel.Info, null, logStamp, "失速告警")
+            == "INFO: [-] 19:05:12.345 失速告警");
+        Check("log format: no fields leaves a single space",
+            Log.Format(LogLevel.Info, "f-16a", logStamp, "超速告警") == "INFO: [f-16a] 19:05:12.345 超速告警"
+            && Log.Format(LogLevel.Warn, "f-16a", logStamp, "热键注册失败", ("key", "F10"))
+            == "WARN: [f-16a] 19:05:12.345 key=F10 热键注册失败");
+        Check("log level text",
+            Log.LevelText(LogLevel.Info) == "INFO" && Log.LevelText(LogLevel.Warn) == "WARN"
+            && Log.LevelText(LogLevel.Error) == "ERROR");
+        Check("log numbers are invariant", Log.Num(4.41) == "4.41" && Log.Num(-12.0, "F0") == "-12");
+
+        // HUD 一次性提示：显示 / 到期不显示（AOA 自检结果与疑似度数制都走它）
+        var noticeOpt = new HudOptions();
+        noticeOpt.ShowNotice("AOA 指示器：度数（已保存）", warn: false);
+        var noticePrims = new HudGeometry(noticeOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true }, default, 1920, 1080);
+        Check("hud notice draws its text",
+            noticePrims.Any(p => p.Kind == HudPrimKind.Text && p.Text.Contains("AOA 指示器")));
+        noticeOpt.NoticeUntilTicks = Environment.TickCount64 - 1;
+        var expiredPrims = new HudGeometry(noticeOpt, new HudCalibration { VerticalFovDeg = 45 })
+            .Build(new TelemetrySnapshot { Valid = true, InFlight = true }, default, 1920, 1080);
+        Check("hud notice disappears after it expires",
+            !expiredPrims.Any(p => p.Kind == HudPrimKind.Text && p.Text.Contains("AOA 指示器")));
+
+        // ---- 0.5.11 第二批：导引头/瞄准吊舱视角、人在回路隐藏、blk 双套导入 ----
+        // 视角状态机的真值表（纯函数，不依赖 Windows/游戏）。
+        var third = new ViewState(ViewKind.Third, 1);
+        var cockpit = new ViewState(ViewKind.Cockpit, 1);
+        var nose = new ViewState(ViewKind.Nose, 1);
+        var seeker = new ViewState(ViewKind.Seeker, 1);
+        var pod1 = new ViewState(ViewKind.Pod, 1);
+        var pod2 = new ViewState(ViewKind.Pod, 2);
+
+        // V 序列：总开关关 = 旧序列（0.5.10 行为一字不差）
+        Check("view next: pod views off keeps the old 3-step cycle",
+            PodViewState.Next(third, false, true, 1) == cockpit
+            && PodViewState.Next(cockpit, false, true, 1) == nose
+            && PodViewState.Next(nose, false, true, 1) == third);
+        // V 序列：seeker 开，N=1
+        Check("view next: seeker on, one pod",
+            PodViewState.Next(third, true, true, 1) == seeker
+            && PodViewState.Next(seeker, true, true, 1) == pod1
+            && PodViewState.Next(pod1, true, true, 1) == cockpit
+            && PodViewState.Next(cockpit, true, true, 1) == nose
+            && PodViewState.Next(nose, true, true, 1) == third);
+        // V 序列：seeker 开，N=2
+        Check("view next: seeker on, two pods",
+            PodViewState.Next(pod1, true, true, 2) == pod2
+            && PodViewState.Next(pod2, true, true, 2) == cockpit);
+        // V 序列：seeker 关，N=2
+        Check("view next: seeker off",
+            PodViewState.Next(third, true, false, 2) == pod1
+            && PodViewState.Next(pod1, true, false, 2) == pod2
+            && PodViewState.Next(pod2, true, false, 2) == cockpit);
+        // 吊舱数量越界/手改 0：夹到 1..2，不崩溃不跳视角
+        Check("view next: pod count is clamped",
+            PodViewState.Next(third, true, true, 0) == seeker
+            && PodViewState.Next(pod1, true, true, 0) == cockpit
+            && PodViewState.ClampPodCount(9) == PodViewState.MaxPods
+            && PodViewState.ClampPodCount(-3) == 1);
+        // 状态收敛：关总开关只收外部相机（座舱/机头保留），seeker 关闭时从导引头回第三人称
+        Check("view normalize: disabling pods only drops pod cameras",
+            PodViewState.Normalize(pod2, false, true, 2) == third
+            && PodViewState.Normalize(seeker, false, true, 2) == third
+            && PodViewState.Normalize(cockpit, false, true, 2) == cockpit
+            && PodViewState.Normalize(nose, false, true, 2) == nose);
+        Check("view normalize: seeker quick toggle falls back to third",
+            PodViewState.Normalize(seeker, true, false, 2) == third
+            && PodViewState.Normalize(pod1, true, false, 2) == pod1);
+        Check("view normalize: pod index clamps to the configured count",
+            PodViewState.Normalize(pod2, true, true, 1) == pod1);
+
+        // 直键：幂等（再按不变化、不退出）
+        Check("view direct: seeker key is idempotent",
+            PodViewState.JumpSeeker(third, true, true) == seeker
+            && PodViewState.JumpSeeker(seeker, true, true) == seeker
+            && PodViewState.JumpSeeker(cockpit, true, true) == seeker);
+        Check("view direct: seeker key inert when disabled",
+            PodViewState.JumpSeeker(third, false, true) == third
+            && PodViewState.JumpSeeker(third, true, false) == third);
+        Check("view direct: pod key is idempotent",
+            PodViewState.JumpPodFirst(third, true) == pod1
+            && PodViewState.JumpPodFirst(pod2, true) == pod1
+            && PodViewState.JumpPodFirst(third, false) == third);
+        Check("view direct: third-person key always lands on third",
+            PodViewState.JumpThird(seeker) == third && PodViewState.JumpThird(pod2) == third
+            && PodViewState.JumpThird(nose) == third);
+
+        // 吊舱/第三人称同键（Ctrl+V）四种状态
+        Check("view combo: same key toggles pod <-> third",
+            PodViewState.ApplyPodTps(pod1, true, true, true, false) == third
+            && PodViewState.ApplyPodTps(pod2, true, true, false, true) == third
+            && PodViewState.ApplyPodTps(third, true, true, true, false) == pod1
+            && PodViewState.ApplyPodTps(seeker, true, true, true, false) == third
+            && PodViewState.ApplyPodTps(cockpit, true, true, false, true) == third
+            && PodViewState.ApplyPodTps(nose, true, true, true, false) == third);
+        Check("view combo: no press is a no-op and disabled is inert",
+            PodViewState.ApplyPodTps(pod1, true, true, false, false) == pod1
+            && PodViewState.ApplyPodTps(third, false, true, true, false) == third);
+        // 两键不同：各自直跳，互不影响
+        Check("view direct keys differ: pod and tps are independent",
+            PodViewState.ApplyPodTps(cockpit, true, false, true, false) == pod1
+            && PodViewState.ApplyPodTps(pod1, true, false, false, true) == third
+            && PodViewState.ApplyPodTps(third, true, false, false, false) == third);
+        // 同帧主/备用键都按到（同键去重）：只 toggle 一次，不会互相抵消
+        Check("view keys dedupe a same-frame double edge",
+            PodViewState.Toggle(false, true, true) && !PodViewState.Toggle(true, true, true)
+            && !PodViewState.Toggle(false, false, false));
+
+        // 视角隐藏规则：外部相机总隐藏；座舱/机头看开关；第三人称显示
+        Check("view hide: pod camera always hides the HUD",
+            PodViewState.HidesHud(seeker, false, false) && PodViewState.HidesHud(pod2, false, false)
+            && !PodViewState.HidesHud(third, true, true));
+        Check("view hide: cockpit/nose follow their switches",
+            PodViewState.HidesHud(cockpit, true, false) && !PodViewState.HidesHud(cockpit, false, false)
+            && PodViewState.HidesHud(nose, false, true) && !PodViewState.HidesHud(nose, false, false));
+
+        // 导引头快速开关：翻转 + 关闭时回第三人称
+        Check("seeker quick toggle flips the state",
+            PodViewState.ToggleSeeker(false) && !PodViewState.ToggleSeeker(true));
+        Check("seeker quick toggle forces third person when it closes on the seeker view",
+            PodViewState.Normalize(seeker, true, PodViewState.ToggleSeeker(true), 1) == third);
+
+        // 人在回路隐藏：P1 独立锁存、Esc(P2 清理) 不清、F5/失焦(ClearAll) 清
+        var manHide = new HudHideState();
+        manHide.Set(HideReason.ManLoop, true);
+        Check("manloop hide: latches and shows in the log",
+            manHide.IsHidden && manHide.IsSet(HideReason.ManLoop)
+            && manHide.LogLine() == "hud hide -> on (manloop)");
+        Check("manloop hide: Esc cleanup (P2) keeps it",
+            manHide.ClearAbovePriority(1).Count == 0 && manHide.IsSet(HideReason.ManLoop));
+        Check("manloop hide: priority is P1 like the view reason",
+            HudHideState.PriorityOf(HideReason.ManLoop) == HudHideState.PriorityOf(HideReason.View));
+        var manCleared = manHide.ClearAll();
+        Check("manloop hide: F5/focus-loss clear-all clears it",
+            manCleared.Contains(HideReason.ManLoop) && !manHide.IsHidden);
+        Check("manloop hide: idempotent set",
+            SetAndCount(manHide, HideReason.ManLoop, true) == 1);
+        static int SetAndCount(HudHideState state, HideReason reason, bool hidden)
+        {
+            state.Set(reason, hidden);
+            state.Set(reason, hidden);
+            return state.ActiveReasons().Count;
+        }
+
+        // 空字符串键 = 不绑定：VirtualKey 0，永不触发，也不会和别的空键「同键」
+        var emptyKey = WtHud.Input.KeyBinding.Parse(null, 0, "");
+        var emptyKey2 = WtHud.Input.KeyBinding.Parse("   ", 0, "");
+        var vKey = WtHud.Input.KeyBinding.Parse("V", 0x56, "V");
+        Check("empty key bindings never fire",
+            emptyKey.VirtualKey == 0 && emptyKey2.VirtualKey == 0
+            && !emptyKey.IsDown() && !emptyKey.PressedSinceLastPoll()
+            && !emptyKey.SameAs(emptyKey2));
+        Check("key same-as compares modifier state",
+            vKey.SameAs(WtHud.Input.KeyBinding.Parse("V", 0x56, "V"))
+            && !vKey.SameAs(WtHud.Input.KeyBinding.Parse("CTRL+V", 0x56, "CTRL+V"))
+            && !vKey.SameAs(emptyKey2));
+
+        // blk 双套导入：主键 + 直升机键、导引头/吊舱/第三人称、Ctrl+E/U、同键去重
+        const string blkPod = """
+        ID_AIR_BRAKE { keyboardKey:i=35; }
+        ID_AIR_BRAKE_HELICOPTER { keyboardKey:i=36; }
+        ID_CAMERA_SEEKER { keyboardKey:i=29; keyboardKey:i=18; }
+        ID_CAMERA_OPTICS { keyboardKey:i=29; keyboardKey:i=22; }
+        ID_CAMERA_TPS { keyboardKey:i=16; }
+        ID_CAMERA_SHELL_FPV { keyboardKey:i=47; }
+        ID_CAMERA_SHELL_FPV_HELICOPTER { keyboardKey:i=47; }
+        """;
+        var blkMap = WtHud.Input.WtControlsFile.Parse(blkPod);
+        var podCfg = new HudConfig();
+        var podSum = WtHud.Input.WtControlsImport.Apply(podCfg, blkMap, WtHud.UI.Lang.Zh);
+        Check("blk import: airbrake main and helicopter keys are separate",
+            podCfg.AirbrakeKey == "H" && podCfg.AirbrakeKeyHeli == "J");
+        Check("blk import: seeker/pod/tps actions map with modifiers",
+            podCfg.SeekerViewKey == "CTRL+E" && podCfg.PodViewKey == "CTRL+U" && podCfg.TpsViewKey == "Q");
+        Check("blk import: man-loop jet and heli keys are separate",
+            podCfg.ManLoopKey == "V" && podCfg.ManLoopKeyHeli == "V");
+        Check("blk import: summary names both key slots and the dedupe",
+            podSum.Contains("主键=H") && podSum.Contains("直升机键=J") && podSum.Contains("已去重"));
+        // 主动作没有、只有 _HELICOPTER 变体时兜底取变体，并在提示里说明
+        var heliOnlyCfg = new HudConfig();
+        var heliOnlySum = WtHud.Input.WtControlsImport.Apply(heliOnlyCfg,
+            new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ID_CAMERA_SEEKER_HELICOPTER"] = new[] { 18 },      // E
+            }, WtHud.UI.Lang.Zh);
+        Check("blk import: heli variant is used as a fallback",
+            heliOnlyCfg.SeekerViewKey == "E" && heliOnlySum.Contains("直升机变体"));
+        // 吊舱/第三人称同键：这是 Ctrl+V 组合模式，提示里要说清
+        var comboSum = WtHud.Input.WtControlsImport.Apply(new HudConfig(),
+            new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ID_CAMERA_OPTICS"] = new[] { 29, 47 },             // CTRL+V
+                ["ID_CAMERA_TPS"] = new[] { 29, 47 },                // CTRL+V
+            }, WtHud.UI.Lang.Zh);
+        Check("blk import: pod/tps sharing one key is reported as combo mode",
+            comboSum.Contains("组合键"));
+
+        // 新配置项 JSON 往返（名称必须稳定，老配置缺键 = 默认值）
+        var podJsonCfg = new HudConfig
+        {
+            PodViewEnabled = true,
+            PodViewCount = 2,
+            SeekerViewEnabled = false,
+            SeekerViewKey = "CTRL+E",
+            PodViewKey = "CTRL+U",
+            TpsViewKey = "Q",
+            SeekerToggleKey = "CTRL+SHIFT+S",
+            ManLoopKey = "V",
+            ManLoopKeyHeli = "B",
+            AirbrakeKeyHeli = "J",
+        };
+        string? podJsonPath = null;
+        try
+        {
+            podJsonPath = Path.Combine(Path.GetTempPath(), "wthud-pod-selftest-" + Guid.NewGuid().ToString("N") + ".json");
+            var podSave = podJsonCfg.SaveTo(podJsonPath);
+            var podJson = File.ReadAllText(podJsonPath);
+            var podRound = System.Text.Json.JsonSerializer.Deserialize<HudConfig>(podJson);
+            Check("pod view config round-trips through json",
+                podSave.Ok && podRound is not null
+                && podRound.PodViewEnabled && podRound.PodViewCount == 2 && !podRound.SeekerViewEnabled
+                && podRound.SeekerViewKey == "CTRL+E" && podRound.PodViewKey == "CTRL+U"
+                && podRound.TpsViewKey == "Q" && podRound.SeekerToggleKey == "CTRL+SHIFT+S"
+                && podRound.ManLoopKey == "V" && podRound.ManLoopKeyHeli == "B"
+                && podRound.AirbrakeKeyHeli == "J");
+            Check("pod view defaults: disabled, one pod, seeker on, keys unbound",
+                new HudConfig() is { PodViewEnabled: false, PodViewCount: 1, SeekerViewEnabled: true }
+                && new HudConfig().SeekerViewKey == "" && new HudConfig().PodViewKey == ""
+                && new HudConfig().TpsViewKey == "" && new HudConfig().SeekerToggleKey == ""
+                && new HudConfig().ManLoopKey == "" && new HudConfig().ManLoopKeyHeli == "");
+        }
+        finally
+        {
+            if (podJsonPath != null) { try { File.Delete(podJsonPath); } catch { } }
+        }
+
         Console.WriteLine("selftest done");
         return Environment.ExitCode;
     }

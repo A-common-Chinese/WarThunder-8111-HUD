@@ -33,6 +33,7 @@ public static class SettingScopes
         ["row.pullUp"] = (SettingScope.Airframe, "地形告警提前量"),
         ["row.pitchSign"] = (SettingScope.Airframe, "个别机型反向"),
         ["row.radarAltUnit"] = (SettingScope.Airframe, "座舱雷达高度单位随机型"),
+        ["row.aoaIndexer"] = (SettingScope.Airframe, "座舱 AOA 指示器量纲随机型"),
     };
 
     public static SettingScope Of(string key) =>

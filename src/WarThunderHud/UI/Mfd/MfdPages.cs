@@ -358,6 +358,9 @@ internal static class MfdPages
                                Func<HudConfig, bool>? enabledWhen = null) =>
         new() { LabelKey = label, Kind = ItemKind.KeyBinding, GetText = get, SetText2 = set, EnabledWhen = enabledWhen };
 
+    /// <summary>空绑定显示「—」（视角/人在回路键默认就是空，不能显示成空白行）。</summary>
+    private static string KeyOrDash(string? text) => string.IsNullOrWhiteSpace(text) ? "—" : text;
+
     private static MfdItem Text(string label, Func<HudConfig, string> get, Action<HudConfig, string> set,
                                 Func<HudConfig, bool>? enabledWhen = null) =>
         new() { LabelKey = label, Kind = ItemKind.Text, GetText = get, SetText2 = set, EnabledWhen = enabledWhen };
@@ -390,6 +393,16 @@ internal static class MfdPages
                  c => c.LengthUnit, (c, i) => c.LengthUnit = i),
             Toggle("row.hideCockpit", c => c.HideInCockpit, (c, v) => c.HideInCockpit = v),
             Toggle("row.hideNose", c => c.HideInNose, (c, v) => c.HideInNose = v),
+            // 导引头 / 瞄准吊舱视角（0.5.11）：全局项，不是机型级。
+            // 总开关关 = 旧 V 序列；吊舱数量 1–2；导引头快速开关是 V 序列里的一个开关状态。
+            Toggle("row.podViewEnabled", c => c.PodViewEnabled, (c, v) => c.PodViewEnabled = v),
+            Number("row.podViewCount",
+                c => Math.Clamp(c.PodViewCount, 1, WtHud.Hud.PodViewState.MaxPods),
+                (c, v) => c.PodViewCount = Math.Clamp((int)v, 1, WtHud.Hud.PodViewState.MaxPods),
+                1, 1, WtHud.Hud.PodViewState.MaxPods, "",
+                enabledWhen: c => c.PodViewEnabled, disabledKey: "hint.needPodView"),
+            Toggle("row.seekerViewEnabled", c => c.SeekerViewEnabled, (c, v) => c.SeekerViewEnabled = v,
+                enabledWhen: c => c.PodViewEnabled, disabledKey: "hint.needPodView"),
             Toggle("row.extrapolate", c => c.Extrapolate, (c, v) => c.Extrapolate = v),
             Toggle("row.hideGround", c => c.HideOnGround, (c, v) => c.HideOnGround = v),
             Number("row.groundSpeed", c => c.GroundHideSpeedKmh, (c, v) => c.GroundHideSpeedKmh = v, 5, 0, 100, "km/h",
@@ -480,6 +493,20 @@ internal static class MfdPages
             Enum("row.pitchSign", new[] { "opt.auto", "opt.positive", "opt.negative" },
                 c => c.PitchSign switch { > 0 => 1, < 0 => 2, _ => 0 },
                 (c, i) => c.PitchSign = i switch { 1 => 1, 2 => -1, _ => 0 }),
+            // AOA 指示器量纲（按机型，0.5.11）：默认 = 0–1 归一（旧行为）/ 度数 / 关闭。
+            // 未自检的机型保持默认，行为与 0.5.10 完全一致；自检成功会自动把这一行写成结果。
+            Enum("row.aoaIndexer",
+                new[] { "opt.aoaIndexerDefault", "opt.aoaIndexerDegrees", "opt.aoaIndexerOff" },
+                c => Scoped.GetInt(c, "row.aoaIndexer", c.AoaIndexerUnit),
+                (c, i) =>
+                {
+                    Scoped.Set(c, "row.aoaIndexer", i, () => c.AoaIndexerUnit = i);
+                    // 手动改一次就不再是「自检结果」：详情页的来源标注要如实。
+                    // 显式「全局」层不动机型覆盖的来源标记（改的是全局默认，不是这台）。
+                    var vehicle = WtHud.Hud.EditScope.ResolvedVehicle;
+                    if (!WtHud.Hud.EditScope.ExplicitGlobal && !string.IsNullOrEmpty(vehicle))
+                        WtHud.Hud.SettingsRouter.SetFor(c, vehicle, "row.aoaIndexerAuto", 0);
+                }),
             Number("row.bankTrim",
                 c => WtHud.Hud.Scoped.Get(c, "row.bankTrim", c.BankTrimDeg),
                 (c, v) => WtHud.Hud.Scoped.Set(c, "row.bankTrim", v, () => c.BankTrimDeg = v),
@@ -565,6 +592,18 @@ internal static class MfdPages
             Key("row.keyFormation", c => c.FormationKey, (c, v) => c.FormationKey = v),
             Key("row.keyExit", c => c.ExitKey, (c, v) => c.ExitKey = v),
             Key("row.keyHoldHide", c => c.HoldHideKey, (c, v) => c.HoldHideKey = v),
+            // 导引头 / 吊舱 / 第三人称直键与人在回路隐藏键：默认全空（游戏里默认也没绑），
+            // 空时显示「—」，用 .blk 导入或按键捕获填。
+            Key("row.keySeeker", c => KeyOrDash(c.SeekerViewKey), (c, v) => c.SeekerViewKey = v),
+            Key("row.keyPod", c => KeyOrDash(c.PodViewKey), (c, v) => c.PodViewKey = v),
+            Key("row.keyTps", c => KeyOrDash(c.TpsViewKey), (c, v) => c.TpsViewKey = v),
+            Key("row.keySeekerToggle", c => KeyOrDash(c.SeekerToggleKey), (c, v) => c.SeekerToggleKey = v),
+            Key("row.keyManLoop", c => KeyOrDash(c.ManLoopKey), (c, v) => c.ManLoopKey = v),
+            Key("row.keyManLoopHeli", c => KeyOrDash(c.ManLoopKeyHeli), (c, v) => c.ManLoopKeyHeli = v),
+            // AOA 指示器自检键：默认不绑定（显示「—」），用户绑了才会响应。
+            Key("row.keyAoaCheck",
+                c => string.IsNullOrWhiteSpace(c.AoaIndexerCheckKey) ? "—" : c.AoaIndexerCheckKey,
+                (c, v) => c.AoaIndexerCheckKey = v),
             // Esc：只清 P2（地图 / 记分板），清完立刻打日志；没有可清状态时不动作
             Key("row.keyHideReset", c => c.HideResetKey, (c, v) => c.HideResetKey = v),
             // 固定组合键（不可改，只读展示）
@@ -1304,7 +1343,9 @@ internal static class DiagState
         var keys = new[]
         {
             c.ViewKey, c.ZoomKey, c.MapKey, c.ScoreboardKey, c.SettingsKey,
-            c.ShowKey, c.SaveKey, c.ExitKey, c.AirbrakeKey, c.CursorHoleKey,
+            c.ShowKey, c.SaveKey, c.ExitKey, c.AirbrakeKey, c.CursorHoleKey, c.AoaIndexerCheckKey,
+            c.SeekerViewKey, c.PodViewKey, c.TpsViewKey, c.SeekerToggleKey,
+            c.ManLoopKey, c.ManLoopKeyHeli,
         }.Where(k => !string.IsNullOrWhiteSpace(k)).ToArray();
         var dup = keys.GroupBy(k => k).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
         return dup.Length == 0 ? "OK" : string.Join(",", dup);

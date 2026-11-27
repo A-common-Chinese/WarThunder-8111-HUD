@@ -50,6 +50,19 @@ public static class EffectiveSettings
         SettingsRouter.GetForVehicle(cfg, vehicle, "row.stallAoa",
             profile.StallAoa > 0 ? profile.StallAoa : cfg.StallAoaDeg);
 
+    /// <summary>
+    /// AOA 指示器量纲：机型覆盖（自检结果或面板手选）&gt; 全局默认。
+    /// <para>0 = 归一 / 1 = 度数 / 2 = 关闭。未自检、未手选的机型拿到 0，行为与 0.5.10 一致。</para>
+    /// </summary>
+    public static AoaIndexerUnit AoaIndexerUnit(HudConfig cfg, string? vehicle) =>
+        SettingsRouter.GetForVehicle(cfg, vehicle, "row.aoaIndexer", cfg.AoaIndexerUnit) switch
+        {
+            <= 0 => WtHud.Hud.AoaIndexerUnit.Default,
+            1 => WtHud.Hud.AoaIndexerUnit.Degrees,
+            2 => WtHud.Hud.AoaIndexerUnit.Off,
+            _ => WtHud.Hud.AoaIndexerUnit.Default,   // 手改 json 写成 9 也回落旧行为
+        };
+
     /// <summary>下降率告警阈值（m/s，正值）：机型覆盖 > 机型档案 > 全局（0 时由调用方回退 40）。</summary>
     public static double SinkRateMs(HudConfig cfg, string? vehicle, AirframeProfile profile) =>
         SettingsRouter.GetForVehicle(cfg, vehicle, "row.sinkRate",

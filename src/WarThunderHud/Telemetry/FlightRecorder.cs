@@ -167,7 +167,7 @@ public sealed class FlightRecorder : IDisposable
             _queue.CompleteAdding();
         }
         if (!_writer.Join(3000))
-            Console.WriteLine("recorder: writer thread did not finish in 3 s");
+            Log.Warn("记录器写线程 3 s 内未结束（尾部样本可能丢失）");
     }
 
     /// <summary>
@@ -205,7 +205,7 @@ public sealed class FlightRecorder : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine("recorder: write failed: " + ex.Message);
+            Log.Error("记录器写盘失败", ("error", ex.Message));
         }
     }
 
@@ -222,7 +222,7 @@ public sealed class FlightRecorder : IDisposable
         Task.Run(() =>
         {
             try { Cleanup(keep); }
-            catch (Exception ex) { Console.WriteLine("recorder: cleanup failed: " + ex.Message); }
+            catch (Exception ex) { Log.Warn("记录器清理失败", ("error", ex.Message)); }
         });
     }
 
@@ -238,12 +238,12 @@ public sealed class FlightRecorder : IDisposable
             foreach (var old in PlanDeletions(Directory.GetFiles(Folder, Prefix + "*.jsonl"), keep))
             {
                 try { File.Delete(old); }
-                catch (Exception ex) { Console.WriteLine("recorder: cleanup could not delete " + old + ": " + ex.Message); }
+                catch (Exception ex) { Log.Warn("记录器清理无法删除旧记录", ("file", old), ("error", ex.Message)); }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("recorder: cleanup failed: " + ex.Message);
+            Log.Warn("记录器清理失败", ("error", ex.Message));
         }
     }
 

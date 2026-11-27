@@ -151,7 +151,7 @@ public sealed class OverlayWindow : IDisposable
             if (!NativeMethods.RegisterHotKey(_hwnd, id, mods, b.VirtualKey))
             {
                 failed++;
-                Console.WriteLine($"hotkey {id} ({b.Text}) could not be registered (already in use? err={Marshal.GetLastWin32Error()})");
+                Log.Warn("热键注册失败（可能已被其它程序占用）", ("hotkey", b.Text), ("id", id.ToString()), ("err", Marshal.GetLastWin32Error().ToString()));
             }
         }
 
@@ -222,7 +222,7 @@ public sealed class OverlayWindow : IDisposable
             }
             catch (Exception ex)
             {
-                Console.WriteLine("overlay resize failed: " + ex.Message);
+                Log.Warn("覆盖层尺寸设置失败", ("error", ex.Message));
             }
         }
 
@@ -341,7 +341,7 @@ public sealed class OverlayWindow : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine("dpi scale failed: " + ex.Message);
+            Log.Warn("覆盖层 DPI 缩放读取失败", ("error", ex.Message));
         }
     }
 
