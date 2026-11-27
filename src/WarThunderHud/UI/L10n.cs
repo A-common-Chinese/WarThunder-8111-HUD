@@ -460,6 +460,9 @@ public static class L10n
         ["edit.badNumber"] = ("不是有效数字，未写入", "NOT A NUMBER - NOT APPLIED"),
         ["capture.prompt"] = ("按下要绑定的按键", "PRESS A KEY TO BIND"),
         ["capture.hint"] = ("确认 保存 · 返回 取消", "CONFIRM SAVE · BACK CANCEL"),
+        ["capture.cleared"] = ("已清除", "CLEARED"),
+        ["capture.clearHint"] = ("按 确认 保存清除 · 返回 取消", "CONFIRM TO SAVE · BACK TO CANCEL"),
+        ["capture.none"] = ("没有录入按键（保持原键位）", "NO KEY CAPTURED - KEPT OLD BINDING"),
         // ---- 配置互传（48018）----
         ["page.cfgMenu"] = ("配置传递", "CONFIG SHARE"),
         ["page.cfgInbox"] = ("收到的配置", "RECEIVED"),

@@ -1122,15 +1122,31 @@ public sealed class MfdFrameForm : Form
     /// <summary>Applies the captured key combination to the selected binding row.</summary>
     private void CommitCapture()
     {
-        if (SelectedItem is { } item && item.Kind == ItemKind.KeyBinding && _keyPage?.Result is { } captured)
+        if (SelectedItem is { } item && item.Kind == ItemKind.KeyBinding)
         {
-            item.SetText2?.Invoke(_work, captured);
-            _dirty = true;
-            WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+            if (_keyPage?.ClearRequested == true)
+            {
+                // RESET 清除：写入空串 = 该键位不再绑定（按键解析侧对空串安全跳过）
+                item.SetText2?.Invoke(_work, "");
+                _dirty = true;
+                WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+                _toast = L10n.Get(LangScope.Screen, "capture.cleared");
+            }
+            else if (_keyPage?.Result is { } captured)
+            {
+                item.SetText2?.Invoke(_work, captured);
+                _dirty = true;
+                WtHud.Hud.ConfigSnapshots.SaveSession(_work, "edit");
+                _toast = null;
+            }
+            else
+            {
+                // 什么都没按：不能静默当成功，给一句反馈并保持原键位
+                _toast = L10n.Get(LangScope.Screen, "capture.none");
+            }
         }
         _mode = Mode.Items;
         _keyPage = null;
-        _toast = null;
     }
 
     private void Activate(MfdItem item)
@@ -1803,6 +1819,13 @@ public sealed class MfdFrameForm : Form
         switch (index)
         {
             case 0:
+                if (_mode == Mode.CaptureKey)
+                {
+                    // 键位捕获页：RESET = 清除当前这一行键位（只标记，CONFIRM 才落配置）
+                    _keyPage?.RequestClear();
+                    _toast = L10n.Get(LangScope.Screen, "capture.cleared");
+                    break;
+                }
                 if (_mode == Mode.Detail) _detailPageUI?.Handle(MfdCommand.Of("reset"));
                 else ResetPage();
                 break;

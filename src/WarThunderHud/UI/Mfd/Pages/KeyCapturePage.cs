@@ -35,19 +35,35 @@ internal sealed class KeyCapturePage : MfdPageBase
     /// <summary>边按边显示的组合文本。空 = 还没按。</summary>
     public string Buffer { get; private set; } = "";
 
+    /// <summary>
+    /// RESET 清空请求：选中键位后按 RESET，把该键位标成「要清除」。
+    /// 只有 CONFIRM 才真正写配置，BACK 会丢掉这个请求（和捕获新键的语义一致）。
+    /// </summary>
+    public bool ClearRequested { get; private set; }
+
     /// <summary>可提交的组合；空或只有修饰键时返回 null，让调用方保持原值。</summary>
     public string? Result => string.IsNullOrWhiteSpace(Buffer) ? null : Buffer;
+
+    /// <summary>RESET：标记为清除单个键位（不立即改配置），并显示反馈。</summary>
+    public void RequestClear()
+    {
+        ClearRequested = true;
+        Buffer = "";
+        _held.Clear();
+    }
 
     /// <summary>清空：重新进入或取消时调用。</summary>
     public void Reset()
     {
         Buffer = "";
+        ClearRequested = false;
         _held.Clear();
     }
 
     /// <summary>按下：新一轮组合从空开始，避免上一轮的残渣接在前面。</summary>
     public void KeyDown(Keys key)
     {
+        ClearRequested = false;          // 按了新的键 = 放弃「清除」，改为重新绑定
         if (_held.Count == 0) Buffer = "";
         _held.Add(key);
         Buffer = Format();
@@ -89,10 +105,18 @@ internal sealed class KeyCapturePage : MfdPageBase
         g.DrawString(prompt, hint, text, cx - g.MeasureString(prompt, hint).Width / 2,
                      glass.Top + glass.Height * 0.26f, StringFormat.GenericTypographic);
 
-        var shown = Buffer.Length == 0 ? "—" : Buffer;
+        var shown = ClearRequested
+            ? L10n.Get(LangScope.Screen, "capture.cleared")
+            : (Buffer.Length == 0 ? "—" : Buffer);
         var w = g.MeasureString(shown, mono).Width;
         g.DrawString(shown, mono, green, cx - w / 2, glass.Top + glass.Height * 0.36f,
                      StringFormat.GenericTypographic);
+        if (ClearRequested)
+        {
+            var note = L10n.Get(LangScope.Screen, "capture.clearHint");
+            g.DrawString(note, hint, muted, cx - g.MeasureString(note, hint).Width / 2,
+                         glass.Top + glass.Height * 0.46f, StringFormat.GenericTypographic);
+        }
 
         // 确认 / 取消两行，槽位与 ConfirmPage 完全一致（侧键 2 / 3）
         for (var i = 0; i < 2; i++)

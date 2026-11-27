@@ -492,6 +492,26 @@ public static partial class Program
         Check("menu global index last cell of page 1",
             WtHud.UI.Mfd.MfdFrameForm.MenuGlobalIndex(2, 9) == 29);
 
+        // ---- 键位捕获页：RESET 清除单个键位（只标记，CONFIRM 才落配置）----
+        var capPage = new WtHud.UI.Mfd.Pages.KeyCapturePage(() => "x", null!);
+        capPage.KeyDown(System.Windows.Forms.Keys.ControlKey);
+        capPage.KeyDown(System.Windows.Forms.Keys.N);
+        Check("key capture still records combos", capPage.Result == "CTRL+N");
+        capPage.RequestClear();
+        Check("key capture RESET marks clear (buffer empty, no result)",
+            capPage.ClearRequested && capPage.Buffer == "" && capPage.Result == null);
+        capPage.KeyDown(System.Windows.Forms.Keys.A);
+        Check("key capture new key cancels clear request",
+            !capPage.ClearRequested && capPage.Result == "A");
+        capPage.RequestClear();
+        capPage.Reset();
+        Check("key capture reset drops clear request",
+            !capPage.ClearRequested && capPage.Result == null);
+        Check("key capture clear feedback strings exist",
+            WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "capture.cleared").Length > 0
+            && WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "capture.clearHint").Length > 0
+            && WtHud.UI.L10n.Get(WtHud.UI.LangScope.Screen, "capture.none").Length > 0);
+
         // ---- 面板分页：键漏了不会报错，屏幕上会直接印出键名（曾经出现过 val.roleWing）----
         var modules = WtHud.UI.Mfd.MfdPages.Build();
         Check("menu has 11 modules", modules.Count == 11);
