@@ -39,11 +39,19 @@ no packet interception, no automation.
 |---|---|
 | ![比能量页](docs/screenshots/flightlog-energy.jpg) | ![姿态页](docs/screenshots/flightlog-attitude.jpg) |
 
-**PDF 封面 / PNG 复盘卡**（也是完整 PDF 的第 1 页）：
+| 舵面 / 配平 / 指令轴（0.5.11 新增） | 3:4 手机竖版（0.5.11） |
+|---|---|
+| ![舵面页](docs/screenshots/flightlog-surface.jpg) | ![手机竖版](docs/screenshots/flightlog-mobile.jpg) |
+
+| 框选时间段：所有图表与概览只看区间，像素包络保留尖峰 | 保存设置：横版 / 竖版、高清 / 标准 |
+|---|---|
+| ![选区与包络](docs/screenshots/flightlog-selection.jpg) | ![保存设置](docs/screenshots/flightlog-save.jpg) |
+
+**PDF 封面 / PNG 复盘卡**（完整 PDF 第 1 页；封面 + 内容页共 11 页，无舵面数据时 10 页）：
 
 ![复盘卡封面](docs/screenshots/flightlog-debrief.jpg)
 
-> 截图由当前版本的分析工具在真实记录上现场渲染（J-16 · 3 架次 · 983.6 s · 57,781 样本）。
+> 截图由当前版本（0.5.11）的分析工具在真实记录上现场渲染；舵面页为 F-16C（450.3 s · 18,149 样本），其余为 J-16（3 架次 · 983.6 s · 57,781 样本）。
 
 ## 特性
 
@@ -224,7 +232,7 @@ no packet interception, no automation.
 
 **双击运行**即可，无需安装 .NET。
 
-**近期更新（v0.5.x）**：完整 PDF 复盘报告（封面 + 10 页页码）、飞行日志分析器 FlightLog（`.wrpl` 回放导入）、MFD 内置分析、数据中断可视化（`gap` 事件 + 贝塞尔桥）、击落事件、曲线手动显示/隐藏。详见 [版本历史](CHANGELOG.md) 与 [Releases](../../releases)。
+**近期更新（v0.5.x）**：完整 PDF 复盘报告（封面 + 内容页，共 11 页）、舵面 / 配平 / 指令轴页、16:9 与 3:4 双版式 + 高清/标准导出、框选时间段与像素包络、飞行日志分析器 FlightLog（`.wrpl` 回放导入）、MFD 内置分析、数据中断可视化（`gap` 事件 + 贝塞尔桥）、击落事件、曲线手动显示/隐藏。详见 [版本历史](CHANGELOG.md) 与 [Releases](../../releases)。
 
 **源码**（许可证合规）：`wrpl-acmi`（AGPL-3.0，未修改）见上游 tag `acmi-2.60.0.21-2026.11.02` 与源码快照链接；
 `FlightLog` 源码见本仓库 [`flightlog-source` 分支](../../tree/flightlog-source/tools/flightlog)。
@@ -428,11 +436,19 @@ replays, and renders paged HTML / PDF debrief reports. The same analysis is avai
 |---|---|
 | ![Energy](docs/screenshots/flightlog-energy.jpg) | ![Attitude](docs/screenshots/flightlog-attitude.jpg) |
 
-**PDF cover / PNG debrief card** (also page 1 of the full PDF):
+| Control surfaces / trim / command axes (new in 0.5.11) | 3:4 mobile layout (0.5.11) |
+|---|---|
+| ![Surface page](docs/screenshots/flightlog-surface.jpg) | ![Mobile layout](docs/screenshots/flightlog-mobile.jpg) |
+
+| Time-range selection: charts and overview follow the range; pixel envelope keeps spikes | Save settings: desktop / mobile, high / standard clarity |
+|---|---|
+| ![Selection and envelope](docs/screenshots/flightlog-selection.jpg) | ![Save settings](docs/screenshots/flightlog-save.jpg) |
+
+**PDF cover / PNG debrief card** (page 1 of the full PDF; 11 pages including cover, 10 without surface data):
 
 ![Debrief card cover](docs/screenshots/flightlog-debrief.jpg)
 
-> Screenshots rendered by the current analyzer on a real recording (J-16, 3 flights, 983.6 s, 57,781 samples).
+> Screenshots rendered by the current analyzer (0.5.11) on real recordings; the surface page is F-16C (450.3 s, 18,149 samples), the rest J-16 (3 flights, 983.6 s, 57,781 samples).
 
 ## Features
 
