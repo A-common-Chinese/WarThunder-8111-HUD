@@ -799,6 +799,13 @@ def test_report_html(tmp: Path) -> None:
     check(len(svg_ids) == len(set(svg_ids)), "SVG id 不重复（%d 个）" % len(svg_ids))
     strip_ids = re.findall(r'id="(ev-[^"]+)"', html)
     check(len(strip_ids) == len(set(strip_ids)), "事件条 id 不重复（%d 个）" % len(strip_ids))
+    # 全局总览条带跨架次：data-flight=-1，事件数据在内联 overview.events 里（JS 重建用）
+    global_strip = re.search(r'<svg id="ev-overview"[^>]*>', html)
+    check(global_strip is not None and 'data-flight="-1"' in global_strip.group(0),
+          "全局总览事件条带 data-flight=-1（按显示范围重建时用 overview.events）")
+    overview_events = (_flight_payload_json(html).get("overview") or {}).get("events")
+    check(isinstance(overview_events, list) and bool(overview_events),
+          "内联 overview.events 供全局事件条带重建")
 
     # ---- 交互脚本 ----
     check("function showPage" in html and '"keydown"' in html and "PageDown" in html,
@@ -3814,6 +3821,24 @@ def test_kill_events(tmp: Path) -> None:
     check(_kill_legend_line({"t": 5.0}, 1) == "② KILL 击落 未知目标 · T+00:05",
           "缺目标时 legend 用「未知目标」占位")
 
+    # ---- 事件条文案口径（kill 精简成「击杀（机型）」，玩家 id 只进 legend） ----
+    check(RPT.STRIP_KILL_TARGET_MAX == 16 and RPT.STRIP_ROW_GAP == 88,
+          "事件条口径常量：kill 机型 16 字符 / 两行间距 88 px")
+    check(RPT._strip_event_text({"kind": "kill", "t": 5.0,
+                                 "target": "=FdX= Target (F-16C)"})
+          == "击杀（F-16C）", "事件条 kill 只写机型（不含玩家 id）")
+    check(RPT._strip_event_text({"kind": "kill", "t": 5.0,
+                                 "target": "=FdX= Target"})
+          == "击杀", "没有机型括号时只写「击杀」")
+    check(RPT._strip_event_text({"kind": "kill", "t": 5.0}) == "击杀",
+          "缺目标的事件条 kill 只写「击杀」")
+    check(RPT._strip_event_text({"kind": "kill", "t": 5.0,
+                                 "target": "玩家 (A Very Long Aircraft Type)"})
+          == "击杀（A Very Long Airc…）",
+          "过长机型截断成 16 字符 + …")
+    check(RPT._strip_event_text({"kind": "death", "t": 120.5, "label": "死亡"})
+          == "死亡 120.5s", "其它事件条文案仍是「标签 + 秒数」")
+
     # ---- HTML 报告：每页都有 KILL 竖线；图下 legend 每页都有 ----
     html = render_report(model)
     speed = _blueprint_svg_block(html, "svg-f1-speed")
@@ -3824,7 +3849,28 @@ def test_kill_events(tmp: Path) -> None:
           "击落竖线画在速度页 / 能量页（青绿 KILL 色）")
     check('stroke="#38D9C9"' in attitude and 'stroke="#38D9C9"' in thumb,
           "击落竖线每页都画（姿态页 / 概览缩略图）")
-    check("击落 =FdX= Target" in html, "事件时间线标签带击落目标")
+
+    # ---- 顶部事件时间线：data-* 重建信息 + kill 精简文案（不再挤时间） ----
+    strip_match = re.search(r'<svg id="ev-f1-speed"[^>]*>(.*?)</svg>', html, re.S)
+    strip_tag = strip_match.group(0) if strip_match else ""
+    strip_inner = strip_match.group(1) if strip_match else ""
+    check(strip_match is not None and 'class="strip-svg"' in strip_tag,
+          "速度页仍输出静态事件时间线（id 唯一）")
+    check(all(marker in strip_tag for marker in (
+              'data-strip="1"', 'data-flight="1"', 'data-t0="', 'data-t1="',
+              'data-plot-left="', 'data-plot-right="', 'data-height="38.0"',
+              'data-strip-range="', 'data-strip-count="')),
+          "事件条带 data-*（strip / flight / 原始范围 / 绘图区 / 高度 / 当期事件条状态）")
+    kill_texts = re.findall(r"<text[^>]*>([^<]*击杀[^<]*)</text>", strip_inner)
+    check(kill_texts == ["击杀", "击杀"],
+          "事件条 kill 无机型括号时只写「击杀」，不再带目标 id（%s）"
+          % " | ".join(kill_texts))
+    check("T+" not in "".join(kill_texts) and "5s" not in "".join(kill_texts),
+          "事件条 kill 文案不含时间（完整时间只在图下 legend）")
+    check("击落 =FdX= Target · T+00:05" in html,
+          "图下 legend 保持完整「① KILL 击落 <target> · T+mm:ss」")
+    check("=FdX= Target" not in strip_inner,
+          "事件条不出现玩家 id（id 只在下方 legend）")
     speed_page = re.search(r'<section class="page[^"]*" id="page-speed".*?</section>',
                            html, re.S)
     speed_page = speed_page.group(0) if speed_page else ""
@@ -4382,15 +4428,31 @@ def test_brush_selection(tmp: Path) -> None:
           "Es 断崖高亮支持按选区重算（js-es + data-es-t0/t1）")
 
     # ---------- 4) 框选工具条 + 内联 JS ----------
-    check('id="brush-bar"' in html and 'data-stat-scope="full"' in html
-          and 'data-stat-scope="sel"' in html,
-          "页眉框选工具条：选区读数 + 统计全程/选区切换")
+    check('id="brush-bar"' in html and 'data-view-scope="full"' in html
+          and 'data-view-scope="sel"' in html,
+          "页眉框选工具条：选区读数 + 显示范围（全程/选区）切换")
+    check('显示：全程' in html and '显示：选区' in html,
+          "按钮文案 = 「显示：全程 / 显示：选区」（不再叫统计口径）")
+    check('所有图表与概览都按整段日志绘制' in html
+          and '所有图表与概览都只用框选区间内的数据' in html,
+          "按钮 tooltip 说明影响所有图表与概览")
     check('id="brush-reset"' in html and "复位（双击图表）" in html,
           "「复位」按钮（有选区时高亮）")
-    check('id="brush-sel-text"' in html and 'id="brush-sel-hint"' in html,
-          "选区读数容器（已选 mm:ss–mm:ss · 共 X s）")
+    check('拖动 &gt; 4 px' not in html and '选区会同步到所有页' not in html,
+          "已删除「拖动 > 4 px…」提示行")
+    check('id="brush-scope-state"' in html and '显示范围：全程' in html
+          and '显示范围：选区 ' in html,
+          "工具条状态文字 = 显示范围：全程 / 选区 mm:ss–mm:ss")
+    check('选定区间已保留' not in html and '点「显示：选区」可回到该区间' not in html,
+          "状态文字不再带「选区已保留 / 可回到该区间」等提示后缀")
+    check('id="brush-sel-text"' in html and 'id="brush-sel-hint"' not in html,
+          "选区读数容器保留、提示行 #brush-sel-hint 已删除")
+    check("所有图表与概览都只画这个区间" not in html
+          and "在任意图表上按住拖动即可框选时间段" not in html,
+          "工具条不再有初始操作提示 / 选中后的提示行")
     for marker in (
         "function applySelection(",
+        "function applyViewRange(",
         "function resetSelection(",
         "function rangeForPanel(panel)",
         "function seriesHtml(panel, fl, t0, t1)",
@@ -4403,18 +4465,93 @@ def test_brush_selection(tmp: Path) -> None:
         'addEventListener("pointerdown", onBrushDown)',
         'addEventListener("dblclick"',
         'window.__brushState = function()',
+        'window.__overviewState = function()',
         'window.__brushSelect = function(t0, t1)',
         'window.__brushReset = function()',
         'window.__brushStats = function(index)',
-        'hasSelection()) return false;',
+        "if (currentExportRange()) return false;",
     ):
         check(marker in html, "内联 JS：%s" % marker.replace('"', "'"))
-    check("拖动 &gt; 4 px 才进入框选" in html and "不影响悬停读数" in html,
-          "拖拽阈值提示（> 4 px 才框选，悬停不冲突）")
-    check("选区会同步到所有页" in html and "双击任意图表复位" in html,
-          "工具条文案：全局同步 / 双击复位")
+    check("复位（双击图表）" in html
+          and "清除选区并把显示范围恢复到全程" in html,
+          "工具条文案：双击图表复位（提示行删除后语义在「复位」按钮上）")
 
-    # ---------- 5) 统计口径：默认全程 + 选区切换（数据与 DOM 钩子） ----------
+    # ---------- 4b) 选区 / 显示范围两层状态：选框后自动切选区、全程保留选区 ----------
+    check("function showingSelection()" in html and "function currentExportRange()" in html,
+          "显示范围与选区分开：showingSelection() / currentExportRange()")
+    check('if (!showingSelection()) return null;' in html,
+          "所有图表只认显示范围（rangeForPanel 用 showingSelection 而不是 hasSelection）")
+    check('if (hasSelection()) return null;' not in html,
+          "rangeForPanel 不再只看「有没有选区」（切「全程」时图表能回到全程）")
+    commit_block = html[html.find("function commitSelection(entry, px0, px1)"):
+                        html.find("function brushLayer(svg)")]
+    check('brush.scope = "sel";' in commit_block and "applyViewRange();" in commit_block,
+          "框选 commit 后自动把显示范围切到「选区」并重画全部图表")
+    scope_block = html[html.find("function setBarScope(scope)"):
+                       html.find("function resetSelection()")]
+    check("applyViewRange();" in scope_block and "brush.sel = null" not in scope_block,
+          "setBarScope 只切 scope → applyViewRange，不清除选区（点全程再点选区能回原区间）")
+    reset_block = html[html.find("function resetSelection()"):
+                       html.find("function commitSelection(entry, px0, px1)")]
+    check("brush.sel = null;" in reset_block and 'brush.scope = "full";' in reset_block,
+          "复位 = 清空选区 + 显示范围回全程")
+    select_block = html[html.find('window.__brushSelect = function(t0, t1)'):
+                        html.find('window.__brushReset = function()')]
+    check('brush.scope = "sel";' in select_block,
+          "自检钩子 __brushSelect 与真实拖拽一致（自动切显示范围 = 选区）")
+
+    # ---------- 4d) 顶部事件时间线 strip：按显示范围原地重画（不整页重渲染） ----------
+    for marker in (
+        "function renderEventStrip(svg, flightIndex, t0, t1)",
+        "function updateEventStrips()",
+        "function stripDisplayRange(svg)",
+        "function stripEventsOf(flightIndex)",
+        "function stripEventText(ev)",
+        "function stripKillText(ev)",
+        "击杀（",
+        ".strip-svg[data-strip]",
+        "data-strip-range",
+        'svg.__stripKey === undefined && key === fullKey',
+    ):
+        check(marker in html, "事件时间线重画 JS：%s" % marker.replace('"', "'"))
+    strip_apply = html[html.find("function applyViewRange()"):
+                       html.find("function applySelection()")]
+    check("updateEventStrips();" in strip_apply,
+          "applyViewRange() 里按当前显示范围重画顶部事件时间线")
+    strip_data = _flight_payload_json(html)
+    check(strip_data.get("eventColors", {}).get("kill"),
+          "内联数据带事件条配色 eventColors（与 Python EVENT_COLORS 同源）")
+    check(strip_data.get("strip", {}).get("killTargetMax") == RPT.STRIP_KILL_TARGET_MAX
+          and strip_data.get("strip", {}).get("rowGap") == RPT.STRIP_ROW_GAP,
+          "内联数据带事件条口径（kill 目标截断 %d / 两行间距 %d）"
+          % (RPT.STRIP_KILL_TARGET_MAX, RPT.STRIP_ROW_GAP))
+
+    # ---------- 5) 概览页 KPI / 架次摘要 / 数据完整性：区间钩子 + 重算函数 ----------
+    for marker in (
+        'data-ov="duration"', 'data-ov="rate"', 'data-ov="ias"', 'data-ov="mach"',
+        'data-ov="alt"', 'data-ov="ny"', 'data-ov="energy"', 'data-ov="events"',
+        "data-ov-value", "data-ov-sub", 'class="cards" data-ov-scope="full"',
+        "data-ov-integrity", 'data-fb="duration"', 'data-fb="samples"',
+        'data-fb="ias"', 'data-fb="es"', 'data-fb="energy"',
+    ):
+        check(marker in html, "概览区间值 DOM 钩子 %s" % marker.replace('"', "'"))
+    for marker in (
+        "function rangeOverviewMetrics(fl, a, b)",
+        "function overviewCardText(key, m)",
+        "function overviewBadgeText(key, m)",
+        "function updateOverview()",
+        "function snapshotOverview()",
+        "function snapshotOverviewBadges()",
+        "dt > 0.2", "dt > 1",
+        "gain += 0.5 * (pa + pb) * step",
+        "数据完整性（区间）",
+    ):
+        check(marker in html, "概览区间重算 JS：%s" % marker.replace('"', "'"))
+    check('.cards[data-ov-scope="sel"] .card b{color:var(--accent)}' in html
+          and 'content:"（区间）"' in html,
+          "概览卡片切选区时值变主题色 + 标签「（区间）」")
+
+    # ---------- 6) 舵面统计：跟随显示范围（默认全程 + 选区切换；数据与 DOM 钩子） ----------
     meta_match = re.search(r'<div class="surface-meta"[^>]*>(.*?)</div>', desktop_html, re.S)
     meta_html = meta_match.group(1) if meta_match else ""
     check('data-surface-flight="1"' in (meta_match.group(0) if meta_match else "")
@@ -4423,7 +4560,7 @@ def test_brush_selection(tmp: Path) -> None:
     for marker in ('data-sm-window', 'data-sm-samples', 'data-sm-r="ail"',
                    'data-sm-p90', 'data-sm-steps', 'data-sm-scope'):
         check(marker in meta_html, "顶部统计 DOM 钩子 %s（JS 原地改选区值）" % marker)
-    check("全程" in meta_html, "统计口径默认显示「全程」")
+    check("全程" in meta_html, "舵面统计默认显示「全程」")
     data = _flight_payload_json(html)
     flight = (data.get("flights") or [{}])[0]
     check(bool(flight.get("surface")) and "axes" in flight["surface"],
@@ -4444,27 +4581,47 @@ def test_brush_selection(tmp: Path) -> None:
           "面板 series 定义带 fill/step/width/dash（JS 重画用）")
     check("colors" in data and "esStyle" in data and data.get("envelope", {}).get("trigger"),
           "内联数据带主题色 / Es 高亮样式 / 包络阈值")
+    check("events" in flight and "gap_events" in flight and isinstance(flight["events"], list),
+          "内联 flights 数据带 events / gap_events（区间事件数 / 数据中断用）")
 
-    # ---------- 6) 按选区导出：有选区强制 B + 提示 + 打印隐藏 ----------
+    # ---------- 7) 导出跟随显示范围：选区强制 B、全程即使有选区仍可 A + 提示 + 打印隐藏 ----------
     save_modal = re.search(r'<div class="save-modal".*?</div>\s*</div>\s*</div>', html, re.S)
     modal_html = save_modal.group(0) if save_modal else ""
     check('data-save-sel-text' in modal_html and 'data-save-sel-hint' in modal_html,
           "保存设置新增「选区 / SELECTION」提示行")
-    check("按选区导出将使用浏览器内生成（较慢）" in html,
-          "设置页提示「按选区导出将使用浏览器内生成（较慢）」")
-    check("PNG 复盘卡 / PDF 封面保持全程" in html,
-          "设置页说明 PNG 复盘卡 / PDF 封面保持全程")
-    check("if (hasSelection()) return false;" in html,
-          "有选区时 A 预生成 PDF 失效（pdfPrebuiltValid 强制 B）")
+    check("PDF 导出跟随显示范围（浏览器内生成，较慢）" in html,
+          "设置页提示「PDF 导出跟随显示范围（浏览器内生成，较慢）」")
+    check("PNG 复盘卡 / PDF 封面始终全程" in html,
+          "设置页说明 PNG 复盘卡 / PDF 封面始终全程")
+    check("点「显示：选区」只导出该区间" in html,
+          "显示范围 = 全程（选区保留）时设置页说明仍按全程导出")
+    check("if (currentExportRange()) return false;" in html,
+          "只有显示范围 = 选区时 A 预生成 PDF 失效（全程 + 选区仍可直下 A）")
+    check("范围 = 选区时一律走 B" in html and "显示范围 = 全程时即使有选区也按全程导出" in html,
+          "pdfPrebuiltValid 注释写清导出跟随显示范围")
+    pdf_block = html[html.find("function generatePdfInBrowser("):
+                     html.find("function exportFullPdf(")]
+    check(pdf_block.count("applyViewRange();") >= 3,
+          "B 路径导出前 / 失败恢复 / 结束恢复都按显示范围重画（%d 处）"
+          % pdf_block.count("applyViewRange();"))
+    check("range: currentExportRange()," in pdf_block,
+          "B 路径导出回执带当前显示范围（验证导出真的按区间）")
     print_css = re.search(r"@media print\{.*?\.brush-bar.*?\}", html, re.S)
     check(print_css is not None and "display:none!important" in print_css.group(0),
           "打印样式隐藏框选控件（.brush-bar）")
-    check(".brush-bar,.brush-hint,.brush-rect,.brush-edge{display:none!important}" in html,
+    check(".brush-bar,.brush-rect,.brush-edge{display:none!important}" in html,
           "打印 / PDF 不打印拖拽选区框")
     check("body.pdf-capture .brush-bar" in html,
           "B 路径（.pdf-capture）同样隐藏框选控件")
 
-    # ---------- 7) 短日志保持原观感（不触发包络，仍是贝塞尔平滑） ----------
+    # ---------- 7b) 手机竖版 / 概览缩略图同样跟随显示范围 ----------
+    check("fl.panels_m" in html and "listM.forEach" in html,
+          "框选绑定竖版页面（panels_m）→ 竖版图表一起缩放")
+    check('id="svg-ovf1-es"' in html
+          and any((p.get("id") == "ovf1-es") for p in (flight.get("panels") or [])),
+          "概览缩略图几何在内联 panels 里（切显示范围时一起重画）")
+
+    # ---------- 8) 短日志保持原观感（不触发包络，仍是贝塞尔平滑） ----------
     short_path = tmp / "brush-short.jsonl"
     _write_surface_report_log(short_path, flights=1, per_flight=60)
     short_html = render_report(P.analyze(str(short_path)))

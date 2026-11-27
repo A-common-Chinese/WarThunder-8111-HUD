@@ -59,7 +59,8 @@
   legend / 备注重排）；清晰度同样作用于 PNG（标准 = 半分辨率）。
 * **框选时间段（0.5.10 1/2）**：在**任意一张图**上按住拖动 > 4 px 即进入框选（半透明
   选区矩形），松手后把该时间区间同步到**所有页 / 所有图**（含舵面页 4 面板、竖版
-  3:4 页面、概览缩略图）；双击任意图复位到全程；翻页 / 切架次后选区保持。
+  3:4 页面、概览缩略图、概览 KPI / 数据完整性 / 架次摘要），并**自动把显示范围切到
+  「选区」**；双击任意图复位到全程（同时清空选区）；翻页 / 切架次后选区保持。
   页眉工具条显示「已选 mm:ss–mm:ss · 共 X s」并高亮「复位」；
   ``Esc`` 也能复位。拖拽与悬停十字线互不冲突（阈值以下算悬停）。
   **不做**双滑块（后续再说）。
@@ -68,13 +69,17 @@
   只留 1 点），画成上下交错的 zigzag 折线 —— 峰谷一定保留，点数 ≤ 2×像素宽。
   框选缩放后内联 JS 用同一套包络按新区间重新分桶，放大后细节变多、缩小也不糊。
   舵面页的灰阶梯 / 指令轴细线、差值面板同样适用；图例 / 批注 / 打印墨色规则不变。
-* **统计口径**：舵面页顶部统计（r / 对齐 1 采样 p90 / 量化台阶 / 样本）**默认始终按
-  全程**（Python 预算值，不随框选变化）；页眉工具条可切到「统计：选区」，用内联 JS
-  从全速率原始样本按当前选区重算同一口径（没有选区时该选项禁用）。
-* **按选区导出**：保存设置里的 PDF / PNG 走当前视图 —— 有选区时 PDF 的每页只画选区
-  范围（时间轴 / 网格 / 标注全部按选区重算；封面与 PNG 复盘卡**保持全程**）。
-  A 预生成 PDF 是静态文件，**有选区时强制走 B**（浏览器内逐页 html2canvas + jsPDF，
-  较慢），设置页会提示；无选区时 http 下仍可直下预生成 PDF。
+* **显示范围（全程 / 选区）**：页眉工具条的「显示：全程 / 显示：选区」不是只切顶部统计，
+  而是**整份报告的视图范围** —— 切换后所有图表、概览 KPI（时长 / 采样率 / 最大 IAS /
+  最大 G / 比能量范围 / 事件数）、架次摘要、数据完整性（区间内样本 / 空洞 / 中断）与
+  舵面页统计一起重画。两者状态分开：切回「全程」时选区**仍然保留**（顶部继续显示
+  「已选 mm:ss–mm:ss」），再点「显示：选区」回到原区间；「复位 / 双击」才清除选区。
+  概览 KPI 的区间值用当前活动架次的原始样本在区间内重算（标签加「（区间）」后缀）。
+* **导出跟随显示范围**：保存设置里的 PDF / PNG 走当前显示范围 —— 显示范围 = 选区时
+  PDF 的每页只画区间（时间轴 / 网格 / 标注 / 概览 KPI 全部按区间；封面与 PNG 复盘卡
+  **始终全程**）；显示范围 = 全程时即使保留着选区也按全程导出。
+  A 预生成 PDF 是静态文件，**只有显示范围 = 选区时强制走 B**（浏览器内逐页
+  html2canvas + jsPDF，较慢，设置页会提示）；全程视图下 http 仍可直下预生成 PDF。
 * 不依赖任何外部资源（无 CDN / 图片 / 外链脚本），离线双击即看。
 
 坐标/面板配置集中在文件开头的常量里；配色与字体栈见 ``THEMES``。
@@ -4993,9 +4998,68 @@ def _render_chart(
     }
 
 
+#: 事件条里 kill 目标名最多显示多少字符（超出截断成 ``…``）。
+#: 完整 ``① KILL 击落 <target> · T+mm:ss`` 仍保留在图下 legend / 对照表里。
+STRIP_KILL_TARGET_MAX = 16
+#: 事件条两行错位排布的最小水平间距（viewBox 单位）：太近就换第二行。
+STRIP_ROW_GAP = 88.0
+
+
+def _kill_target_type(target: str) -> str:
+    """从 kill 的 ``target`` 里取被击落机型：``玩家名 (F-16C)`` → ``F-16C``。
+
+    8111 的击落消息把目标原样保留（昵称 + 机型括号）；条带只显示机型，
+    完整 ``昵称 (机型)`` 留在下方 legend。昵称里的括号（``张三(老阳)``）
+    不含前置空格，不会被误当成机型。
+    """
+    text = (target or "").strip()
+    sp = text.rfind(" (")
+    if sp > 0 and text.endswith(")"):
+        return text[sp + 2 : -1].strip()
+    return ""
+
+
+def _strip_kill_text(event: Dict[str, Any]) -> str:
+    """事件条里的 kill 精简文案：``击杀（机型）``；没有机型就只写「击杀」。
+
+    不再带玩家 id（id 只在下方 legend 的 ``① KILL 击落 <target> · T+mm:ss`` 里）。
+    """
+    target = str(event.get("target") or "").strip()
+    vehicle = _kill_target_type(target)
+    if not vehicle:
+        return "击杀"
+    if len(vehicle) > STRIP_KILL_TARGET_MAX:
+        vehicle = vehicle[:STRIP_KILL_TARGET_MAX] + "…"
+    return "击杀（%s）" % vehicle
+
+
+def _strip_event_text(event: Dict[str, Any]) -> str:
+    """事件条一行文字（与内联 JS ``stripEventText`` 同一口径）。
+
+    kill 精简成 ``击杀（机型）``（时间在下方 legend 的 ``T+mm:ss`` 里，条带不再重复）；
+    其余事件保持 ``<标签> <t>s``（如「死亡 120.5s」）。
+    """
+    kind = event.get("kind", "")
+    if kind == "kill":
+        return _strip_kill_text(event)
+    label = event.get("label") or EVENT_LABELS.get(kind, kind)
+    return "%s %s" % (label, _fmt_number(event.get("t"), 1) + "s")
+
+
 def _render_event_strip(
-    events: Sequence[Dict[str, Any]], t0: float, t1: float, strip_id: str
+    events: Sequence[Dict[str, Any]],
+    t0: float,
+    t1: float,
+    strip_id: str,
+    flight_index: Optional[int] = None,
 ) -> Optional[str]:
+    """渲染一页顶部的事件时间线（静态 SVG；框选后由内联 JS 按显示范围原地重画）。
+
+    除图形外还带 ``data-*`` 重建信息：``data-strip`` / ``data-flight`` / 原始范围
+    ``data-t0``/``data-t1`` / 绘图区 ``data-plot-left``/``data-plot-right`` / ``data-height``。
+    JS ``renderEventStrip`` 用同一套规则（viewBox 宽度不变、事件 x 按显示范围重算、
+    两行错位、左右边缘 anchor）重画，不整页重渲染。
+    """
     visible = [
         e
         for e in events
@@ -5005,22 +5069,34 @@ def _render_event_strip(
         return None
     height = 38.0
     xaxis = _XAxis(t0, t1, PLOT_LEFT, PLOT_RIGHT)
+    strip_attrs = (
+        ' data-strip="1" data-flight="%d" data-t0="%s" data-t1="%s"'
+        ' data-plot-left="%s" data-plot-right="%s" data-height="%s"'
+        ' data-strip-range="%.2f,%.2f" data-strip-count="%d"'
+        % (
+            -1 if flight_index is None else int(flight_index),
+            _data_t(t0),
+            _data_t(t1),
+            _fmt_coord(PLOT_LEFT),
+            _fmt_coord(PLOT_RIGHT),
+            _fmt_coord(height),
+            t0,
+            t1,
+            len(visible),
+        )
+    )
     parts: List[str] = [
-        '<svg id="%s" viewBox="0 0 %.0f %.1f" class="strip-svg"'
+        '<svg id="%s" viewBox="0 0 %.0f %.1f" class="strip-svg"%s'
         ' preserveAspectRatio="none" role="img" aria-label="事件时间线">'
-        % (strip_id, VIEW_W, height)
+        % (strip_id, VIEW_W, height, strip_attrs)
     ]
-    row_last_x = [-1e9, -1e9]
+    row_state = [(-1e9, 0.0), (-1e9, 0.0)]   # 每行最后一个标签的 (x, 宽度)
     for event in visible:
         t = event["t"]
         px = min(max(xaxis(t), PLOT_LEFT), PLOT_RIGHT)
         kind = event.get("kind", "")
         color = EVENT_COLORS.get(kind, COLORS["other"])
-        label = event.get("label") or EVENT_LABELS.get(kind, kind)
-        text = "%s %s" % (label, _fmt_number(t, 1) + "s")
-        # 击落事件顺带标出目标：色条上直接写「击落 =FdX= Target 312.4s」。
-        if kind == "kill" and event.get("target"):
-            text = "%s %s %s" % (label, event["target"], _fmt_number(t, 1) + "s")
+        text = _strip_event_text(event)
         parts.append(
             '<line x1="%s" y1="10" x2="%s" y2="%.0f" stroke="%s" stroke-width="1.4"'
             ' opacity="0.9"/>'
@@ -5029,19 +5105,23 @@ def _render_event_strip(
         parts.append(
             '<circle cx="%s" cy="10" r="2.6" fill="%s"/>' % (_fmt_coord(px), color)
         )
-        row = 0
-        if px - row_last_x[0] < 88 and px - row_last_x[1] >= 88:
-            row = 1
-        row_last_x[row] = px
+        # 标签放在竖线右侧（边缘处放左侧），避免竖线从文字中间穿过；
+        # 行切换按实际文字宽度算，而不是固定 88 px（长机型名会互相压住）。
+        text_width = _text_width(text, 11.0)
+        row = 1
+        for candidate in (0, 1):
+            last_px, last_w = row_state[candidate]
+            if px - last_px >= (last_w + text_width) / 2.0 + 6.0:
+                row = candidate
+                break
+        row_state[row] = (px, text_width)
         text_y = 12.0 if row == 0 else 25.0
-        anchor = "middle"
-        text_x = px
-        if px < PLOT_LEFT + 40:
-            anchor = "start"
-            text_x = px + 3
-        elif px > PLOT_RIGHT - 40:
+        if px + 6.0 + text_width > PLOT_RIGHT:
             anchor = "end"
-            text_x = px - 3
+            text_x = px - 6.0
+        else:
+            anchor = "start"
+            text_x = px + 6.0
         parts.append(
             '<text x="%s" y="%s" text-anchor="%s" font-size="11" fill="%s">%s</text>'
             % (
@@ -5218,7 +5298,8 @@ def _integrity_html(model: LogModel) -> str:
         stats["interrupts"],
     )
     hint = "空洞 = 相邻样本间隔 > 0.2 s（8111 轮询抖动）；中断 = > 1 s（断线 / 贝塞尔桥阈值）"
-    return '<div class="integrity" title="%s">%s</div>' % (
+    # data-ov-integrity：概览「数据完整性」同样跟随显示范围（选区 = 区间内重算）
+    return '<div class="integrity" data-ov-integrity="1" data-ov-scope="full" title="%s">%s</div>' % (
         _html_escape(hint),
         _html_escape(text),
     )
@@ -5815,9 +5896,13 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
         "times": rounded_times,
         "series": {key: _round_series(vals, _series_digits(key)) for key, vals in series_f.items()},
         "panels": [block["geometry"] for _spec, block in kept],
+        # 全局总览条带跨架次：给内联 JS 重建用；strip 本身 data-flight="-1"。
+        "events": events,
         "html": {
             "blocks": kept,
-            "strip": _render_event_strip(events, t0, t1, _pid("ev-overview")),
+            "strip": _render_event_strip(
+                events, t0, t1, _pid("ev-overview"), flight_index=-1
+            ),
             "events": events,
         },
     }
@@ -5862,13 +5947,17 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
     replay = (model.meta or {}).get("replay") or {}
     is_replay = bool(replay)
 
+    # ``key`` = 概览卡片的 DOM 钩子（``data-ov``）：显示范围切到「选区」时由内联 JS
+    # 用当前架次的原始样本在区间内重算并原地改写；切回「全程」按快照还原。
     cards = [
         {
+            "key": "duration",
             "label": "总时长",
             "value": _fmt_number(totals["duration_s"], 1) + " s",
             "sub": "%s 个样本" % samples,
         },
         {
+            "key": "rate",
             "label": "采样率",
             "value": (_fmt_number(rate, 1) + " Hz") if rate else "—",
             "sub": ("ACMI 回放 · %s" % (model.meta.get("rate") or "?"))
@@ -5876,26 +5965,31 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
             else ("采样 %s" % (model.meta.get("rate") or "?")),
         },
         {
+            "key": "ias",
             "label": "最大 IAS",
             "value": _fmt_number(totals["max_ias_kmh"], 0) + " km/h",
             "sub": "TAS %s km/h" % _fmt_number(totals["max_tas_kmh"], 0),
         },
         {
+            "key": "mach",
             "label": "最大 Mach",
             "value": _fmt_number(totals["max_mach"], 2),
             "sub": "最大高度 %s m" % _fmt_number(totals["max_alt_m"], 0),
         },
         {
+            "key": "alt",
             "label": "最大高度",
             "value": _fmt_number(totals["max_alt_m"], 0) + " m",
             "sub": "雷达 %s m" % _fmt_number(ralt_max, 0),
         },
         {
+            "key": "ny",
             "label": "最大过载",
             "value": _fmt_number(totals["max_ny_g"], 2) + " g",
             "sub": "最大滚转 %s°" % _fmt_number(totals["max_bank_deg"], 1),
         },
         {
+            "key": "energy",
             "label": "比能量范围",
             "value": "%s – %s m"
             % (
@@ -5910,6 +6004,8 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
         selected = replay.get("selected_players") or "—"
         cards.append(
             {
+                # 玩家数不随区间变化 → 不给 data-ov 钩子（JS 保持原值）
+                "key": "players",
                 "label": "玩家",
                 "value": str(len(replay.get("players") or [])),
                 "sub": "回放估算 · %s" % selected,
@@ -5918,6 +6014,7 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
     else:
         cards.append(
             {
+                "key": "events",
                 "label": "事件数",
                 "value": str(gameplay_events),
                 "sub": " · ".join(ev_bits) if ev_bits else "无事件",
@@ -5926,35 +6023,54 @@ def _cards(model: LogModel) -> List[Dict[str, str]]:
     return cards
 
 
-def _flight_badges(flight: Flight) -> List[str]:
+def _flight_badges(flight: Flight) -> List[Dict[str, str]]:
+    """概览页顶部的架次摘要 chips（机型 / 时长 / 样本 / 最大速度 / 能量 …）。
+
+    返回 ``[{key, text}]``：``text`` = Python 侧按**全程**算好的原文（原样渲染）；
+    ``key`` 给内联 JS 在「显示范围 = 选区」时按当前架次区间重算并改写
+    （见 ``window.__overviewState`` 与 ``updateOverview``）。
+    """
     stats = flight.stats
     energy = stats["energy"]
-    badges = []
+
+    def badge(key: str, text: str) -> Dict[str, str]:
+        return {"key": key, "text": text}
+
+    badges: List[Dict[str, str]] = []
     if getattr(flight, "player", None):
-        badges.append("玩家 %s" % flight.player)
+        badges.append(badge("player", "玩家 %s" % flight.player))
     badges.extend(
         [
-            "机型 %s" % (flight.vehicle or "未知"),
-            "时长 %s s" % _fmt_number(stats["duration_s"], 1),
-            "样本 %d" % stats["samples"],
-            "最大 IAS %s km/h" % _fmt_number(stats["ias"]["max"], 0),
-            "最大 TAS %s km/h" % _fmt_number(stats["tas"]["max"], 0),
-            "最大过载 %s g" % _fmt_number(stats["ny"]["abs_max"], 2),
-            "Es %s – %s m"
-            % (
-                _fmt_number(energy["min"], 0),
-                _fmt_number(energy["max"], 0),
+            badge("vehicle", "机型 %s" % (flight.vehicle or "未知")),
+            badge("duration", "时长 %s s" % _fmt_number(stats["duration_s"], 1)),
+            badge("samples", "样本 %d" % stats["samples"]),
+            badge("ias", "最大 IAS %s km/h" % _fmt_number(stats["ias"]["max"], 0)),
+            badge("tas", "最大 TAS %s km/h" % _fmt_number(stats["tas"]["max"], 0)),
+            badge("ny", "最大过载 %s g" % _fmt_number(stats["ny"]["abs_max"], 2)),
+            badge(
+                "es",
+                "Es %s – %s m"
+                % (
+                    _fmt_number(energy["min"], 0),
+                    _fmt_number(energy["max"], 0),
+                ),
             ),
-            "能量获得 %s / 损失 %s m"
-            % (
-                _fmt_number(energy["gain"], 0),
-                _fmt_number(energy["loss"], 0),
+            badge(
+                "energy",
+                "能量获得 %s / 损失 %s m"
+                % (
+                    _fmt_number(energy["gain"], 0),
+                    _fmt_number(energy["loss"], 0),
+                ),
             ),
-            "空中能量变化 %s m" % _fmt_number(energy.get("inflight_delta"), 0),
+            badge(
+                "inflight",
+                "空中能量变化 %s m" % _fmt_number(energy.get("inflight_delta"), 0),
+            ),
         ]
     )
     if stats.get("death_t") is not None:
-        badges.append("死亡于 %s s" % _fmt_number(stats["death_t"], 1))
+        badges.append(badge("death", "死亡于 %s s" % _fmt_number(stats["death_t"], 1)))
     return badges
 
 
@@ -5968,12 +6084,13 @@ def _html_escape(value: Any) -> str:
 
 
 def _strip_html(flight_payload: Dict[str, Any], page_key: str) -> str:
-    """一页一份事件时间线（id 按 架次+页 唯一，避免重复 id）。"""
+    """一页一份事件时间线（id 按 架次+页 唯一；带 data-flight 让 JS 按架次重建）。"""
     strip = _render_event_strip(
         flight_payload["events"],
         flight_payload["t0"],
         flight_payload["t1"],
         _pid("ev-f%d-%s" % (flight_payload["index"], page_key)),
+        flight_payload["index"],
     )
     return strip or ""
 
@@ -6153,7 +6270,12 @@ def _overview_page_html(
 ) -> str:
     views: List[str] = []
     for flight_payload in flight_payloads:
-        badges = "".join("<span>%s</span>" % _html_escape(b) for b in flight_payload["badges"])
+        # data-fb = 架次摘要 chip 的钩子：显示范围 = 选区时 JS 按区间重算
+        badges = "".join(
+            '<span data-fb="%s">%s</span>'
+            % (_html_escape(badge["key"]), _html_escape(badge["text"]))
+            for badge in flight_payload["badges"]
+        )
         views.append(
             _flight_view_html(
                 flight_payload,
@@ -6170,7 +6292,7 @@ def _overview_page_html(
         '<div class="page-right nav-hint">按 ← → 或 PageUp/PageDown 翻页</div></div>'
         '<div class="page-body"><div class="ovwrap">'
         "%s"
-        '<div class="cards">%s</div>'
+        '<div class="cards" data-ov-scope="full">%s</div>'
         "%s"
         "%s"
         "%s"
@@ -6283,9 +6405,9 @@ def _global_page_html(overview: Dict[str, Any]) -> str:
 def _surface_meta_html(surface: Dict[str, Any], flight_index: int = 0) -> str:
     """舵面页顶部信息条：窗口 / 样本 / 三轴相关 r / 对齐 1 采样 p90 / 量化台阶数。
 
-    这里的数值是 **Python 侧按全程（默认统计窗口）算好的**；框选之后由内联 JS
-    :func:`window.__brushStats` 用全速率原始样本按「选区」重算并原地改写
-    ``[data-sm-*]`` 里的读数（默认仍是「全程」，不随框选变化）。
+    这里的数值是 **Python 侧按全程（默认统计窗口）算好的**；显示范围切到「选区」后
+    由内联 JS :func:`window.__brushStats` 用全速率原始样本按区间重算并原地改写
+    ``[data-sm-*]`` 里的读数；切回「全程」时按快照还原（两份状态由 ``brush.scope`` 驱动）。
     """
     stats = surface.get("stats") or {}
     window_text = surface.get("window") or "—"
@@ -6331,8 +6453,8 @@ def _surface_meta_html(surface: Dict[str, Any], flight_index: int = 0) -> str:
         '<span data-sm-steps>%s</span></span>' % " / ".join(step_bits)
     )
     chips.append(
-        '<span class="sm-chip sm-scope" data-sm-scope title="统计口径：默认全程，'
-        '顶部「统计：选区」可切到当前框选区间">全程</span>'
+        '<span class="sm-chip sm-scope" data-sm-scope title="统计范围：跟随页眉「显示：全程 / '
+        '显示：选区」——选区 = 当前框选区间内重算">全程</span>'
     )
     return '<div class="surface-meta" data-surface-flight="%d">%s</div>' % (
         int(flight_index),
@@ -6750,8 +6872,17 @@ def _build_payload(
     ]
 
     cards_html = "".join(
-        '<div class="card"><div class="k">%s</div><b>%s</b><span>%s</span></div>'
-        % (_html_escape(card["label"]), _html_escape(card["value"]), _html_escape(card["sub"]))
+        '<div class="card"%s><div class="k">%s</div>'
+        '<b data-ov-value>%s</b><span data-ov-sub>%s</span></div>'
+        % (
+            # data-ov = 概览 KPI 钩子：显示范围切「选区」时 JS 按区间重算
+            (' data-ov="%s"' % _html_escape(card["key"]))
+            if card.get("key") and card["key"] != "players"
+            else "",
+            _html_escape(card["label"]),
+            _html_escape(card["value"]),
+            _html_escape(card["sub"]),
+        )
         for card in _cards(model)
     )
 
@@ -8546,6 +8677,11 @@ body.no-annot .ann-legend{display:none!important}
   display:block;font-size:11.5px;color:var(--muted);margin-top:1px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+/* 概览卡片 / 数据完整性：显示范围 = 选区时变成主题色，标签后缀「（区间）」
+   （data-ov-scope 由内联 JS 切换；打印 / PDF 里同样可见） */
+.cards[data-ov-scope="sel"] .card b{color:var(--accent)}
+.cards[data-ov-scope="sel"] .card .k::after{content:"（区间）";color:var(--accent);font-size:11px}
+.integrity[data-ov-scope="sel"]{color:var(--accent)}
 /* 概览「数据完整性」：样本 / 空洞 / 最大间隔 / >1 s 中断（口径见 title 提示） */
 .integrity{
   flex:0 0 auto;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;
@@ -8735,7 +8871,7 @@ body.modal-open{overflow:hidden}
 /* PNG 复盘卡隐藏容器：横版 #debrief-src / 竖版 #debrief-src-m 都移到屏外，不占版面 */
 #debrief-src,#debrief-src-m{
   position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
-/* ---------- 框选时间段（图表拖拽框选 / 双击复位 / 统计口径切换） ---------- */
+/* ---------- 框选时间段（图表拖拽框选 / 双击复位 / 显示范围切换） ---------- */
 .brush-bar{
   display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:5px;
   font-size:11.5px;color:var(--muted);line-height:1.35;
@@ -8744,7 +8880,6 @@ body.modal-open{overflow:hidden}
 .brush-bar .brush-sel b{font-family:var(--font-num);font-size:12px;color:var(--text);
   letter-spacing:.05em;font-weight:600}
 .brush-bar[data-selection="yes"] .brush-sel b{color:var(--accent)}
-.brush-bar .brush-sel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44ch}
 .brush-scope{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-xs);
   overflow:hidden;flex:0 0 auto}
 .brush-btn{
@@ -8762,8 +8897,8 @@ body.modal-open{overflow:hidden}
 .brush-reset:not(:disabled){color:var(--accent);border-color:var(--accent);
   box-shadow:inset 0 0 0 1px var(--accent)}
 .brush-reset:disabled{opacity:.45;cursor:not-allowed}
-.brush-hint{font-size:11px;color:var(--hint-fg);white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis}
+.brush-scope-state{font-size:11px;color:var(--accent);white-space:nowrap;
+  font-family:var(--font-num);letter-spacing:.02em}
 /* 拖拽中的半透明选区矩形（直接画在 SVG 里，随 preserveAspectRatio 拉伸） */
 .brush-rect{fill:var(--accent);fill-opacity:.16;stroke:var(--accent);stroke-width:1.2;
   stroke-dasharray:4 3;pointer-events:none}
@@ -8876,7 +9011,7 @@ CSS_PRINT = """
   .flight-view.active{display:flex!important}
   .pager,.side,.hint,.header-save,.save-modal,#debrief-src,#debrief-src-m,#tip{display:none}
   /* 框选控件 / 拖拽选区框只属于屏幕交互，打印与 PDF 不出现 */
-  .brush-bar,.brush-hint,.brush-rect,.brush-edge{display:none!important}
+  .brush-bar,.brush-rect,.brush-edge{display:none!important}
   /* 曲线显示/隐藏：WYSIWYG —— 打印/PDF 只保留当前可见曲线。
      工具条不打印；被隐藏的 path/area/断口桥/批注圈和图例行（含图例项）整块不出现 */
   .series-bar{display:none!important}
@@ -9834,6 +9969,8 @@ JS = r"""
     if (AVG) AVG.onFlight(value);
     syncPlayer(value);
     hideAll();
+    // 概览 KPI 的「区间」值按活动架次重算（显示范围 = 全程时只是还原本快照）
+    if (brush && brush.ovSnap) updateOverview();
   }
   flightBtns.forEach(function(btn){
     btn.addEventListener("click", function(){
@@ -10081,8 +10218,9 @@ JS = r"""
     if (!file) return false;
     if (profile !== DEFAULT_PROFILE) return false;
     if (clarity && clarity !== "high") return false;
-    // A 预生成 PDF 是生成时的静态文件，无法反映运行期框选 → 有选区一律走 B。
-    if (hasSelection()) return false;
+    // A 预生成 PDF 是生成时的静态文件，无法反映运行期视图 → 显示范围 = 选区时一律走 B；
+    // 显示范围 = 全程时即使有选区也按全程导出 → 预生成仍然有效。
+    if (currentExportRange()) return false;
     return true;
   }
   function pdfModeName(profile, clarity){
@@ -10152,9 +10290,10 @@ JS = r"""
     body.setAttribute("data-clarity", clarity);
     body.classList.toggle("no-annot", !annotated);
     body.classList.add("pdf-capture");
-    // 有选区：导出前按当前选区把全部页面重画一遍（`.pdf-capture` 里就是选区视图，
-    // 逐页 html2canvas 抓到的自然是选区范围）；导出后再恢复一次原视图。
-    if (hasSelection()) applySelection();
+    // 导出跟随**显示范围**：`.pdf-capture` 下按当前 scope 重新铺一遍全部页面
+    // （选区视图 = 只画区间；全程视图 = 即使有选区也画全程），逐页 html2canvas 抓到的
+    // 就是最终视图；导出后再按同一 scope 恢复一次（幂等）。
+    applyViewRange();
     var background = pdfBackground();
     nextFrame().then(function(){
       var doc = new jsPDFCtor({
@@ -10165,15 +10304,15 @@ JS = r"""
       function finishFail(err){
         body.classList.remove("pdf-capture");
         body.classList.remove("no-annot");
-        if (hasSelection()) applySelection();
+        applyViewRange();
         fail(err);
       }
       function step(){
         if (index >= nodes.length){
           body.classList.remove("pdf-capture");
           body.removeAttribute("data-pdf-progress");
-          // 导出结束：恢复原视图（与导出前完全一致的选区视图，幂等）
-          if (hasSelection()) applySelection();
+          // 导出结束：恢复原视图（与导出前完全一致的显示范围视图，幂等）
+          applyViewRange();
           try {
             doc.save("report.pdf");
           } catch (err) {
@@ -10182,7 +10321,9 @@ JS = r"""
           }
           done({mode: "vendor", name: "report.pdf", pages: nodes.length,
             profile: profile, clarity: clarity, width: outW, height: outH,
-            selection: hasSelection() ? [brush.sel.t0, brush.sel.t1] : null});
+            scope: brush.scope,
+            range: currentExportRange(),
+            selection: brush.sel});
           return;
         }
         var page = nodes[index];
@@ -10380,31 +10521,48 @@ JS = r"""
   });
 
   // ======================================================================
-  // 框选时间段（首交互）：拖拽框选 → 所有页 / 所有图同步缩放 + 选区统计
+  // 框选时间段（首交互）：拖拽框选 → 所有页 / 所有图同步缩放 + 显示范围开关
   // ======================================================================
   //
   // 设计要点：
-  // * 全局状态 ``brush.sel = {t0, t1} | null``（绝对秒，跨页 / 跨版式 / 跨架次同步）；
+  // * 全局状态分成两层：
+  //   ``brush.sel = {t0, t1} | null`` —— 框选出来的区间（绝对秒，跨页 / 跨版式 / 跨架次同步）；
+  //   ``brush.scope = "full" | "sel"`` —— **显示范围**（整份报告画全程还是只画区间）。
+  //   两者分开：切回「全程」只改 scope，选区仍保留，再切「选区」能回到刚才的区间。
+  // * ``viewRange()``（= :func:`rangeForPanel`）按 scope 决定每张图画哪段；所有图表、
+  //   概览 KPI / 数据完整性、舵面页统计、导出都用它，不再各自判断 ``brush.sel``；
   // * **不在 JS 里另写一套画图**：Python 已按图层分组输出
   //   （``.js-series`` / ``.js-xaxis`` / ``.js-chrome`` + 每个时间元素的 ``data-t``），
   //   框选时只重画"曲线层 / 时间轴 / 比例尺"，事件竖线 / 断口竖带 / 批注圈 /
   //   平均速度区间按 ``data-t`` 平移，悬停层（追加在 SVG 根上）完全不受影响；
   // * 数据结构 + 包络算法与 Python 侧一致（像素列 min/max），缩放后按新的像素密度
   //   重新分桶，所以放大后能看见更多细节、缩小后也不会糊成实心块；
-  // * 复位 = 把三个图层还原成 Python 生成时的原始 innerHTML（像素级还原，不重算）。
+  // * 复位 = 清空选区 + scope 回全程，把三个图层还原成 Python 生成时的原始 innerHTML
+  //   （像素级还原，不重算）。
   var BRUSH_MIN_PX = 4;
   var brush = {
-    sel: null,
-    scope: "full",
+    sel: null,        // 框选区间（绝对秒）；切「显示：全程」时保留，可再次切回
+    scope: "full",    // 显示范围："full" = 全程 / "sel" = 只显示 brush.sel
     panels: [],
     entryOf: {},
     orig: {},
     dragging: null,
-    statsSnap: []
+    statsSnap: [],
+    ovSnap: null,     // 概览卡片全程值快照（DOM 原样文本）
+    ovBadges: [],     // 概览页架次摘要 chips 的全程值快照
+    ovIntegrity: []   // 概览「数据完整性」全程值快照
   };
 
   function hasSelection(){
     return !!(brush && brush.sel && (brush.sel.t1 - brush.sel.t0) > 0);
+  }
+  // 显示范围 = 选区？注意「全程」时即使有选区也不缩放（选区只是保留着）。
+  function showingSelection(){
+    return !!(brush && brush.scope === "sel" && hasSelection());
+  }
+  // 导出跟随显示范围：只有显式「选区」才导出区间；复位 / 全程即使有选区也导出全程。
+  function currentExportRange(){
+    return showingSelection() ? [brush.sel.t0, brush.sel.t1] : null;
   }
   function cfgColors(){ return DATA.colors || {}; }
   function escText(text){
@@ -10881,9 +11039,9 @@ JS = r"""
     return w;
   }
 
-  // ---------- 构图：选区 → 每张图的范围 ----------
+  // ---------- 构图：显示范围 → 每张图的范围 ----------
   function rangeForPanel(panel){
-    if (!hasSelection()) return null;
+    if (!showingSelection()) return null;
     var a = Math.max(panel.t0, brush.sel.t0);
     var b = Math.min(panel.t1, brush.sel.t1);
     if (!(b - a > 0.4)) return null;
@@ -10963,46 +11121,210 @@ JS = r"""
     svg.setAttribute("data-brush-range",
       range[0].toFixed(2) + "," + range[1].toFixed(2));
   }
-  function applySelection(){
+  // ---------- 顶部事件时间线：按显示范围原地重画（不整页重渲染） ----------
+  // Python 已把重建所需信息写进 data-*（原始范围 / 绘图区 / 高度）；事件数据从
+  // DATA.flights[].events 读取（跨架次的全局总览条 data-flight="-1" 用
+  // DATA.overview.events），按显示范围过滤后重画，规则与 _render_event_strip 一致。
+  function fmtStripSec(t){
+    if (!isFinite(t)) return "—";
+    var text = t.toFixed(1);
+    if (text.indexOf(".") >= 0) text = text.replace(/\.?0+$/, "");
+    return text;
+  }
+  function stripKillText(ev){
+    var target = String(ev && ev.target !== null && ev.target !== undefined
+      ? ev.target : "").trim();
+    if (!target) return "击杀";
+    // 只取目标末端的机型括号：玩家名 (F-16C) → F-16C；玩家 id 只留在下方 legend。
+    var m = target.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+    var vehicle = m ? m[2].trim() : "";
+    if (!vehicle) return "击杀";
+    var max = (DATA.strip && DATA.strip.killTargetMax) || 16;
+    if (vehicle.length > max) vehicle = vehicle.slice(0, max) + "…";
+    return "击杀（" + vehicle + "）";
+  }
+  // 与 Python _strip_event_text 同一口径：kill = 击杀（目标）不带时间；其余 = 标签 + 秒数。
+  function stripEventText(ev){
+    var kind = (ev && ev.kind) || "";
+    if (kind === "kill") return stripKillText(ev);
+    var label = (ev && ev.label) || kind;
+    return label + " " + fmtStripSec(ev ? ev.t : null) + "s";
+  }
+  // 事件条标签的近似宽度（CJK 约 1 em，ASCII 约 0.56 em），用于行切换避让。
+  function stripTextWidth(text, size){
+    var w = 0;
+    for (var i = 0; i < text.length; i++){
+      var c = text.charCodeAt(i);
+      w += c > 0x2e80 ? size : size * 0.56;
+    }
+    return w;
+  }
+  function stripEventsOf(flightIndex){
+    if (flightIndex >= 0){
+      var fl = flightByIndex(flightIndex);
+      return (fl && fl.events) || [];
+    }
+    var overview = DATA.overview;
+    if (overview && overview.events) return overview.events;
+    var all = [];
+    (DATA.flights || []).forEach(function(fl){
+      (fl.events || []).forEach(function(ev){ all.push(ev); });
+    });
+    return all;
+  }
+  // 显示范围与图表同一口径（rangeForPanel）：选区与该条带原始范围的交集；
+  // 交集 ≤ 0.4 s / 几乎没缩小时保持原范围（跨架次选区不会误裁整条）。
+  function stripDisplayRange(svg){
+    var t0 = parseFloat(svg.getAttribute("data-t0"));
+    var t1 = parseFloat(svg.getAttribute("data-t1"));
+    if (!isFinite(t0) || !isFinite(t1)) return null;
+    if (!showingSelection()) return [t0, t1];
+    var a = Math.max(t0, brush.sel.t0), b = Math.min(t1, brush.sel.t1);
+    if (!(b - a > 0.4)) return [t0, t1];
+    if (b - a >= (t1 - t0) - 1e-6) return [t0, t1];
+    return [a, b];
+  }
+  // 按显示范围重画一条事件时间线；返回可见事件数（0 = 整条隐藏）。
+  function renderEventStrip(svg, flightIndex, t0, t1){
+    if (!svg) return 0;
+    var host = svg.parentNode;
+    var base0 = parseFloat(svg.getAttribute("data-t0"));
+    var base1 = parseFloat(svg.getAttribute("data-t1"));
+    if (!isFinite(t0) || !isFinite(t1) || !(t1 - t0 > 1e-9)){ t0 = base0; t1 = base1; }
+    var key = flightIndex + "|" + t0.toFixed(4) + "|" + t1.toFixed(4);
+    var fullKey = flightIndex + "|" + base0.toFixed(4) + "|" + base1.toFixed(4);
+    if (svg.__stripKey === undefined && key === fullKey){
+      // Python 已按原始范围画好：第一次调用且范围没变 → 不重建。
+      svg.__stripKey = key;
+      return svg.querySelectorAll ? svg.querySelectorAll("line").length : 0;
+    }
+    if (svg.__stripKey === key) return parseInt(svg.getAttribute("data-strip-count"), 10) || 0;
+    var plotLeft = parseFloat(svg.getAttribute("data-plot-left"));
+    var plotRight = parseFloat(svg.getAttribute("data-plot-right"));
+    var height = parseFloat(svg.getAttribute("data-height"));
+    var vb = (svg.getAttribute("viewBox") || "").split(/\s+/);
+    var viewW = parseFloat(vb[2]);
+    if (!isFinite(plotLeft)) plotLeft = isFinite(viewW) ? viewW * 0.04 : 0;
+    if (!isFinite(plotRight)) plotRight = isFinite(viewW) ? viewW - plotLeft : plotLeft + 1;
+    if (!isFinite(height)) height = 38;
+    var span = t1 - t0;
+    var plotW = plotRight - plotLeft;
+    var events = stripEventsOf(flightIndex);
+    var colors = DATA.eventColors || {};
+    var rowGap = (DATA.strip && DATA.strip.rowGap) || 88;
+    var visible = [];
+    for (var i = 0; i < events.length; i++){
+      var ev = events[i];
+      var et = ev ? Number(ev.t) : NaN;
+      if (!isFinite(et)) continue;
+      if (et < t0 - 0.05 || et > t1 + 0.05) continue;
+      visible.push(ev);
+    }
+    if (!visible.length){
+      // 区间内没有事件：条带保持隐藏 / 空（不占版面）。
+      svg.innerHTML = "";
+      svg.style.display = "none";
+      if (host && host.classList && host.classList.contains("strip")) host.style.display = "none";
+      svg.setAttribute("data-strip-range", t0.toFixed(2) + "," + t1.toFixed(2));
+      svg.setAttribute("data-strip-count", "0");
+      svg.__stripKey = key;
+      return 0;
+    }
+    svg.style.display = "";
+    if (host && host.classList && host.classList.contains("strip")) host.style.display = "";
+    var parts = [];
+    var rowState = [[-1e9, 0], [-1e9, 0]];
+    for (var j = 0; j < visible.length; j++){
+      var item = visible[j];
+      var t = Number(item.t);
+      var px = plotLeft + (t - t0) / span * plotW;
+      if (px < plotLeft) px = plotLeft;
+      if (px > plotRight) px = plotRight;
+      var kind = item.kind || "";
+      var color = colors[kind] || colors.other || "#6B5B41";
+      parts.push('<line x1="' + coord1(px) + '" y1="10" x2="' + coord1(px) +
+        '" y2="' + coord1(height) + '" stroke="' + escText(color) +
+        '" stroke-width="1.4" opacity="0.9"/>');
+      parts.push('<circle cx="' + coord1(px) + '" cy="10" r="2.6" fill="' +
+        escText(color) + '"/>');
+      var label = stripEventText(item);
+      var textW = stripTextWidth(label, 11);
+      // 标签放竖线右侧（右边缘放左侧），行切换按文字实际宽度算，避免竖线穿字 / 长标签互压。
+      var row = 1;
+      for (var cand = 0; cand < 2; cand++){
+        if (px - rowState[cand][0] >= (rowState[cand][1] + textW) / 2 + 6){ row = cand; break; }
+      }
+      rowState[row] = [px, textW];
+      var textY = row === 0 ? 12.0 : 25.0;
+      var anchor = "start", textX = px + 6;
+      if (px + 6 + textW > plotRight){ anchor = "end"; textX = px - 6; }
+      parts.push('<text x="' + coord1(textX) + '" y="' + coord1(textY) +
+        '" text-anchor="' + anchor + '" font-size="11" fill="' + escText(color) +
+        '">' + escText(label) + "</text>");
+    }
+    svg.innerHTML = parts.join("");
+    svg.setAttribute("data-strip-range", t0.toFixed(2) + "," + t1.toFixed(2));
+    svg.setAttribute("data-strip-count", String(visible.length));
+    svg.__stripKey = key;
+    return visible.length;
+  }
+  function updateEventStrips(){
+    qsa(".strip-svg[data-strip]").forEach(function(svg){
+      var index = parseInt(svg.getAttribute("data-flight"), 10);
+      var range = stripDisplayRange(svg);
+      if (!range) return;
+      renderEventStrip(svg, isFinite(index) ? index : -1, range[0], range[1]);
+    });
+  }
+  // 把当前**显示范围**应用到整份报告：所有图表（含竖版页 / 概览缩略图）+
+  // 顶部事件时间线 + 工具条 + 舵面页统计 + 概览 KPI / 数据完整性 + 保存设置里的导出提示。
+  // 幂等：scope = full 时等价于"全部还原成 Python 生成的全程视图"。
+  function applyViewRange(){
     if (!brush) return;
     brush.panels.forEach(renderPanelRange);
+    updateEventStrips();
     updateBrushBar();
     updateSurfaceStats();
+    updateOverview();
   }
+  // 历史钩子名（旧证据脚本按这个名字找）：等价于 applyViewRange
+  function applySelection(){ applyViewRange(); }
 
   // ---------- 顶部工具条 ----------
   function updateBrushBar(){
     var bar = document.getElementById("brush-bar");
     if (!bar) return;
     var has = hasSelection();
+    var sel = showingSelection();
     bar.setAttribute("data-selection", has ? "yes" : "none");
+    bar.setAttribute("data-scope", sel ? "sel" : "full");
     var label = document.getElementById("brush-sel-text");
-    var hint = document.getElementById("brush-sel-hint");
     if (label){
       label.textContent = has
         ? ("已选 " + fmtClock(brush.sel.t0) + "–" + fmtClock(brush.sel.t1))
         : "未选区间";
     }
-    if (hint){
-      hint.textContent = has
-        ? ("共 " + (brush.sel.t1 - brush.sel.t0).toFixed(1) +
-           " s · 所有页 / 所有图已同步 · 双击任意图复位")
-        : "在任意图表上按住拖动即可框选时间段；双击任意图表复位";
-    }
     var reset = document.getElementById("brush-reset");
     if (reset) reset.disabled = !has;
-    qsa("[data-stat-scope]").forEach(function(btn){
-      var scope = btn.getAttribute("data-stat-scope");
+    qsa("[data-view-scope]").forEach(function(btn){
+      var scope = btn.getAttribute("data-view-scope");
       if (scope === "sel") btn.disabled = !has;
-      var active = brush.scope === scope && (scope !== "sel" || has);
+      var active = (scope === (sel ? "sel" : "full"));
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
+    // 状态文字只有两种：全区 / 选区 + 时间；选区是否保留由按钮状态表达，不加提示后缀。
+    var scopeState = document.getElementById("brush-scope-state");
+    if (scopeState){
+      scopeState.textContent = sel
+        ? ("显示范围：选区 " + fmtClock(brush.sel.t0) + "–" + fmtClock(brush.sel.t1))
+        : "显示范围：全程";
+    }
     if (!has && brush.scope !== "full") brush.scope = "full";
     updateSaveSelectionHint();
   }
 
-  // ---------- 统计：全程（Python 预算）/ 选区（JS 用全速率样本现算） ----------
+  // ---------- 舵面统计：跟随显示范围（全程 = Python 预算 / 选区 = JS 用全速率样本现算） ----------
   function snapshotSurfaceStats(){
     brush.statsSnap = [];
     qsa(".surface-meta").forEach(function(block){
@@ -11081,7 +11403,7 @@ JS = r"""
   }
   function updateSurfaceStats(){
     if (!brush || !brush.statsSnap.length) return;
-    var useSel = brush.scope === "sel" && hasSelection();
+    var useSel = showingSelection();
     brush.statsSnap.forEach(function(entry){
       var block = entry.block;
       var index = parseInt(block.getAttribute("data-surface-flight"), 10);
@@ -11131,40 +11453,299 @@ JS = r"""
     });
   }
 
+  // ---------- 概览页：卡片 / 数据完整性（全程 = Python 预算快照；选区 = 原始样本现算） ----------
+  function fmtMetric(value, digits){
+    if (value === null || value === undefined || !isFinite(value)) return "—";
+    var text = Number(value).toFixed(digits);
+    if (text.indexOf(".") >= 0) text = text.replace(/0+$/, "").replace(/\.$/, "");
+    return text;
+  }
+  // 当前活动架次：概览页的 .flight-view.active（多架次时由右上角 / 页眉切换）
+  function overviewFlight(){
+    var el = document.querySelector("#page-overview .flight-view.active[data-flight]");
+    var index = el ? parseInt(el.getAttribute("data-flight"), 10) : NaN;
+    return flightByIndex(isFinite(index) ? index : null) || (DATA.flights || [])[0] || null;
+  }
+  function snapshotOverview(){
+    brush.ovSnap = qsa(".cards[data-ov-scope]").map(function(host){
+      var values = {}, subs = {};
+      qsa(".card[data-ov]", host).forEach(function(card){
+        var key = card.getAttribute("data-ov");
+        var value = card.querySelector("[data-ov-value]");
+        var sub = card.querySelector("[data-ov-sub]");
+        values[key] = value ? value.textContent : "";
+        subs[key] = sub ? sub.textContent : "";
+      });
+      return {host: host, values: values, subs: subs};
+    });
+    brush.ovIntegrity = qsa("[data-ov-integrity]").map(function(el){
+      return {el: el, text: el.textContent};
+    });
+  }
+  // 概览页当前活动架次的 .flight-view（架次摘要 chips 在这里面）
+  function overviewFlightView(){
+    return document.querySelector("#page-overview .flight-view.active[data-flight]");
+  }
+  function snapshotOverviewBadges(){
+    brush.ovBadges = qsa(".badges [data-fb]").map(function(el){
+      return {el: el, key: el.getAttribute("data-fb"), text: el.textContent};
+    });
+  }
+  function seriesMinMax(fl, key, i0, i1){
+    var values = (fl.series || {})[key];
+    var min = null, max = null;
+    if (!values) return {min: null, max: null};
+    for (var i = i0; i < i1; i++){
+      var v = values[i];
+      if (v === null || v === undefined || !isFinite(v)) continue;
+      if (min === null || v < min) min = v;
+      if (max === null || v > max) max = v;
+    }
+    return {min: min, max: max};
+  }
+  // 区间内重算概览 KPI：口径对齐 Python（全程值 = model.summary / _integrity_stats；
+  // 区间值 = 当前活动架次原始样本在 [a,b] 内重算，空洞 0.2 s / 中断 1 s 同阈值）
+  function rangeOverviewMetrics(fl, a, b){
+    var times = fl.times || [];
+    var i0 = lowerBound(times, a - 1e-9), i1 = upperBound(times, b + 1e-9);
+    var samples = Math.max(0, i1 - i0);
+    var holes = 0, interrupts = 0, longest = 0, prev = null;
+    for (var i = i0; i < i1; i++){
+      var t = times[i];
+      if (prev !== null && isFinite(prev) && isFinite(t)){
+        var dt = t - prev;
+        if (dt > 0){
+          if (dt > 0.2) holes += 1;
+          if (dt > 1) interrupts += 1;
+          if (dt > longest) longest = dt;
+        }
+      }
+      prev = t;
+    }
+    // 区间时长 / 采样率与 Python 同口径：时长 = 区间内首末样本差，rate = (样本数-1)/时长
+    var span = (samples >= 2) ? (times[i1 - 1] - times[i0]) : Math.max(0, b - a);
+    var rate = (samples > 1 && span > 0) ? (samples - 1) / span : null;
+    var ias = seriesMinMax(fl, "ias", i0, i1);
+    var tas = seriesMinMax(fl, "tas", i0, i1);
+    var mach = seriesMinMax(fl, "mach", i0, i1);
+    var alt = seriesMinMax(fl, "alt", i0, i1);
+    var ralt = seriesMinMax(fl, "ralt", i0, i1);
+    var ny = seriesMinMax(fl, "ny", i0, i1);
+    var bank = seriesMinMax(fl, "bank", i0, i1);
+    var es = seriesMinMax(fl, "es", i0, i1);
+    function absMax(lo, hi){
+      if (lo === null && hi === null) return null;
+      return Math.max(Math.abs(lo === null ? 0 : lo), Math.abs(hi === null ? 0 : hi));
+    }
+    // 空中比能量首尾差（与 Python compute_flight_stats 同口径：只看 inflight 样本）
+    var inflight = (fl.series && fl.series.inflight) || [];
+    var esValues = (fl.series && fl.series.es) || [];
+    var esFirst = null, esLast = null, inflightCount = 0;
+    for (var k = i0; k < i1; k++){
+      if (!inflight[k]) continue;
+      var ev = esValues[k];
+      if (ev === null || ev === undefined || !isFinite(ev)) continue;
+      if (esFirst === null) esFirst = ev;
+      esLast = ev;
+      inflightCount += 1;
+    }
+    // 能量获得 / 损失：与 Python :func:`_integrate` 同口径（相邻样本梯形积分，dt > 10 s 断开）
+    var des = (fl.series && fl.series.des) || [];
+    var gain = 0, loss = 0;
+    for (var j = i0 + 1; j < i1; j++){
+      var d0 = des[j - 1], d1 = des[j];
+      if (d0 === null || d0 === undefined) continue;
+      if (d1 === null || d1 === undefined) continue;
+      var step = times[j] - times[j - 1];
+      if (!(step > 0) || step > 10) continue;
+      var pa = d0 > 0 ? d0 : 0, pb = d1 > 0 ? d1 : 0;
+      var na = d0 < 0 ? d0 : 0, nb = d1 < 0 ? d1 : 0;
+      gain += 0.5 * (pa + pb) * step;
+      loss += 0.5 * (na + nb) * step;
+    }
+    var counts = {}, gapCount = 0;
+    function inRange(value){
+      return value !== null && value !== undefined && isFinite(value) &&
+        value >= a - 0.05 && value <= b + 0.05;
+    }
+    (fl.events || []).forEach(function(ev){
+      if (!inRange(ev.t)) return;
+      if (ev.kind === "end" || ev.kind === "gap") return;
+      counts[ev.kind] = (counts[ev.kind] || 0) + 1;
+    });
+    (fl.gap_events || []).forEach(function(ev){
+      if (inRange(ev.t)) gapCount += 1;
+    });
+    var eventCount = 0;
+    Object.keys(counts).forEach(function(key){ eventCount += counts[key]; });
+    var bits = [];
+    [["death", "死亡"], ["kill", "击落"], ["spawn", "复活"], ["vehicle_change", "换机型"]]
+      .forEach(function(pair){
+        if (counts[pair[0]]) bits.push(pair[1] + " " + counts[pair[0]]);
+      });
+    if (gapCount) bits.push("数据中断 " + gapCount + " 处");
+    return {
+      a: a, b: b, span: span, samples: samples, holes: holes,
+      interrupts: interrupts, longest: longest, rate: rate,
+      iasMax: ias.max, tasMax: tas.max, machMax: mach.max,
+      altMax: alt.max, raltMax: ralt.max,
+      nyAbsMax: absMax(ny.min, ny.max), bankAbsMax: absMax(bank.min, bank.max),
+      esMin: es.min, esMax: es.max,
+      inflightDelta: inflightCount >= 2 ? esLast - esFirst : null,
+      gain: gain, loss: loss,
+      eventCount: eventCount, eventSub: bits.length ? bits.join(" · ") : "无事件"
+    };
+  }
+  function overviewCardText(key, m){
+    if (key === "duration"){
+      return {value: fmtMetric(m.span, 1) + " s", sub: m.samples + " 个样本"};
+    }
+    if (key === "rate"){
+      return {value: m.rate === null ? "—" : fmtMetric(m.rate, 1) + " Hz"};
+    }
+    if (key === "ias"){
+      return {value: fmtMetric(m.iasMax, 0) + " km/h",
+        sub: "TAS " + fmtMetric(m.tasMax, 0) + " km/h"};
+    }
+    if (key === "mach"){
+      return {value: fmtMetric(m.machMax, 2),
+        sub: "最大高度 " + fmtMetric(m.altMax, 0) + " m"};
+    }
+    if (key === "alt"){
+      return {value: fmtMetric(m.altMax, 0) + " m",
+        sub: "雷达 " + fmtMetric(m.raltMax, 0) + " m"};
+    }
+    if (key === "ny"){
+      return {value: fmtMetric(m.nyAbsMax, 2) + " g",
+        sub: "最大滚转 " + fmtMetric(m.bankAbsMax, 1) + "°"};
+    }
+    if (key === "energy"){
+      return {value: fmtMetric(m.esMin, 0) + " – " + fmtMetric(m.esMax, 0) + " m",
+        sub: "空中能量变化 " + fmtMetric(m.inflightDelta, 0) + " m"};
+    }
+    if (key === "events"){
+      return {value: String(m.eventCount), sub: m.eventSub};
+    }
+    return null;
+  }
+  // 概览页「架次摘要 chips」的区间值（机型 / 玩家 / 死亡时刻这类架次级事实保持原样）
+  function overviewBadgeText(key, m){
+    if (key === "duration") return "时长 " + fmtMetric(m.span, 1) + " s";
+    if (key === "samples") return "样本 " + m.samples;
+    if (key === "ias") return "最大 IAS " + fmtMetric(m.iasMax, 0) + " km/h";
+    if (key === "tas") return "最大 TAS " + fmtMetric(m.tasMax, 0) + " km/h";
+    if (key === "ny") return "最大过载 " + fmtMetric(m.nyAbsMax, 2) + " g";
+    if (key === "es"){
+      return "Es " + fmtMetric(m.esMin, 0) + " – " + fmtMetric(m.esMax, 0) + " m";
+    }
+    if (key === "energy"){
+      return "能量获得 " + fmtMetric(m.gain, 0) + " / 损失 " +
+        fmtMetric(m.loss, 0) + " m";
+    }
+    if (key === "inflight"){
+      return "空中能量变化 " + fmtMetric(m.inflightDelta, 0) + " m";
+    }
+    return null;
+  }
+  // 概览卡片 / 架次摘要 / 完整性行按显示范围刷新：选区 → 区间值（卡片值变主题色 +
+  // 标签「（区间）」）；全程 → 还原 Python 生成的全程快照（不重算）。
+  function updateOverview(){
+    if (!brush) return;
+    var sel = showingSelection();
+    var fl = overviewFlight();
+    var metrics = null;
+    if (sel && fl){
+      var a = Math.max(brush.sel.t0, fl.t0), b = Math.min(brush.sel.t1, fl.t1);
+      if (b - a > 0.4) metrics = rangeOverviewMetrics(fl, a, b);
+    }
+    if (brush.ovSnap){
+      brush.ovSnap.forEach(function(block){
+        block.host.setAttribute("data-ov-scope", metrics ? "sel" : "full");
+        Object.keys(block.values).forEach(function(key){
+          var card = block.host.querySelector('.card[data-ov="' + key + '"]');
+          if (!card) return;
+          var valueEl = card.querySelector("[data-ov-value]");
+          var subEl = card.querySelector("[data-ov-sub]");
+          var patch = metrics ? overviewCardText(key, metrics) : null;
+          if (valueEl) valueEl.textContent = patch ? patch.value : block.values[key];
+          if (subEl){
+            subEl.textContent = (patch && patch.sub !== undefined)
+              ? patch.sub : block.subs[key];
+          }
+        });
+      });
+    }
+    // 架次摘要 chips：全程先全部还原，再只改当前可见架次（横版 / 竖版两套都改，
+    // 多架次切换时各自正确）。按 .flight-view[data-flight] 判所属架次，不依赖单个 #id。
+    var view = overviewFlightView();
+    var activeIndex = view ? view.getAttribute("data-flight") : null;
+    brush.ovBadges.forEach(function(item){
+      var holder = (activeIndex !== null && item.el.closest)
+        ? item.el.closest(".flight-view[data-flight]") : null;
+      var inActive = !!(holder &&
+        holder.getAttribute("data-flight") === activeIndex);
+      var patch = (metrics && inActive) ? overviewBadgeText(item.key, metrics) : null;
+      item.el.textContent = (patch === null) ? item.text : patch;
+    });
+    brush.ovIntegrity.forEach(function(item){
+      if (metrics){
+        item.el.textContent = "数据完整性（区间）：" + metrics.samples + " 样本 / " +
+          metrics.holes + " 空洞 / 最大 " + fmtMetric(metrics.longest, 2) +
+          " s（>1 s 中断 " + metrics.interrupts + " 处）";
+        item.el.setAttribute("data-ov-scope", "sel");
+      } else {
+        item.el.textContent = item.text;
+        item.el.setAttribute("data-ov-scope", "full");
+      }
+    });
+  }
+
   // ---------- 保存设置里的选区提示 ----------
   function updateSaveSelectionHint(){
     var host = document.getElementById("save-sel");
     if (!host) return;
     var has = hasSelection();
+    var sel = showingSelection();
     host.setAttribute("data-selection", has ? "yes" : "none");
-    host.classList.toggle("warn", has);
+    host.setAttribute("data-scope", sel ? "sel" : "full");
+    host.classList.toggle("warn", sel);
     var text = host.querySelector("[data-save-sel-text]");
     var hint = host.querySelector("[data-save-sel-hint]");
     if (text){
-      text.textContent = has
-        ? ("当前选区 " + fmtClock(brush.sel.t0) + "–" + fmtClock(brush.sel.t1) +
-           "（共 " + (brush.sel.t1 - brush.sel.t0).toFixed(1) + " s）：PDF 只画该区间")
-        : "当前没有选区：PDF / PNG 都按全程导出";
+      if (!has){
+        text.textContent = "当前显示范围：全程（没有选区）：PDF / PNG 都按全程导出";
+      } else if (sel){
+        text.textContent = "当前显示范围 = 选区 " + fmtClock(brush.sel.t0) + "–" +
+          fmtClock(brush.sel.t1) + "（共 " + (brush.sel.t1 - brush.sel.t0).toFixed(1) +
+          " s）：PDF 只画该区间";
+      } else {
+        text.textContent = "当前显示范围 = 全程（已选区间保留、未启用）：PDF / PNG 按全程导出";
+      }
     }
     if (hint){
-      hint.textContent = has
-        ? "按选区导出将使用浏览器内生成（较慢）· PNG 复盘卡 / PDF 封面保持全程"
-        : "先在任意图表上拖动框选时间段，再导出即可只出该区间";
+      if (!has){
+        hint.textContent = "先在任意图表上拖动框选时间段，再切「显示：选区」即可只导出该区间";
+      } else if (sel){
+        hint.textContent = "PDF 导出跟随显示范围（浏览器内生成，较慢）· PNG 复盘卡 / PDF 封面始终全程";
+      } else {
+        hint.textContent = "点「显示：选区」只导出该区间 · PNG 复盘卡 / PDF 封面始终全程";
+      }
     }
   }
 
-  // ---------- 拖拽框选 / 双击复位 ----------
+  // ---------- 拖拽框选 / 双击复位 / 显示范围切换 ----------
   function setBarScope(scope){
     if (scope === "sel" && !hasSelection()) scope = "full";
+    // 只切**显示范围**（scope）→ 重画所有图表 + 舵面统计 + 概览卡片 + 导出提示。
+    // 选区本身不动：所以先点「全程」、再点「选区」能回到刚才选择的区间。
     brush.scope = scope;
-    updateBrushBar();
-    updateSurfaceStats();
+    applyViewRange();
   }
   function resetSelection(){
-    if (!hasSelection()) return;
+    if (!hasSelection() && brush.scope === "full") return;
     brush.sel = null;
     brush.scope = "full";
-    applySelection();
+    applyViewRange();
   }
   function commitSelection(entry, px0, px1){
     var panel = entry.panel;
@@ -11176,8 +11757,9 @@ JS = r"""
     var t1 = range[0] + (right - panel.x0) / (panel.x1 - panel.x0) * (range[1] - range[0]);
     if (!(t1 - t0 > 0.4)) return;
     brush.sel = {t0: Math.round(t0 * 1000) / 1000, t1: Math.round(t1 * 1000) / 1000};
-    brush.scope = "full";
-    applySelection();
+    // 框选完成 → 自动把显示范围切到「选区」（所有图表 + 概览立即按区间重画）
+    brush.scope = "sel";
+    applyViewRange();
   }
   function brushLayer(svg){
     var layer = svg.querySelector(".brush-layer");
@@ -11269,6 +11851,8 @@ JS = r"""
       });
     });
     snapshotSurfaceStats();
+    snapshotOverview();
+    snapshotOverviewBadges();
     var resetBtn = document.getElementById("brush-reset");
     if (resetBtn){
       resetBtn.addEventListener("click", function(ev){
@@ -11276,10 +11860,10 @@ JS = r"""
         resetSelection();
       });
     }
-    qsa("[data-stat-scope]").forEach(function(btn){
+    qsa("[data-view-scope]").forEach(function(btn){
       btn.addEventListener("click", function(ev){
         ev.preventDefault();
-        setBarScope(btn.getAttribute("data-stat-scope"));
+        setBarScope(btn.getAttribute("data-view-scope"));
       });
     });
     updateBrushBar();
@@ -11292,6 +11876,8 @@ JS = r"""
       selection: brush.sel,
       hasSelection: hasSelection(),
       scope: brush.scope,
+      showingSelection: showingSelection(),
+      exportRange: currentExportRange(),
       panels: brush.panels.length,
       panelsWithRange: qsa(".chart-svg[data-brush-range]").length,
       pdfMode: pdfModeName(saveProfile(), saveClarity()),
@@ -11300,19 +11886,63 @@ JS = r"""
       }),
       statsScope: qsa(".surface-meta [data-sm-scope]").map(function(el){
         return el.textContent;
-      })
+      }),
+      // 事件时间线状态（CDP 证据脚本用）：显示范围 / 可见事件数 / 是否隐藏。
+      strips: qsa(".strip-svg[data-strip]").map(function(el){
+        var hidden = el.style.display === "none" ||
+          !!(el.parentNode && el.parentNode.style &&
+             el.parentNode.style.display === "none");
+        return {
+          id: el.id,
+          flight: el.getAttribute("data-flight"),
+          range: el.getAttribute("data-strip-range") || "",
+          count: parseInt(el.getAttribute("data-strip-count") || "0", 10) || 0,
+          hidden: hidden
+        };
+      }),
+      scopeText: (document.getElementById("brush-scope-state") || {}).textContent || "",
+      saveSelText: (document.querySelector("[data-save-sel-text]") || {}).textContent || ""
     };
+  };
+  window.__overviewState = function(){
+    var out = {scope: brush.scope, showing: showingSelection(), cards: {},
+      integrity: "", ranges: []};
+    var host = document.querySelector(".cards[data-ov-scope]");
+    if (host){
+      out.ovScope = host.getAttribute("data-ov-scope");
+      qsa(".card[data-ov]", host).forEach(function(card){
+        var value = card.querySelector("[data-ov-value]");
+        out.cards[card.getAttribute("data-ov")] = value ? value.textContent : "";
+      });
+    }
+    var integrity = document.querySelector("[data-ov-integrity]");
+    if (integrity) out.integrity = integrity.textContent;
+    var view = overviewFlightView();
+    out.badges = {};
+    if (view){
+      qsa("[data-fb]", view).forEach(function(el){
+        out.badges[el.getAttribute("data-fb")] = el.textContent;
+      });
+    }
+    var fl = overviewFlight();
+    if (fl) out.flight = fl.index;
+    if (showingSelection() && fl){
+      var a = Math.max(brush.sel.t0, fl.t0), b = Math.min(brush.sel.t1, fl.t1);
+      if (b - a > 0.4) out.metrics = rangeOverviewMetrics(fl, a, b);
+    }
+    return out;
   };
   window.__brushSelect = function(t0, t1){
     brush.sel = {t0: Number(t0), t1: Number(t1)};
-    brush.scope = "full";
-    applySelection();
+    // 与真实拖拽一致：框选后自动切「显示：选区」
+    brush.scope = "sel";
+    applyViewRange();
     return window.__brushState();
   };
   window.__brushReset = function(){
     brush.sel = null;
     brush.scope = "full";
-    applySelection();
+    applyViewRange();
     return window.__brushState();
   };
   window.__brushStats = function(index){
@@ -11400,24 +12030,27 @@ SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal
 
 #: 页眉下面的「框选时间段」工具条（0.5.10 1/2）。
 #:
-#: * 左侧 = 当前选区读数（无选区时是一句操作提示）；
-#: * 中间 = 统计口径切换（全程 / 选区；无选区时「选区」禁用）；
-#: * 右侧 = 复位按钮（有选区时高亮）+ 操作提示。
+#: * 左侧 = 当前选区读数（``已选 mm:ss–mm:ss``；没有选区时「未选区间」）；
+#: * 中间 = **显示范围**切换（全程 / 选区；无选区时「选区」禁用）：这不只是顶部 chips，
+#:   而是整份报告的视图范围 —— 所有图表、概览 KPI / 数据完整性、舵面页统计一起切；
+#: * 右侧 = 复位按钮（有选区时高亮）+ 当前显示范围文字（只写「全程」/「选区 mm:ss–mm:ss」，
+#:   选区是否保留由按钮状态表达，不再加提示后缀）。
 #:
-#: 交互全部在内联 JS 里：在任意 ``.chart-svg`` 上拖动 > 4 px 进入框选，
-#: 松手后把全局选区应用到**所有页 / 所有图**（含竖版页面），双击任意图复位。
+#: 交互全部在内联 JS 里：在任意 ``.chart-svg`` 上拖动 > 4 px 进入框选，松手后记录
+#: ``brush.sel`` 并自动切到「选区」；切回「全程」时 **选区保留**（再点「选区」回到原区间）；
+#: 双击任意图 / 「复位」清空选区并回全程。
 BRUSH_BAR = """<div class="brush-bar" id="brush-bar" data-selection="none"
-     data-brush-hint="拖动 = 框选时间段 · 双击 = 复位 · 翻页保持">
-  <span class="brush-sel"><b id="brush-sel-text">未选区间</b><span id="brush-sel-hint">在任意图表上按住拖动即可框选时间段；双击任意图表复位</span></span>
-  <span class="brush-scope" role="group" aria-label="统计口径">
-    <button type="button" class="brush-btn active" data-stat-scope="full"
-      aria-pressed="true" title="顶部统计（r / 对齐后 p90 / 量化台阶 / 样本）按全程计算">统计：全程</button>
-    <button type="button" class="brush-btn" data-stat-scope="sel" aria-pressed="false"
-      disabled title="按当前框选区间用全速率样本重算统计">统计：选区</button>
+     data-scope="full">
+  <span class="brush-sel"><b id="brush-sel-text">未选区间</b></span>
+  <span class="brush-scope" role="group" aria-label="显示范围">
+    <button type="button" class="brush-btn active" data-view-scope="full"
+      aria-pressed="true" title="显示范围 = 全程：所有图表与概览都按整段日志绘制（选区保留，随时可切回）">显示：全程</button>
+    <button type="button" class="brush-btn" data-view-scope="sel" aria-pressed="false"
+      disabled title="显示范围 = 选区：所有图表与概览都只用框选区间内的数据">显示：选区</button>
   </span>
   <button type="button" class="brush-reset" id="brush-reset" disabled
-    title="双击任意图表也可以复位到全程">复位（双击图表）</button>
-  <span class="brush-hint">拖动 &gt; 4 px 才进入框选（不影响悬停读数）· 选区会同步到所有页</span>
+    title="清除选区并把显示范围恢复到全程（双击任意图表也可以）">复位（双击图表）</button>
+  <span class="brush-scope-state" id="brush-scope-state">显示范围：全程</span>
 </div>"""
 
 
@@ -11489,6 +12122,9 @@ def _merge_report_data(
                 "panels": d_flight["panels"],
                 "panels_m": m_flight["panels"],
                 "surface": surface_meta,
+                # 显示范围 = 选区时，概览「事件数 / 数据中断」按区间过滤要用到事件时间
+                "events": d_flight["events"],
+                "gap_events": d_flight["gap_events"],
             }
         )
     overview = desktop["overview"]
@@ -11534,6 +12170,12 @@ def _merge_report_data(
             "printWidth": ES_HIGHLIGHT_PRINT_WIDTH,
             "opacity": ES_HIGHLIGHT_OPACITY,
             "dotR": ES_HIGHLIGHT_DOT_R,
+        },
+        # 事件时间线按显示范围重画：事件配色（与 Python EVENT_COLORS 同源）+ 文案/排布口径。
+        "eventColors": dict(EVENT_COLORS),
+        "strip": {
+            "killTargetMax": STRIP_KILL_TARGET_MAX,
+            "rowGap": STRIP_ROW_GAP,
         },
         "envelope": {"trigger": ENVELOPE_TRIGGER},
     }
