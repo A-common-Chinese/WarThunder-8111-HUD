@@ -66,6 +66,50 @@ public static partial class Program
         Check("radio altitude feet->m",
             WtHud.Program.EffectiveRadioAltM(ralt, raltCfgFt) is double rf && Math.Abs(rf - 304.8) < 0.01);
 
+        // 舵面 / 配平：/state 给舵面实际偏转，/indicators 给 trimmer。
+        // ★ 缺键必须是 null，不能是 0 —— 0 会被画成「舵面中立位」，那是编造数据。
+        // ★ 不记 stick_*：实测（F-16C 地面配平实验）stick_elevator 已含配平，等于舵面 ÷ 100，
+        //   记了是冗余；8111 不暴露原始杆量。
+        const string stateSurf = """
+        {"valid":true,"IAS, km/h":600,"TAS, km/h":620,"M":0.5,"H, m":1000,"Vy, m/s":1,
+         "AoA, deg":2,"AoS, deg":0,"Ny":1,"Wx, deg/s":0,"Mfuel, kg":500,"Mfuel0, kg":900,
+         "aileron, %":-12,"elevator, %":-20,"rudder, %":7}
+        """;
+        const string indSurf = """
+        {"valid":true,"type":"f-16a","compass":90,"trimmer":0.0875,
+         "stick_ailerons":-0.34,"stick_elevator":0.12,"pedals":-0.05}
+        """;
+        var surf = TelemetryParser.Parse(stateSurf, indSurf, TimeSpan.Zero, DateTime.UtcNow);
+        Check("surface aileron parsed", surf.AileronPercent is double sa && Math.Abs(sa + 12) < 0.01);
+        Check("surface elevator parsed", surf.ElevatorPercent is double se && Math.Abs(se + 20) < 0.01);
+        Check("surface rudder parsed", surf.RudderPercent is double sr && Math.Abs(sr - 7) < 0.01);
+        Check("trimmer parsed", surf.Trimmer is double strim && Math.Abs(strim - 0.0875) < 1e-9);
+        Check("stick ailerons parsed", surf.StickAilerons is double sia && Math.Abs(sia + 0.34) < 1e-9);
+        Check("stick elevator parsed", surf.StickElevator is double sie && Math.Abs(sie - 0.12) < 1e-9);
+        Check("pedals parsed", surf.Pedals is double spd && Math.Abs(spd + 0.05) < 1e-9);
+        // 不报这些键的机型：四个字段全为 null（不是 0）
+        Check("surface absent stays null",
+            a.AileronPercent == null && a.ElevatorPercent == null && a.RudderPercent == null);
+        Check("trimmer absent stays null", a.Trimmer == null);
+        Check("stick axes absent stay null",
+            a.StickAilerons == null && a.StickElevator == null && a.Pedals == null);
+        // 一边有一边没有，也不能互相顶替
+        var surfOnly = TelemetryParser.Parse(stateSurf, indFull, TimeSpan.Zero, DateTime.UtcNow);
+        Check("surface without indicators keeps halves apart",
+            surfOnly.AileronPercent is double so1 && Math.Abs(so1 + 12) < 0.01
+            && surfOnly.Trimmer == null && surfOnly.StickElevator == null);
+        // ★ 键在、值是 null：必须是 null，不能借 GetDouble 的 0 兜底（那就成了「中立位」）
+        const string stateNull = """
+        {"valid":true,"IAS, km/h":600,"TAS, km/h":620,"H, m":1000,
+         "aileron, %":null,"elevator, %":null,"rudder, %":null}
+        """;
+        const string indNull = """{"valid":true,"type":"f-16a","trimmer":null,"stick_ailerons":null,"stick_elevator":null,"pedals":null}""";
+        var surfNull = TelemetryParser.Parse(stateNull, indNull, TimeSpan.Zero, DateTime.UtcNow);
+        Check("nullable surface/trimmer/stick keys stay null when the value is null",
+            surfNull.AileronPercent == null && surfNull.ElevatorPercent == null && surfNull.RudderPercent == null
+            && surfNull.Trimmer == null && surfNull.StickAilerons == null && surfNull.StickElevator == null
+            && surfNull.Pedals == null);
+
         // 战雷 controls .blk 导入：解析 + 组合键还原（减速板 H / 计分板 CTRL+N）
         const string blk = """
         ID_AIR_BRAKE { keyboardKey:i=35; }
@@ -1827,6 +1871,8 @@ public static partial class Program
                 Valid = true, InFlight = true, VehicleType = "selftest",
                 ElapsedSeconds = 1.5, TimestampUtc = DateTime.UtcNow,
                 IasKmh = 500, TasKmh = 520, AltM = 1000, VyMs = -2, NyG = 1.2,
+                AileronPercent = -12, ElevatorPercent = -20, RudderPercent = 7, Trimmer = 0.125,
+                StickAilerons = -0.34, StickElevator = 0.12, Pedals = -0.05,
             };
             var rec = WtHud.Telemetry.FlightRecorder.Start(recCfg, recSnap);
             recPath = rec.FilePath;
@@ -1836,6 +1882,18 @@ public static partial class Program
                 Source = AttitudeSource.Estimated, Confidence = 0.9,
             });
             rec.Marker("selftest");
+            // ★ 0.5.10 舵面/配平：不报这些字段的机型（坦克、直升机、旧机型）整条省略，
+            // 而不是写 0 —— 写 0 会让下游读成「舵面在中立位」。
+            var bareSnap = new TelemetrySnapshot
+            {
+                Valid = true, InFlight = true, VehicleType = "selftest",
+                ElapsedSeconds = 1.6, TimestampUtc = DateTime.UtcNow, IasKmh = 500,
+            };
+            rec.Add(bareSnap, new AttitudeSolution
+            {
+                PitchDeg = 1, BankDeg = 2,
+                Source = AttitudeSource.Estimated, Confidence = 0.9,
+            });
             rec.Event("death");
             // 击落事件：kind=kill + target（被击落目标名）
             rec.Event("kill", null, null, "=FdX= Target");
@@ -1871,6 +1929,28 @@ public static partial class Program
             Check("recorder keeps old event lines without a gap field",
                 lines.Where(l => l.Contains("\"type\":\"event\"") && !l.Contains("\"kind\":\"gap\""))
                      .All(l => !l.Contains("\"gap\"")));
+
+            // ★ 0.5.10 舵面 / 配平：写盘格式与「缺字段就省略」的行为。
+            var sampleLines = lines.Where(l => l.Contains("\"type\":\"sample\"")).ToArray();
+            Check("recorder meta announces schema 2", lines[0].Contains("\"schema\":2"));
+            Check("recorder writes surface + trimmer fields",
+                sampleLines.Length >= 1
+                && sampleLines[0].Contains("\"aileron_pct\":-12")
+                && sampleLines[0].Contains("\"elevator_pct\":-20")
+                && sampleLines[0].Contains("\"rudder_pct\":7")
+                && sampleLines[0].Contains("\"trimmer\":0.125")
+                && sampleLines[0].Contains("\"stick_ailerons\":-0.34")
+                && sampleLines[0].Contains("\"stick_elevator\":0.12")
+                && sampleLines[0].Contains("\"pedals\":-0.05"));
+            Check("recorder omits surface fields the aircraft does not report",
+                sampleLines.Length >= 2
+                && !sampleLines[1].Contains("\"aileron_pct\"")
+                && !sampleLines[1].Contains("\"elevator_pct\"")
+                && !sampleLines[1].Contains("\"rudder_pct\"")
+                && !sampleLines[1].Contains("\"trimmer\"")
+                && !sampleLines[1].Contains("\"stick_ailerons\"")
+                && !sampleLines[1].Contains("\"stick_elevator\"")
+                && !sampleLines[1].Contains("\"pedals\""));
         }
         finally
         {

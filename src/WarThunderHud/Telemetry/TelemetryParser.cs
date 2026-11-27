@@ -24,6 +24,12 @@ public static class TelemetryParser
     {
         double ias = 0, tas = 0, mach = 0, alt = 0, vy = 0, aoa = 0, aos = 0, ny = 1, wx = 0;
         double mfuel = 0, mfuel0 = 0, gearPct = 0, flapsPct = 0, airbrakePct = 0;
+        // 舵面（/state）与配平（/indicators）都按「可能没有」处理，缺键留 null 而不是 0：
+        // 0 会画成「中立位」，null 才是「这架飞机没报这个字段」。
+        double? aileronPct = null, elevatorPct = null, rudderPct = null;
+        double? trimmer = null;
+        // 舵面指令轴（与上面三个同源、但精度高一个数量级：%/100 vs 0.001）
+        double? stickAilerons = null, stickElevator = null, pedals = null;
         // Some aircraft expose a real radio altimeter; most do not (the API has no terrain data).
         double? radioAlt = null;
         double? vne = null;
@@ -49,6 +55,9 @@ public static class TelemetryParser
             gearPct = GetDouble(r, "gear, %", -1);
             flapsPct = GetDouble(r, "flaps, %", -1);
             airbrakePct = GetDouble(r, "airbrake, %", -1);
+            aileronPct = GetNullableDouble(r, "aileron, %");
+            elevatorPct = GetNullableDouble(r, "elevator, %");
+            rudderPct = GetNullableDouble(r, "rudder, %");
             if (r.TryGetProperty("radio_altitude", out _)) radioAlt = GetDouble(r, "radio_altitude");
         }
 
@@ -87,6 +96,15 @@ public static class TelemetryParser
             if (r.TryGetProperty("aoa_indexer1", out _)) aoaIndexer = GetDouble(r, "aoa_indexer1");
             if (r.TryGetProperty("vne", out _)) vne = GetDouble(r, "vne");   // cockpit Vne, m/s
             if (hasFuelInd) fuelInd = GetDouble(r, "fuel");
+
+            // 俯仰配平量（−1..1）。实测它是唯一能拿到的「人工输入」痕迹：
+            // 8111 的 stick_* 已经被配平/增稳合并过，只有 trimmer 还留着原始设定。
+            trimmer = GetNullableDouble(r, "trimmer");
+
+            // 舵面指令轴（−1..1）：含配平与增稳，精度比 /state 的整数百分比高一个数量级。
+            stickAilerons = GetNullableDouble(r, "stick_ailerons");
+            stickElevator = GetNullableDouble(r, "stick_elevator");
+            pedals = GetNullableDouble(r, "pedals");
             for (int i = 1; i <= 4; i++)
             {
                 if (r.TryGetProperty($"ammo_counter{i}", out _)) ammo.Add(GetDouble(r, $"ammo_counter{i}"));
@@ -136,6 +154,13 @@ public static class TelemetryParser
             GearPercent = gearPct,
             FlapsPercent = flapsPct,
             AirbrakePercent = airbrakePct,
+            AileronPercent = aileronPct,
+            ElevatorPercent = elevatorPct,
+            RudderPercent = rudderPct,
+            Trimmer = trimmer,
+            StickAilerons = stickAilerons,
+            StickElevator = stickElevator,
+            Pedals = pedals,
             HeadingDeg = heading,
             HasHeading = hasHeading,
             FuelKg = mfuel,
@@ -145,6 +170,22 @@ public static class TelemetryParser
             TurnRateDegS = turn,
             Ammo = ammo,
             Caps = caps,
+        };
+    }
+
+    /// <summary>
+    /// 取一个「可能不存在」的数值：缺键、null、非数字一律返回 null。
+    /// 不能退回 <see cref="GetDouble"/> 的 0 —— 对舵面来说 0 是「中立位」，
+    /// 会把「这架飞机没报这个字段」变成一条假的水平飞行数据。
+    /// </summary>
+    private static double? GetNullableDouble(JsonElement r, string name)
+    {
+        if (!r.TryGetProperty(name, out var e)) return null;
+        return e.ValueKind switch
+        {
+            JsonValueKind.Number => e.GetDouble(),
+            JsonValueKind.String => double.TryParse(e.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null,
+            _ => null,
         };
     }
 

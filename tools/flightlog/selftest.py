@@ -27,9 +27,12 @@
 13. MFD 导出（``--mfd-json``）：开关语义（两种用法）、stdout 纯 JSON、schema/字段集合、
     点数上限、缺失 ``null``，以及平均值的「死亡前 10 s 窗口排除 + 只在死亡前 30 s 窗口内
     生效的 MAD 3σ 尖峰过滤」（合成数据核对：窗口内尖峰剔除、窗口外低速段保留、无死亡不过滤）。
-14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET 编号（屏幕 n/9、打印/PDF
-    (n+1)/10，PDF 封面 01/10、PNG 复盘卡 01/01）/标题栏、打印分页 CSS、
+14. A 工程蓝图版式：默认主题、每页图框/图号/页脚 SHEET 编号（屏幕 n/N、打印/PDF
+    (n+1)/(N+1)，N = 实际内容页数；PDF 封面 01/(N+1)、PNG 复盘卡 01/01）/标题栏、打印分页 CSS、
     保存设置二级页（PDF/PNG + 保留批注开关）、内嵌 PNG 复盘卡 SVG 与 canvas 导出钩子。
+14b. 舵面 / 配平 / 指令轴页（0.5.10，姿态页之后、全局总览之前）：有 7 字段多一页
+    （9→10 内容页、PDF 10→11）、无字段整页省略；刻度/stat 口径（r / 对齐 1 采样 p90 /
+    量化台阶）、缺轴文案、图例开关与悬停标记。
 15. 审阅批注规则：速度（最大 IAS + 首次超限速）、高度（最低气压高度）、Es（最低点 +
     断崖**区间**：2 s 滑动平均 dEs/dt 最负处向左右扩到恢复 30% 或最长 10 s，
     带 t0/t1/时长/ΔEs/平均斜率；与最低点 <10 s 合并成「断崖段至最低点」；
@@ -400,6 +403,269 @@ def test_parse_full(tmp: Path) -> None:
     check(model.summary["time"]["span_s"] > 0, "摘要时长 > 0")
 
 
+def test_surface_fields(tmp: Path) -> None:
+    print("\n[2b] 舵面 / 配平 / 指令轴：schema 2 解析、缺键为 None、不进入图表")
+    path = tmp / "surface.jsonl"
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 2,
+                "app": "0.5.10-selftest",
+                "utc": _iso(EPOCH0, 7),
+                "vehicle": "f_16a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        ),
+        # 四个字段齐
+        json.dumps(
+            _sample(
+                1.0,
+                EPOCH0,
+                aileron_pct=-12.0,
+                elevator_pct=-20.0,
+                rudder_pct=7.0,
+                trimmer=0.0875,
+                stick_ailerons=-0.34,
+                stick_elevator=0.12,
+                pedals=-0.05,
+            ),
+            ensure_ascii=False,
+        ),
+        # 一个都没有（老机型 / 旧日志）—— 必须是 None，不能是 0
+        json.dumps(_sample(2.0, EPOCH0), ensure_ascii=False),
+        # 只有舵面、没有配平（缺一半也不能互相顶替）
+        json.dumps(_sample(3.0, EPOCH0, aileron_pct=5.0), ensure_ascii=False),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    model = P.analyze(str(path))
+
+    check(model.meta["schema"] == 2, "meta schema=2 被保留（不会因新版本被拒）")
+    samples = model.flights[0].samples
+    s_full = next(s for s in samples if s["t"] == 1.0)
+    s_bare = next(s for s in samples if s["t"] == 2.0)
+    s_half = next(s for s in samples if s["t"] == 3.0)
+
+    check(close(s_full["aileron_pct"], -12.0, 1e-9) and close(s_full["elevator_pct"], -20.0, 1e-9)
+          and close(s_full["rudder_pct"], 7.0, 1e-9), "舵面三字段按原值解析")
+    check(close(s_full["trimmer"], 0.0875, 1e-9), "配平量按原值解析（−1..1 不被归一化）")
+    check(close(s_full["stick_ailerons"], -0.34, 1e-9) and close(s_full["stick_elevator"], 0.12, 1e-9)
+          and close(s_full["pedals"], -0.05, 1e-9), "指令轴三字段按原值解析（0.001 级精度不被截断）")
+    check(all(s_bare[k] is None for k in
+              ("aileron_pct", "elevator_pct", "rudder_pct", "trimmer",
+               "stick_ailerons", "stick_elevator", "pedals")),
+          "缺键全为 None（不是 0，避免画成舵面中立位 / 配平归零）")
+    check(close(s_half["aileron_pct"], 5.0, 1e-9) and s_half["trimmer"] is None
+          and s_half["stick_elevator"] is None,
+          "只有舵面时配平与指令轴仍为 None（两类数据不互相顶替）")
+
+    # 「只解析不画」：这些键不进 series，也不影响统计与页数
+    check("aileron_pct" not in model.flights[0].series, "舵面字段不进图表序列")
+    check("trimmer" not in model.flights[0].series, "配平字段不进图表序列")
+    check("stick_elevator" not in model.flights[0].series, "指令轴字段不进图表序列")
+    html = render_report(model)
+    check('id="page-attitude"' in html, "报告仍正常生成（新字段不影响版式）")
+    check('id="page-surface"' in html, "有舵面字段 → 自动多出舵面页（姿态页之后）")
+    check(_content_pages(html) == 8,
+          "这份 3 样本单架次日志：7 页基础（无全局总览 / 无 dEs/dt）+ 舵面页 = 8 页"
+          "（实际 %d）" % _content_pages(html))
+    check("舵面 / 配平 / 指令轴" in html, "舵面页标题为「舵面 / 配平 / 指令轴」")
+    check('data-series="AIL_SURF"' in html and 'data-series="AIL_CMD"' in html,
+          "舵面 / 指令轴曲线进入图例开关（series id = AIL_SURF / AIL_CMD）")
+
+
+def test_surface_preview(tmp: Path) -> None:
+    print("\n[2c] 舵面预览页：有数据 / 缺数据两种日志都能出页")
+    from flightlog.surface_preview import build_preview
+
+    full = tmp / "pv-full.jsonl"
+    lines = [json.dumps({"type": "meta", "schema": 2, "app": "0.5.10-selftest",
+                         "utc": _iso(EPOCH0, 7), "vehicle": "f_16a", "rate": "per-sample"},
+                        ensure_ascii=False)]
+    for i in range(120):
+        t = i * 0.05
+        surf = -100.0 if i % 2 == 0 else 100.0
+        lines.append(json.dumps(_sample(t, EPOCH0, aileron_pct=surf, elevator_pct=surf * 0.5,
+                                        rudder_pct=0.0, trimmer=0.25,
+                                        stick_ailerons=surf / 100.0,
+                                        stick_elevator=surf * 0.005,
+                                        pedals=0.0), ensure_ascii=False))
+    full.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out_full = tmp / "pv-full.html"
+    written = build_preview(str(full), str(out_full))
+    page = Path(written).read_text(encoding="utf-8")
+    check(page.startswith("<!DOCTYPE html>"), "预览页是完整 HTML")
+    check(page.count("<svg") == 1 and page.count("<path") >= 4, "四张图都画出了折线（含配平）")
+    check("舵面" in page and "指令轴" in page and "配平" in page, "三个区块标题都在")
+    check("0.25" in page, "配平数值进了统计表")
+    check("无数据" not in page, "有数据的轴不出现「无数据」")
+
+    bare = tmp / "pv-bare.jsonl"
+    bare.write_text(
+        json.dumps({"type": "meta", "schema": 1, "app": "0.5.8", "utc": _iso(EPOCH0, 7),
+                    "vehicle": "f_15ex", "rate": "per-sample"}, ensure_ascii=False) + "\n"
+        + "\n".join(json.dumps(_old_sample(i * 0.5, EPOCH0), ensure_ascii=False) for i in range(6)) + "\n",
+        encoding="utf-8")
+    page_bare = Path(build_preview(str(bare), str(tmp / "pv-bare.html"))).read_text(encoding="utf-8")
+    check("没有舵面字段" in page_bare, "老日志给出「没有舵面字段」的提示而不是画 0 线")
+    check("该日志没有配平数据" in page_bare, "缺配平时写明原因")
+
+
+def test_surface_preview_interactive(tmp: Path) -> None:
+    print("\n[2d] 舵面正式页：交互脚本 / 轴开关 / 缩放 / 事件标记 / 导出 / 空态 / 自包含")
+    from flightlog.surface_preview import build_preview
+
+    # ---- 合成日志：20 s / 200 采样 / 四种事件 ----
+    path = tmp / "pv-interactive.jsonl"
+    lines = [json.dumps({"type": "meta", "schema": 2, "app": "0.5.10-selftest",
+                         "utc": _iso(EPOCH0, 7), "vehicle": "f_16a", "rate": "per-sample"},
+                        ensure_ascii=False)]
+    for i in range(200):
+        t = round(i * 0.1, 3)
+        surf = round(60.0 * math.sin(t), 3)
+        lines.append(json.dumps(
+            _sample(t, EPOCH0, vehicle="f_16a", aileron_pct=surf,
+                    elevator_pct=round(-surf / 2.0, 3), rudder_pct=round(surf / 3.0, 3),
+                    trimmer=0.05, stick_ailerons=round(surf / 100.0, 3),
+                    stick_elevator=round(-surf / 200.0, 3),
+                    pedals=round(surf / 300.0, 3)),
+            ensure_ascii=False))
+    for kind, event_t, extra in (("kill", 4.0, {"target": "f_16c"}),
+                                 ("gap", 8.0, {"gap": 2.5}),
+                                 ("death", 13.0, {}),
+                                 ("spawn", 13.5, {})):
+        record = {"type": "event", "kind": kind, "t": event_t,
+                  "utc": _iso(EPOCH0 + event_t, 7)}
+        record.update(extra)
+        lines.append(json.dumps(record, ensure_ascii=False))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    page = Path(build_preview(str(path), str(tmp / "pv-interactive.html"))).read_text(encoding="utf-8")
+
+    check(page.startswith("<!DOCTYPE html>"), "正式页是完整 HTML")
+    check(page.count("<svg") == 1, "整页只有一个 <svg>（五张图共用一个坐标空间）")
+    check("<path" not in page or page.count("<path") >= 4, "折线仍由 Python 静态生成（无 JS 也能看）")
+    check("无数据" not in page, "正式页不会出现「无数据」这种含糊文案")
+
+    # 自包含：无外链脚本 / 样式 / 字体 / CDN / http(s)，也没有 XML 命名空间字面量
+    check("<script src" not in page and "<link " not in page, "没有外链脚本 / 样式")
+    check("@import" not in page and "fonts.googleapis" not in page and "cdn." not in page,
+          "没有外部字体 / CDN")
+    check("http://" not in page and "https://" not in page, "整页没有 http(s) 外链")
+
+    # 交互数据：内联 JSON 可解析、与轴对齐、事件齐全
+    match = re.search(r'<script type="application/json" id="surface-data">(.*?)</script>', page, re.S)
+    check(bool(match), "内联交互数据块存在（id=surface-data）")
+    data = json.loads(match.group(1)) if match else {}
+    check(len(data.get("t", [])) == 200, "交互数据点数 = 窗口采样数")
+    axes = data.get("axes", {})
+    check(set(axes) == {"ail", "ele", "rud"}, "三根轴的交互数据都在")
+    check(all(len(axes[k]["surf"]) == 200 and len(axes[k]["stick"]) == 200 for k in axes),
+          "舵面 / 指令轴数组与时间轴等长")
+    check(len(data.get("trim", [])) == 200, "配平数组与时间轴等长")
+    event_kinds = sorted(item["kind"] for item in data.get("events", []))
+    check(event_kinds == ["death", "gap", "kill", "spawn"], "四种事件都进了交互数据")
+    check(all(item.get("color") and item.get("label") for item in data.get("events", [])),
+          "事件带颜色与中文标签")
+    layout_blocks = [block["id"] for block in data.get("layout", {}).get("blocks", [])]
+    check(layout_blocks == ["ail", "ele", "rud", "trim", "diff"],
+          "布局数据按 副翼 / 升降 / 方向 / 配平 / 差值 排列")
+
+    # 交互脚本标记
+    for marker in ('id="tooltip"', 'id="tt-time"', 'id="tt-rows"', 'id="zoom-state"',
+                   'id="zoom-reset"', 'id="export-png"', 'id="print-pdf"',
+                   'id="hover-layer"', 'id="hv-v"', 'id="hv-h"', 'id="hv-dots"',
+                   'id="brush-layer"', 'id="brush-rect"', 'id="evt-toggle"'):
+        check(marker in page, "交互元素 %s 存在" % marker)
+    check("残差" in page and "nearestIndex" in page, "tooltip 读数包含残差与最近采样查找")
+    for marker in ("pointerdown", "pointermove", "pointerup", "dblclick",
+                   "function zoomTo", "function resetZoom", "function applyZoom"):
+        check(marker in page, "交互脚本包含 %s" % marker)
+
+    # 轴开关 / 预设 / 事件开关
+    for kind in ("ail", "ele", "rud", "trim", "diff"):
+        check(('data-axis="%s"' % kind) in page, "轴开关 %s 存在" % kind)
+    check('data-preset="all"' in page and 'data-preset="diff"' in page, "两个预设按钮都在")
+    check("全部显示" in page and "只看差值" in page, "预设按钮有中文标签")
+    check('data-role="events"' in page and page.count('stroke-opacity="0.55"') >= 20,
+          "事件竖线画进每张图（4 事件 × 5 图）")
+    check("数据中断 2.5 s" in page and "击落 f_16c" in page, "事件短标签带断档 / 目标")
+
+    # 导出 / 打印
+    check("XMLSerializer" in page and "toBlob" in page, "PNG 导出走 SVG 序列化 + canvas")
+    check("window.print" in page and "@media print" in page, "打印 / PDF 走 window.print + 打印样式")
+    check('"exportName"' in page and "舵面预览-f_16a-" in page, "导出文件名带机型与时间")
+
+    # 说明文案（三条硬要求）
+    check("指令轴 = 配平 + 增稳后的最终指令" in page, "说明「指令轴 = 配平 + 增稳后的最终指令」")
+    check("trimmer 只在关闭「航电增稳 / 教练模式」时有值" in page, "说明 trimmer 只在关增稳时有值")
+    check("A-10" in page and "分裂副翼" in page, "说明 A-10 分裂副翼要单独看")
+    check("采样滞后" in page and "24 ms" in page, "说明差值尖峰来自采样滞后")
+
+    # 体积上限
+    check(len(page.encode("utf-8")) < 900_000,
+          "200 采样页面体积 < 900 KB（实际 %d KB）" % (len(page.encode("utf-8")) // 1024))
+
+    # ---- 抽稀：3000 采样 → 1400 点 ----
+    long_path = tmp / "pv-interactive-long.jsonl"
+    long_lines = [json.dumps({"type": "meta", "schema": 2, "app": "0.5.10-selftest",
+                              "utc": _iso(EPOCH0, 7), "vehicle": "f_16a", "rate": "per-sample"},
+                             ensure_ascii=False)]
+    for i in range(3000):
+        t = round(i * 0.02, 3)
+        surf = round(80.0 * math.sin(t * 0.7), 1)
+        long_lines.append(json.dumps(
+            _sample(t, EPOCH0, vehicle="f_16a", aileron_pct=surf, elevator_pct=surf,
+                    rudder_pct=surf, trimmer=0.0, stick_ailerons=round(surf / 100.0, 3),
+                    stick_elevator=round(surf / 100.0, 3), pedals=round(surf / 100.0, 3)),
+            ensure_ascii=False))
+    long_path.write_text("\n".join(long_lines) + "\n", encoding="utf-8")
+    long_page = Path(build_preview(str(long_path), str(tmp / "pv-interactive-long.html"))).read_text(encoding="utf-8")
+    long_match = re.search(r'id="surface-data">(.*?)</script>', long_page, re.S)
+    long_data = json.loads(long_match.group(1)) if long_match else {}
+    check(len(long_data.get("t", [])) <= 1401, "3000 采样被抽稀到 ≤1401 点（上限 1400 + 末点）")
+    check("1,401" in long_page and "3,000" in long_page, "页头写明抽稀比例")
+
+    # ---- 空态：schema 1 / 七字段全缺 ----
+    bare = tmp / "pv-interactive-bare.jsonl"
+    bare.write_text(
+        json.dumps({"type": "meta", "schema": 1, "app": "0.5.8", "utc": _iso(EPOCH0, 7),
+                    "vehicle": "f_15ex", "rate": "per-sample"}, ensure_ascii=False) + "\n"
+        + "\n".join(json.dumps(_old_sample(i * 0.5, EPOCH0), ensure_ascii=False)
+                    for i in range(8)) + "\n",
+        encoding="utf-8")
+    bare_page = Path(build_preview(str(bare), str(tmp / "pv-interactive-bare.html"))).read_text(encoding="utf-8")
+    check("<svg" not in bare_page and "<path" not in bare_page, "空态不画图（没有 0 线）")
+    check("这份日志没有舵面字段（0.5.10 之前录制）" in bare_page, "空态标题写明「没有舵面字段」与版本")
+    check("该日志没有配平数据" in bare_page, "空态也说明没有配平数据")
+    check("也不画 0 线" in bare_page, "空态明确说不画 0 线")
+    check("ACMI" in bare_page and ".wrpl" in bare_page, "空态覆盖 ACMI（回放）来源")
+    check(bare_page.count("—") >= 9, "空态统计表所有数值写 —")
+    check('id="toolbar"' not in bare_page, "空态不显示交互工具条")
+
+    # ---- 部分字段：只有副翼舵面，缺配平 / 升降 ----
+    partial = tmp / "pv-interactive-partial.jsonl"
+    partial_lines = [json.dumps({"type": "meta", "schema": 2, "app": "0.5.10-selftest",
+                                 "utc": _iso(EPOCH0, 7), "vehicle": "f_16a", "rate": "per-sample"},
+                                ensure_ascii=False)]
+    for i in range(60):
+        partial_lines.append(json.dumps(
+            _sample(round(i * 0.1, 3), EPOCH0, vehicle="f_16a",
+                    aileron_pct=round(40.0 * math.sin(i * 0.2), 1)),
+            ensure_ascii=False))
+    partial.write_text("\n".join(partial_lines) + "\n", encoding="utf-8")
+    partial_page = Path(build_preview(str(partial), str(tmp / "pv-interactive-partial.html"))).read_text(encoding="utf-8")
+    partial_match = re.search(r'id="surface-data">(.*?)</script>', partial_page, re.S)
+    partial_data = json.loads(partial_match.group(1)) if partial_match else {}
+    check('<svg' in partial_page or "<svg" in partial_page, "部分字段日志仍出图")
+    check(all(v is None for v in partial_data.get("axes", {}).get("ail", {}).get("stick", [])),
+          "缺指令轴字段在数据里是 null（不是 0）")
+    check(all(v is None for v in partial_data.get("trim", [])), "缺配平字段在数据里是 null（不是 0）")
+    check('data-role="trim"' not in partial_page, "缺配平时不画配平线")
+    check("该窗口没有升降舵数据" in partial_page, "缺升降舵时图内写明缺字段")
+    check("该日志没有配平数据" in partial_page, "缺配平时图内写明原因")
+
+
 def test_parse_old(tmp: Path) -> None:
     print("\n[2] 旧格式：无事件 / 无 vehicle / 无姿态 / 坏行 / 时间跳变")
     path = tmp / "old.jsonl"
@@ -489,11 +755,13 @@ def test_report_html(tmp: Path) -> None:
         "速度/高度/Es/dEs/dt/Vy/迎角过载/姿态 各一页且顺序固定",
     )
     check(page_ids[-1] == "page-global", "多架次时最后追加全局总览页")
-    check(html.count('<section class="page') == 9, "每页一个 .page 容器（翻页用 CSS 切换）")
-    check(html.count('<section class="page active"') == 1, "初始只有第 1 页带 active")
-    check(html.count('class="flight-view') == 24,
+    desktop_html = _desktop_html(html)
+    check(_content_pages(html) == 9, "每页一个 .page 容器（翻页用 CSS 切换）")
+    check(desktop_html.count('<section class="page active"') == 1,
+          "初始只有第 1 页带 active")
+    check(desktop_html.count('class="flight-view') == 24,
           "8 个可切换页 × 3 架次 = 24 个架次视图（切架次只换当前页）")
-    check(html.count('class="flight-view active" data-flight="1"') == 8,
+    check(desktop_html.count('class="flight-view active" data-flight="1"') == 8,
           "每个可切换页默认显示架次 1")
 
     # ---- 页码 / 导航 / 圆点 / 架次选择器 ----
@@ -631,7 +899,8 @@ def test_avg_report_html(tmp: Path) -> None:
 
     check('id="avgbar-speed"' in html, "速度页有平均速度控件条 #avgbar-speed")
     check(html.count('id="avgbar-speed"') == 1, "控件条只在速度页出现一次")
-    check(html.count('class="avgbar"') == 1, "其它页没有平均速度控件条")
+    check(_desktop_html(html).count('class="avgbar"') == 1,
+          "其它页没有平均速度控件条")
     check('class="page-body speed-body"' in html, "速度页用 speed-body 布局（控件 + 图）")
     check('data-avg-start' in html and 'data-avg-end' in html, "有起止时间输入框")
     check('type="number"' in html and 'step="0.1"' in html, "输入框是数字框、步进 0.1 s")
@@ -646,8 +915,10 @@ def test_avg_report_html(tmp: Path) -> None:
     check('id="avg-ias-f1-speed"' in html and 'id="avg-tas-f1-speed"' in html
           and 'id="avg-mach-f1-speed"' in html,
           "平均 IAS/TAS/Mach 都画了水平虚线（id 可被 JS 定位）")
-    check(html.count('id="avg-band-') == 3, "3 个架次各有一份区间底纹（共 %d）" % html.count('id="avg-band-'))
-    check(html.count('class="avg-line"') == 9, "3 架次 × 3 条平均虚线 = 9 条")
+    desktop_html = _desktop_html(html)
+    check(desktop_html.count('id="avg-band-') == 3,
+          "3 个架次各有一份区间底纹（共 %d）" % desktop_html.count('id="avg-band-'))
+    check(desktop_html.count('class="avg-line"') == 9, "3 架次 × 3 条平均虚线 = 9 条")
 
     # 静态默认值 = 整个架次全程的平均
     m = re.search(r'<b data-avg-val="ias">([^<]+)</b>', html)
@@ -669,7 +940,8 @@ def test_avg_report_html(tmp: Path) -> None:
           "图例里说明虚线/底纹含义")
     check('id="page-speed"' in html and "svg-f1-speed" in html,
           "速度页与速度图仍然完好（没有破坏原结构）")
-    check(html.count('class="flight-view') == 24, "各页架次视图数量未受影响")
+    check(_desktop_html(html).count('class="flight-view') == 24,
+          "各页架次视图数量未受影响")
     check('id="page-altitude"' in html and 'id="page-attitude"' in html,
           "其它数据页仍正常生成")
 
@@ -1014,7 +1286,7 @@ def test_series_toggles(tmp: Path) -> None:
     model = P.analyze(str(jsonl))
     html = render_report(model)
 
-    page_nos = re.findall(r'data-page-no="(\d+)"', html)
+    page_nos = re.findall(r'data-page-no="(\d+)"', _desktop_html(html))
     check(page_nos == [str(index + 1) for index in range(len(page_nos))] and len(page_nos) == 9,
           "每页写死 data-page-no 1..9（localStorage 按页隔离，共 %d 页）" % len(page_nos))
 
@@ -1983,7 +2255,7 @@ def test_replay_cli(tmp: Path) -> None:
     check("回放估算数据" in html and "IAS = EAS 近似" in html, "页眉写明回放估算数据（IAS=EAS 近似）")
     check("非座舱遥测" in html, "页眉写明非座舱遥测")
     check("玩家 玩家甲" in html, "架次徽标带玩家名")
-    check('id="page-global"' in html and html.count('<section class="page') == 9,
+    check('id="page-global"' in html and _content_pages(html) == 9,
           "单玩家回放 9 页（含全局总览）")
     check('id="player-bar"' not in html, "单玩家不出玩家切换器")
     check("window.__FLIGHTLOG__=" in html, "回放报告也内联悬停数据")
@@ -2006,7 +2278,7 @@ def test_replay_cli(tmp: Path) -> None:
         )
     check(code == 0, "多玩家出报告退出码 0")
     html2 = out_html2.read_text(encoding="utf-8")
-    check(html2.count('<section class="page') == 8, "多玩家回放 8 页（不含全局总览）")
+    check(_content_pages(html2) == 8, "多玩家回放 8 页（不含全局总览）")
     check('id="page-global"' not in html2, "多玩家不生成全局总览页")
     check('id="player-bar"' in html2 and 'data-player-btn="玩家甲"' in html2,
           "多玩家页眉有玩家切换按钮")
@@ -2070,7 +2342,7 @@ def _cover_card_block(html: str, svg_id: str) -> str:
 def _behead_cover_svg(svg: str) -> str:
     """把封面卡的 ``-cover`` id 后缀去掉，便于和 PNG 复盘卡逐字节比较（证明复用）。
 
-    封面页脚按 PDF 统一编号写成 ``SHEET 01/10``（第 1 页 / 共 10 页），PNG 单张卡
+    封面页脚按 PDF 统一编号写成 ``SHEET 01/<pdf_total>``（第 1 页 / 共 pdf_total 页），PNG 单张卡
     保持 ``SHEET 01/01``；除这处页码外两份卡必须逐字节相同，比较前先把页脚归一化。
     """
     svg = re.sub(r"SHEET 01/\d{2}", "SHEET 01/01", svg)
@@ -2082,6 +2354,34 @@ def _behead_cover_svg(svg: str) -> str:
         .replace("pcard-lines-a-cover", "pcard-lines-a")
         .replace("pcard-paper-a-cover", "pcard-paper-a")
     )
+
+
+def _desktop_html(html: str) -> str:
+    """只取**横版页面**那一层（``#pages``）：竖版页面（``#pages-mobile``）在它后面。
+
+    报告 HTML 里两套页面共存（屏幕横版 / 导出竖版），"内容页数 / 页脚 / 图号"
+    这类断言必须只看横版层，否则会数成两倍。
+    """
+    marker = 'id="pages-mobile"'
+    index = html.find(marker)
+    return html[:index] if index >= 0 else html
+
+
+def _mobile_html(html: str) -> str:
+    """只取竖版页面那一层（``#pages-mobile``）。"""
+    marker = 'id="pages-mobile"'
+    index = html.find(marker)
+    return html[index:] if index >= 0 else ""
+
+
+def _content_pages(html: str) -> int:
+    """横版内容页数（不含封面；屏幕翻页 / 页码用）。"""
+    return _desktop_html(html).count('<section class="page')
+
+
+def _mobile_content_pages(html: str) -> int:
+    """竖版内容页数（舵面页会拆成 2 页，通常比横版多 1）。"""
+    return _mobile_html(html).count('<section class="page')
 
 
 def test_blueprint_report(tmp: Path) -> None:
@@ -2099,19 +2399,41 @@ def test_blueprint_report(tmp: Path) -> None:
           "蓝图 CSS 含 chrome（图框层 / 坐标纸网格）")
     check(".bp-sheet{" in html and ".bp-tb{" in html,
           "蓝图 CSS 含页脚 SHEET 与标题栏样式")
-    check('content:"FIG. " counter(fig,decimal-leading-zero)' in html,
-          "图号由 CSS counter 生成（每页 FIG. 0n · 标题）")
-    check(html.count('class="bp-chrome"') == 9, "9 页各有图框 chrome（%d）" % html.count('class="bp-chrome"'))
-    for index in range(1, 10):
-        check("SHEET %02d/09" % index in html, "页脚 SHEET %02d/09" % index)
+    check('content:"FIG. " attr(data-fig)' in html,
+          "图号由 Python 写死的 data-fig 生成（屏幕翻页也是 FIG. 09，不靠 CSS counter）")
+    # 页数按**实际内容页数**推导（本样例 schema 1 没有舵面字段 → 9 页；
+    # 有舵面字段时是 10 页，见 test_surface_report）。别再写死 /09、/10。
+    content_pages = _content_pages(html)
+    pdf_total = content_pages + 1  # 封面 = PDF 第 1 页
+    fig_numbers = re.findall(r'<section class="page[^"]*"[^>]*data-fig="(\d+)"',
+                            _desktop_html(html))
+    check(fig_numbers == ["%02d" % index for index in range(1, content_pages + 1)],
+          "每页 data-fig = 01…%02d（%s）" % (content_pages, fig_numbers))
+    title_figs = re.findall(r'<div class="page-title"[^>]*data-fig="(\d+)"',
+                            _desktop_html(html))
+    check(title_figs == fig_numbers,
+          "页标题也带 data-fig（CSS attr() 不继承，图号才能显示，%s）" % title_figs)
+    check(content_pages == 9, "样例报告 9 个内容页（实际 %d）" % content_pages)
+    desktop_html = _desktop_html(html)
+    check(desktop_html.count('class="bp-chrome"') == content_pages,
+          "每页各有图框 chrome（%d）" % desktop_html.count('class="bp-chrome"'))
+    for index in range(1, content_pages + 1):
+        check("SHEET %02d/%02d" % (index, content_pages) in desktop_html,
+              "页脚 SHEET %02d/%02d" % (index, content_pages))
 
-    # ---- 页脚统一编号：屏幕 01/09…09/09，打印/PDF 02/10…10/10（封面 = PDF 第 1 页） ----
-    screen_sheets = re.findall(r'<span class="bp-sheet">([^<]*)</span>', html)
-    print_sheets = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>', html)
-    check(screen_sheets == ["SHEET %02d/09" % index for index in range(1, 10)],
-          "屏幕页脚仍是 SHEET 01/09…09/09（%s）" % screen_sheets)
-    check(print_sheets == ["SHEET %02d/10" % index for index in range(2, 11)],
-          "打印/PDF 页脚 02/10…10/10（第 n 个内容页 = n+1；%s）" % print_sheets)
+    # ---- 页脚统一编号：屏幕 01/N…N/N，打印/PDF 02/(N+1)…(N+1)/(N+1)（封面 = PDF 第 1 页） ----
+    screen_sheets = re.findall(r'<span class="bp-sheet">([^<]*)</span>', desktop_html)
+    print_sheets = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>', desktop_html)
+    check(screen_sheets == [
+        "SHEET %02d/%02d" % (index, content_pages)
+        for index in range(1, content_pages + 1)
+    ], "屏幕页脚 = SHEET 01/%02d…%02d/%02d（%s）"
+       % (content_pages, content_pages, content_pages, screen_sheets))
+    check(print_sheets == [
+        "SHEET %02d/%02d" % (index, pdf_total)
+        for index in range(2, pdf_total + 1)
+    ], "打印/PDF 页脚 = 02/%02d…%02d/%02d（第 n 个内容页 = n+1；%s）"
+       % (pdf_total, pdf_total, pdf_total, print_sheets))
     check(".bp-sheet-print{display:none" in html,
           "屏幕态隐藏 .bp-sheet-print（不改屏幕版面）")
     check(".bp-sheet{display:none!important}" in html
@@ -2127,7 +2449,8 @@ def test_blueprint_report(tmp: Path) -> None:
           "右下角标题栏含项目 / 机型字段")
     check("DATE" in block_text and "REV" in block_text and "DWG NO." in block_text,
           "标题栏含日期 / REV / 图号字段")
-    check(html.count('class="page-title"') == 9, "9 个页面标题（图号挂在其前面）")
+    check(_desktop_html(html).count('class="page-title"') == content_pages,
+          "%d 个页面标题（图号挂在其前面）" % content_pages)
 
     # ---- 保存二级页 ----
     check('id="btn-save"' in html and 'class="header-save"' in html, "页眉有「保存」按钮")
@@ -2146,7 +2469,7 @@ def test_blueprint_report(tmp: Path) -> None:
           "内嵌两份复盘卡 SVG（带批注 / 无批注）")
     annotated = _blueprint_svg_block(html, "debrief-svg-annotated")
     clean = _blueprint_svg_block(html, "debrief-svg-clean")
-    check('viewBox="0 0 1600 1000"' in annotated, "复盘卡 1600×1000")
+    check('viewBox="0 0 3200 1800"' in annotated, "横版复盘卡 3200×1800（基准 2×）")
     check("COMBAT FLIGHT DEBRIEF" in annotated, "复盘卡标题（档案袋风格）")
     check("DEBRIEF" in annotated and "REVIEWED" in annotated, "复盘卡有印章")
     check('class="ann-crayon"' in annotated, "带批注卡有手绘红圈")
@@ -2163,7 +2486,8 @@ def test_blueprint_report(tmp: Path) -> None:
           "内联 JS 暴露导出/保存状态钩子（便于自动化验证）")
     check("function renderDebriefCanvas" in html and "function exportDebriefPNG" in html,
           "PNG 导出实现（canvas + a[download]）在页面内联")
-    check("SHEET 01/01" in annotated and "SHEET 01/10" not in annotated,
+    check("SHEET 01/01" in annotated
+          and ("SHEET 01/%02d" % pdf_total) not in annotated,
           "PNG 复盘卡页脚保持 SHEET 01/01（单张卡不是 PDF 页）")
 
     # ---- PDF 第 1 页封面：复用 PNG 复盘卡（屏幕隐藏 / 打印显示 / 批注开关联动） ----
@@ -2174,36 +2498,39 @@ def test_blueprint_report(tmp: Path) -> None:
     check(html.find("<main id=\"pages\"") < html.find('id="pdf-cover"') <
           html.find('id="page-overview"'),
           "封面在 <main> 里、排在全部内容页之前（PDF 第 1 页）")
-    check("#pdf-cover{display:none}" in html,
-          "屏幕不显示封面（display:none，不占 9 页翻页）")
-    cover_rules = re.findall(r"#pdf-cover\{([^}]*)\}", html)
-    check(any("display:block" in rule and "width:1600px" in rule
-              and "height:1000px" in rule and "page-break-after:always" in rule
-              for rule in cover_rules),
-          "打印时封面整页显示：1600×1000 + page-break-after:always（无页边距）")
-    check(any("display:block" in rule for rule in
-              re.findall(r"body\.pdf-capture #pdf-cover\{([^}]*)\}", html)),
-          "方案 B 的打印态仿真（.pdf-capture）也显示封面")
+    check("#pdf-cover,#pdf-cover-m{display:none}" in html
+          and "#debrief-src,#debrief-src-m{" in html,
+          "屏幕不显示两版封面 / 复盘卡隐藏容器都在屏外（不占内容页翻页）")
+    check("#pages>.page,#pages>.pdf-cover{page:d-high;width:1600px!important;"
+          "height:900px!important;zoom:2.0000}" in html,
+          "打印时封面 = 1600×900 设计页 × zoom 2 → 3200×1800 物理页（与内容页同尺寸）")
+    check("page-break-after:always" in html, "封面与内容页都 page-break-after:always")
+    check("body.pdf-capture .pdf-cover{" in html
+          and "#pages>.pdf-cover{width:1600px!important;height:900px!important}" in html,
+          "方案 B 的打印态仿真（.pdf-capture）也显示封面（设计尺寸捕获）")
     cover_ann = _cover_card_block(html, "debrief-svg-annotated-cover")
     cover_clean = _cover_card_block(html, "debrief-svg-clean-cover")
-    check("SHEET 01/10" in cover and "SHEET 01/01" not in cover,
-          "PDF 封面页脚 = SHEET 01/10（第 1 页 / 共 10 页）")
-    check(cover_ann.count("SHEET 01/10") == 1 and cover_clean.count("SHEET 01/10") == 1,
-          "封面 annotated / clean 两份卡的页脚都是 SHEET 01/10")
-    check('viewBox="0 0 1600 1000"' in cover_ann and 'viewBox="0 0 1600 1000"' in cover_clean,
-          "封面 = 1600×1000 复盘卡（annotated + clean 两份）")
+    cover_sheet = "SHEET 01/%02d" % pdf_total
+    check(cover_sheet in cover and "SHEET 01/01" not in cover,
+          "PDF 封面页脚 = %s（第 1 页 / 共 %d 页）" % (cover_sheet, pdf_total))
+    check(cover_ann.count(cover_sheet) == 1 and cover_clean.count(cover_sheet) == 1,
+          "封面 annotated / clean 两份卡的页脚都是 %s" % cover_sheet)
+    check('viewBox="0 0 3200 1800"' in cover_ann and 'viewBox="0 0 3200 1800"' in cover_clean,
+          "封面 = 3200×1800 复盘卡（annotated + clean 两份）")
     check(_behead_cover_svg(cover_ann) == annotated,
           "封面 annotated 卡与 PNG 复盘卡逐字节相同（直接复用 _debrief_card_svg）")
     check(_behead_cover_svg(cover_clean) == clean,
           "封面 clean 卡与 PNG 无批注卡逐字节相同（同一画法）")
-    check("body.no-annot #pdf-cover .pdf-cover-annotated{display:none}" in html
-          and "body.no-annot #pdf-cover .pdf-cover-clean{display:block}" in html,
+    check("body.no-annot .pdf-cover .pdf-cover-annotated," in html
+          and "body.no-annot .pdf-cover .pdf-cover-clean," in html,
           "封面随「保留批注」开关切换 annotated / clean")
-    check('data-pdf-pages="10"' in html, "PDF 总页数 = 10（封面 = 第 1 页 + 9 页内容）")
+    check('data-pdf-pages="%d"' % pdf_total in html,
+          "PDF 总页数 = %d（封面 = 第 1 页 + %d 页内容）" % (pdf_total, content_pages))
     check('class="page ' not in cover and "data-page-no" not in cover,
           "封面不是 .page、不写 data-page-no（不进 pager / 不影响 localStorage 页号）")
-    check("10 页" in html and "封面 + 9 页" in html,
-          "保存设置页文案写明 10 页（封面 + 9 页）")
+    check(">%d</span> 页" % pdf_total in html
+          and "封面 + %d 页" % content_pages in html,
+          "保存设置页文案写明 %d 页（封面 + %d 页）" % (pdf_total, content_pages))
 
     # ---- 批注（屏幕十字/方框；打印手绘圈） ----
     speed = _blueprint_svg_block(html, "svg-f1-speed")
@@ -2263,7 +2590,11 @@ def test_blueprint_report(tmp: Path) -> None:
     check("无批注对照表" in clean, "无批注卡写明「无批注对照表」")
 
     # ---- 打印 CSS：C 档案袋纸张 + 逐页分页 + 批注开关 ----
-    check("@page{size:1600px 1000px" in html, "打印页尺寸 1600×1000")
+    check("@page d-high{size:3200px 1800px;margin:0}" in html
+          and "@page m-high{size:1200px 1600px;margin:0}" in html
+          and "@page d-std{size:1600px 900px;margin:0}" in html
+          and "@page m-std{size:600px 800px;margin:0}" in html,
+          "打印页尺寸按档位 / 清晰度命名（横版 3200×1800、竖版 1200×1600、标准减半）")
     check("page-break-after:always" in html, "每页 page-break-after:always")
     check(".ann-screen{display:none!important}" in html, "打印时隐藏屏幕标记")
     check(".ann-print{display:inline!important}" in html, "打印时显示手绘圈层")
@@ -2276,6 +2607,493 @@ def test_blueprint_report(tmp: Path) -> None:
     glass = render_report(model, theme="glass")
     check('class="bp-chrome"' not in glass, "glass 主题不注入蓝图图框")
     check('id="debrief-svg-annotated"' in glass, "复盘卡导出对所有主题可用")
+
+
+def _write_surface_report_log(path: Path, flights: int = 3, per_flight: int = 60,
+                              full_axes: bool = True) -> None:
+    """合成 schema 2 日志：多架次 + 舵面/配平/指令轴字段（指令轴滞后舵面 1 采样）。
+
+    ``full_axes=False`` 时只给副翼舵面一个字段（其余整条省略 → None，不是 0）。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 2,
+                "app": "0.5.10-selftest",
+                "utc": _iso(EPOCH0, 7),
+                "vehicle": "f_16a",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    t = 1.0
+    step = 0.1
+    index = 0
+    for _flight in range(flights):
+        for _ in range(per_flight):
+            surf = float(round(80.0 * math.sin(index * 0.15)))
+            previous = float(round(80.0 * math.sin(max(0, index - 1) * 0.15)))
+            extra = {"aileron_pct": surf}
+            if full_axes:
+                extra.update(
+                    {
+                        "elevator_pct": round(surf / 2.0),
+                        "rudder_pct": round(-surf / 4.0),
+                        "trimmer": 0.25 if surf >= 0 else -0.05,
+                        "stick_ailerons": round(previous / 100.0, 3),
+                        "stick_elevator": round(previous / 200.0, 3),
+                        "pedals": round(-previous / 400.0, 3),
+                    }
+                )
+            lines.append(
+                json.dumps(_sample(t, EPOCH0, vehicle="f_16a", **extra),
+                           ensure_ascii=False)
+            )
+            t = round(t + step, 3)
+            index += 1
+        t = round(t + 60.0, 3)  # > 30 s → 自动切成新架次
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _flight_payload_json(html: str) -> dict:
+    """从报告里取回 ``window.__FLIGHTLOG__`` 数据（悬停/统计用的那份）。"""
+    match = re.search(r"<script>window\.__FLIGHTLOG__=(.*?);</script>", html, re.S)
+    if not match:
+        return {}
+    return json.loads(match.group(1).replace("<\\/", "</"))
+
+
+def test_surface_report(tmp: Path) -> None:
+    """舵面 / 配平 / 指令轴页：动态页数、页码、统计、缺轴文案、图例开关。"""
+    print("\n[8b] 舵面 / 配平 / 指令轴页：10/9 页动态页码、统计口径、缺轴文案")
+
+    # ---- 调色板：6 套主题都定义了舵面页的颜色；蓝图打印另有墨色 ----
+    surface_colors = ("surf", "cmd_ail", "cmd_ele", "cmd_rud", "trim")
+    check(all(all(name in THEMES[key].chart for name in surface_colors)
+              for key in THEME_KEYS),
+          "6 套主题都定义了 surf / cmd_ail / cmd_ele / cmd_rud / trim（舵面页可区分）")
+    check(all(name in THEMES["blueprint"].print_chart for name in surface_colors),
+          "蓝图打印态给舵面页 5 个颜色都配了纸面墨色")
+    check(all(name in LINE_STYLES for name in (
+        "AIL_SURF", "AIL_CMD", "ELE_SURF", "ELE_CMD", "RUD_SURF", "RUD_CMD",
+        "DIFF_AIL", "DIFF_ELE", "DIFF_RUD", "TRIM")),
+        "舵面页 10 条曲线都登记了线型（阶梯粗 / 指令轴细）")
+
+    # ---- 统计口径（构造：指令轴 = 舵面前移 1 采样 ×100 → 对齐后残差 0） ----
+    rows = [
+        {"aileron_pct": float(i % 5), "stick_ailerons": ((i - 1) % 5) / 100.0}
+        for i in range(40)
+    ]
+    stats = RPT._surface_axis_stats(rows, "aileron_pct", "stick_ailerons")
+    check(stats["n"] == 40, "统计样本数 = 两字段都有的样本数")
+    check(stats["steps"] == 5, "量化台阶数 = 舵面唯一值个数（5）")
+    check(stats["aligned_p90"] is not None and abs(stats["aligned_p90"]) < 1e-9,
+          "对齐 1 采样后 p90 = 0（构造的纯滞后序列）")
+    check(abs(stats["max_abs_diff"] - 400.0) < 1e-9 or stats["max_abs_diff"] > 0,
+          "最大残差按 |舵面 − 指令轴×100| 计算")
+    # 地面尖峰只占 1%（< 2% 尾巴）→ 2%–98% 分位范围不包含 0.978
+    trim_rows = [{"trimmer": 0.01}] * 99 + [{"trimmer": 0.978}]
+    trim = RPT._surface_trim_stats(trim_rows)
+    trim_bounds = RPT._surface_trim_bounds(trim)
+    check(trim["n"] == 100 and trim["nz"] == 100, "配平样本数 / 非零样本数统计正确")
+    check(trim_bounds is not None and trim_bounds[1] < 0.5,
+          "配平轴按 2%%–98%% 分位定范围（0.978 地面尖峰不进轴：%s）" % (trim_bounds,))
+
+    # ---- 有数据：3 架次 → 10 内容页；PDF = 11 页（封面 + 10） ----
+    path = tmp / "surface-report.jsonl"
+    _write_surface_report_log(path)
+    model = P.analyze(str(path))
+    html = render_report(model)
+    page_ids = re.findall(r'<section class="page[^"]*" id="(page-[a-z_]+)"',
+                          _desktop_html(html))
+    content = _content_pages(html)
+    pdf_total = content + 1
+    check(len(page_ids) == 10, "有舵面数据 → 10 个内容页（实际 %d）" % len(page_ids))
+    check(page_ids[8] == "page-surface", "舵面页是第 9 个内容页（姿态页之后）")
+    check(page_ids[-1] == "page-global", "全局总览仍在最后一页（舵面页之前）")
+    check(page_ids[7] == "page-attitude", "舵面页紧跟姿态页")
+    check(_desktop_html(html).count('class="bp-chrome"') == 10,
+          "10 页各有图框 chrome")
+    check('id="page-surface"' in html and "舵面 / 配平 / 指令轴" in html,
+          "舵面页标题为「舵面 / 配平 / 指令轴」")
+    check('data-page="surface"' in html and 'data-page-no="9"' in html,
+          "舵面页带 data-page / data-page-no=9（localStorage 按页隔离）")
+    check('id="page-surface" data-page="surface" data-page-no="9" data-fig="09"' in html,
+          "舵面页图号 data-fig = 09（屏幕也是 FIG. 09）")
+
+    # 页码 / 页脚 / PDF 总页数全部按实际内容页数动态
+    screen_sheets = re.findall(r'<span class="bp-sheet">([^<]*)</span>',
+                               _desktop_html(html))
+    print_sheets = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>',
+                              _desktop_html(html))
+    check(screen_sheets == ["SHEET %02d/10" % index for index in range(1, 11)],
+          "屏幕页脚 SHEET 01/10…10/10（%s）" % screen_sheets)
+    check(print_sheets == ["SHEET %02d/11" % index for index in range(2, 12)],
+          "打印/PDF 页脚 02/11…11/11（第 n 个内容页 = n+1；%s）" % print_sheets)
+    cover = _pdf_cover_block(html)
+    check("SHEET 01/11" in cover and "SHEET 01/10" not in cover,
+          "PDF 封面页脚 = SHEET 01/11（封面 = 第 1 页 / 共 11 页）")
+    check('data-pdf-pages="11"' in html, "data-pdf-pages = 11（内容页 + 封面）")
+    check(">11</span> 页" in html and "封面 + 10 页" in html,
+          "保存设置页文案动态写成 11 页（封面 + 10 页内容）")
+    check("第 1 / 10 页" in html, "翻页页码按 10 内容页显示")
+
+    # 面板 / 数据系列 / 阶梯 / 图例开关 / 悬停
+    for code, title in (("9A", "副翼"), ("9B", "升降舵"), ("9C", "方向舵"), ("9D", "配平")):
+        check(code in html and title in html, "面板 %s %s 存在" % (code, title))
+    for series_id in ("AIL_SURF", "AIL_CMD", "ELE_SURF", "ELE_CMD",
+                      "RUD_SURF", "RUD_CMD", "DIFF_AIL", "DIFF_ELE", "DIFF_RUD", "TRIM"):
+        check('data-series="%s"' % series_id in html,
+              "数据系列 %s 进图例开关" % series_id)
+        check('class="lg" data-series="%s"' % series_id in html,
+              "图例项 %s 可点击显示/隐藏" % series_id)
+    check(_desktop_html(html).count('class="surface-meta"') == 3,
+          "每个架次一份顶部信息条（3 架次，仅横版）")
+    meta = re.search(r'<div class="surface-meta"[^>]*>(.*?)</div>', html, re.S)
+    meta_text = re.sub(r"<[^>]+>", " ", meta.group(1)) if meta else ""
+    words = meta_text.split()
+    check("窗口" in meta_text and "样本" in meta_text, "信息条含窗口 / 样本")
+    check("r 副翼" in meta_text and "r 升降舵" in meta_text and "r 方向舵" in meta_text,
+          "信息条含三轴相关 r")
+    check("对齐 1 采样 p90" in meta_text and "量化台阶" in meta_text,
+          "信息条含对齐 1 采样 p90 / 量化台阶数")
+    check("最大残差" in html and "相关 0." in html,
+          "r 读数的 title 里带完整统计口径（相关 / 最大残差 / p90 / 台阶）")
+    check("0.00" in meta_text, "对齐后 p90 = 0.00（构造序列）")
+    ail_svg = _blueprint_svg_block(html, "svg-f1-surface_ail")
+    step_match = re.search(r'<path d="([^"]*)"[^>]*data-series="AIL_SURF"', ail_svg)
+    step_d = step_match.group(1) if step_match else ""
+    check(bool(step_d) and "C" not in step_d and "L" in step_d,
+          "舵面画成阶梯折线（水平 + 垂直，不用贝塞尔平滑）")
+    cmd_match = re.search(r'<path d="([^"]*)"[^>]*data-series="AIL_CMD"', ail_svg)
+    check(bool(cmd_match) and "C" in cmd_match.group(1), "指令轴仍是平滑细线")
+    check("svg-f1-surface_diff" in html and "svg-f1-surface_rud" in html,
+          "9A–9D 四张图（每架次一套，id 唯一）")
+    surface_page = re.search(
+        r'<section class="page[^"]*" id="page-surface".*?</section>', html, re.S)
+    surface_page = surface_page.group(0) if surface_page else ""
+    check('class="series-bar"' in surface_page,
+          "舵面页图例区带「全部显示 / 仅看主线 / 重置」工具条")
+    check('class="legend" role="group"' in surface_page,
+          "图例区走现有 hover + series toggle 结构")
+    check("function setup(desc)" in html and "function nearest(" in html,
+          "复用现有悬停十字线实现（未新写一套）")
+    check("框选" in html and "brush-bar" in html and "function applySelection(" in html,
+          "舵面页同样支持框选缩放（全局选区 / 全部图同步）")
+    check("__exportPng" not in surface_page and "导出 PNG" not in surface_page,
+          "没有页面级导出按钮")
+    check("<script src" not in surface_page and "<link" not in surface_page,
+          "舵面页无外链资源")
+
+    # 配平：图例区写范围 / 非零样本数；轴按分位显示（geometry 上能看到收窄的范围）
+    diff_block = _blueprint_svg_block(html, "svg-f1-surface_diff")
+    check("配平" in diff_block and "非零" in html, "9D 图例区写配平范围与非零样本数")
+    data = _flight_payload_json(html)
+    flights = data.get("flights") or []
+    series = flights[0].get("series") if flights else {}
+    check(all(column in series for column in RPT.SURFACE_COLUMNS),
+        "10 个舵面页数据列进入悬停数据（__FLIGHTLOG__）")
+    check(len(series.get("AIL_SURF") or []) == len(flights[0].get("times") or []),
+          "舵面列与其它页共用同一条时间轴（times 长度一致）")
+    geometry = {panel["id"]: panel for panel in (flights[0].get("panels") or [])}
+    trim_panel = geometry.get("f1-surface_diff") or {}
+    right = trim_panel.get("right") or {}
+    check(right and right.get("max", 9) < 0.5,
+          "9D 配平轴范围按分位收窄（right.max=%s）" % (right.get("max"),))
+    check("data-default-hidden=\"\"" in html or 'data-default-hidden=""' in html,
+          "舵面页默认不隐藏任何曲线（空 default-hidden）")
+    for theme_key in THEME_KEYS:
+        themed = render_report(model, theme=theme_key)
+        check('id="page-surface"' in themed
+              and 'data-series="TRIM"' in themed
+              and "surface-stack" in themed,
+              "主题 %s 也能渲染舵面页（颜色来自各自调色板）" % theme_key)
+
+    # ---- 部分字段：只有副翼舵面 → 其余面板写缺字段文案，不画 0 线 ----
+    partial = tmp / "surface-partial.jsonl"
+    _write_surface_report_log(partial, flights=2, per_flight=40, full_axes=False)
+    partial_html = render_report(P.analyze(str(partial)))
+    check('id="page-surface"' in partial_html, "只采到副翼舵面也照样出舵面页")
+    check("该窗口没有升降舵数据" in partial_html, "缺升降舵 → 9B 写明「该窗口没有…数据」")
+    check("该窗口没有方向舵数据" in partial_html, "缺方向舵 → 9C 写明「该窗口没有…数据」")
+    check("该窗口没有差值 / 配平数据" in partial_html, "缺差值与配平 → 9D 写明缺字段")
+    check('id="svg-f1-surface_ele"' not in partial_html
+          and 'data-series="ELE_SURF"' not in partial_html,
+          "缺字段的面板不画图（没有 0 线 / 不补 0）")
+    check('data-series="AIL_SURF"' in partial_html, "有数据的 9A 面板仍然画")
+    partial_data = _flight_payload_json(partial_html)
+    partial_series = (partial_data.get("flights") or [{}])[0].get("series") or {}
+    check(all(value is None for value in partial_series.get("ELE_SURF") or []),
+          "缺字段在悬停数据里是 null（不是 0）")
+
+    # ---- 无数据：schema 1 旧日志 → 9 页，整页省略 ----
+    bare = tmp / "surface-empty.jsonl"
+    if not bare.exists():
+        build_full_log(bare)
+    bare_html = render_report(P.analyze(str(bare)))
+    bare_ids = re.findall(r'<section class="page[^"]*" id="(page-[a-z_]+)"',
+                          _desktop_html(bare_html))
+    check('id="page-surface"' not in bare_html, "没有舵面字段 → 整页省略")
+    check(len(bare_ids) == 9 and bare_ids[-1] == "page-global",
+          "无数据时保持 9 页（概览 + 7 主题 + 全局总览）")
+    bare_screens = re.findall(r'<span class="bp-sheet">([^<]*)</span>',
+                              _desktop_html(bare_html))
+    bare_prints = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>',
+                             _desktop_html(bare_html))
+    check(bare_screens == ["SHEET %02d/09" % index for index in range(1, 10)],
+          "无数据屏幕页脚回到 SHEET 01/09…09/09")
+    check(bare_prints == ["SHEET %02d/10" % index for index in range(2, 11)],
+          "无数据打印/PDF 页脚回到 02/10…10/10")
+    check("SHEET 01/10" in _pdf_cover_block(bare_html),
+          "无数据封面页脚回到 SHEET 01/10")
+    check(">10</span> 页" in bare_html and "封面 + 9 页" in bare_html,
+          "无数据保存设置页文案回到 10 页（封面 + 9 页）")
+
+
+def test_dual_profiles(tmp: Path) -> None:
+    """双版式：16:9 横版 3200×1800 / 3:4 竖版 1200×1600 + 基准 2× + 清晰度开关。"""
+    print("\n[8b] 双版式：横版 16:9 / 竖版 3:4 + 高清 2× / 标准 1× + 动态页数")
+    path = tmp / "dual.jsonl"
+    _write_surface_report_log(path, flights=3, per_flight=60)
+    model = P.analyze(str(path))
+    html = render_report(model)
+
+    # ---------- 1) 档位参数（尺寸 / 比例 / 清晰度倍率 / 复盘卡） ----------
+    desktop = RPT.PROFILES["desktop"]
+    mobile = RPT.PROFILES["mobile"]
+    check((desktop.width, desktop.height) == (3200, 1800) and desktop.short == "16:9",
+          "横版档位 = 3200×1800（16:9 基准 2×）")
+    check((mobile.width, mobile.height) == (1200, 1600) and mobile.short == "3:4",
+          "竖版档位 = 1200×1600（3:4 基准 2×）")
+    check((desktop.design_w, desktop.design_h) == (1600, 900)
+          and (mobile.design_w, mobile.design_h) == (1200, 1600),
+          "设计坐标系：横版 1600×900（打印 zoom 2×）/ 竖版 1200×1600（zoom 1×）")
+    check((desktop.standard_width, desktop.standard_height) == (1600, 900)
+          and (mobile.standard_width, mobile.standard_height) == (600, 800),
+          "标准清晰度 = 基准一半（横版 1600×900 / 竖版 600×800）")
+    check(desktop.render_scale("high") == 2.0 and desktop.render_scale("standard") == 1.0
+          and mobile.render_scale("high") == 1.0
+          and mobile.render_scale("standard") == 0.5,
+          "清晰度渲染倍率：横版 2×/1×、竖版 1×/0.5×（字号不随清晰度变化）")
+    check(desktop.card_w == 3200 and desktop.card_h == 1800
+          and mobile.card_w == 1200 and mobile.card_h == 1600,
+          "复盘卡尺寸 = 档位尺寸（3200×1800 / 1200×1600）")
+    check(desktop.surface_split == (4,) and mobile.surface_split == (2, 2),
+          "舵面页拆页规则：横版 1 页 4 图 / 竖版 2 页各 2 图")
+    check(RPT.get_profile("mobile").key == "mobile"
+          and RPT.get_profile(None).key == "desktop",
+          "get_profile：省略 = 横版，显式 mobile 可取竖版")
+    try:
+        RPT.get_profile("ultrawide")
+        bad_profile = False
+    except ValueError as exc:
+        bad_profile = "desktop" in str(exc) and "mobile" in str(exc)
+    check(bad_profile, "未知版式抛 ValueError 并列出可选档位")
+
+    # ---------- 2) HTML 里两套页面共存 + 页面数按档位 ----------
+    desktop_html = _desktop_html(html)
+    mobile_html = _mobile_html(html)
+    check(_content_pages(html) == 10,
+          "横版 10 个内容页（概览 + 7 主题 + 舵面 + 全局总览；实际 %d）"
+          % _content_pages(html))
+    check(_mobile_content_pages(html) == 11,
+          "竖版 11 个内容页（舵面页拆 2 页 → 比横版多 1；实际 %d）"
+          % _mobile_content_pages(html))
+    check('id="pages" class="pages-desktop"' in html
+          and 'id="pages-mobile" class="pages-mobile"' in html,
+          "两套页面容器：#pages（横版）/ #pages-mobile（竖版）")
+    check('id="m-page-surface"' in mobile_html and 'id="m-page-surface-2"' in mobile_html,
+          "竖版舵面页拆成 2 页（m-page-surface / m-page-surface-2）")
+    check("舵面 / 配平 / 指令轴（1/2）" in mobile_html
+          and "舵面 / 配平 / 指令轴（2/2）" in mobile_html,
+          "竖版两页舵面页标题带（1/2）（2/2）")
+    mobile_surface_views = re.findall(
+        r'<section class="page page-m"[^>]*id="m-page-surface[^"]*".*?</section>',
+        mobile_html, re.S)
+    # 每页 2 张图 × 3 架次（每架次一个 flight-view，切架次只换当前页）= 6 个面板
+    check(len(mobile_surface_views) == 2
+          and all(view.count('class="chart-label"') == 6
+                  for view in mobile_surface_views),
+          "竖版每页恰有 2 张图 × 3 架次 = 6 个面板（横版一页 4 张）")
+    check(desktop_html.count('class="chart-label"') >= 12
+          and 'id="page-surface"' in desktop_html,
+          "横版舵面页保持一页 4 面板 × 3 架次（9A–9D）")
+    check(sum(view.count('class="chart-label"') for view in mobile_surface_views) == 12,
+          "竖版两页合计仍是 4 张图 × 3 架次（不丢图）")
+
+    # ---------- 3) 页码 / 页数动态（横版 11 页 PDF / 竖版 12 页 PDF） ----------
+    check('id="pages" class="pages-desktop" data-profile="desktop"'
+          ' data-pdf-pages="11" data-content-pages="10"' in html,
+          "横版 data-pdf-pages = 11（10 内容页 + 封面）")
+    check('id="pages-mobile" class="pages-mobile" data-profile="mobile"'
+          ' data-pdf-pages="12" data-content-pages="11"' in html,
+          "竖版 data-pdf-pages = 12（11 内容页 + 封面）")
+    desktop_screens = re.findall(r'<span class="bp-sheet">([^<]*)</span>', desktop_html)
+    desktop_prints = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>', desktop_html)
+    mobile_prints = re.findall(r'<span class="bp-sheet-print">([^<]*)</span>', mobile_html)
+    check(desktop_screens == ["SHEET %02d/10" % index for index in range(1, 11)],
+          "横版屏幕页脚 SHEET 01/10…10/10（屏幕按内容页）")
+    check(desktop_prints == ["SHEET %02d/11" % index for index in range(2, 12)],
+          "横版打印页脚 02/11…11/11（封面算 PDF 第 1 页）")
+    check(mobile_prints == ["SHEET %02d/12" % index for index in range(2, 13)],
+          "竖版打印页脚 02/12…12/12（按拆页后的 11 内容页）")
+    check("SHEET 02/11" in desktop_html and "SHEET 12/12" in mobile_html,
+          "横版打印页脚 02/11 起；竖版按拆页后总页数 12/12")
+    check('data-save-pdf-pages>11</span>' in html,
+          "保存设置默认（横版）文案 = 11 页")
+    check(RPT.PROFILES["desktop"].pdf_pages(10) == 11
+          and RPT.PROFILES["mobile"].pdf_pages(11) == 12,
+          "pdf_pages() 按内容页数推导（封面 +1），不写死 11")
+
+    # ---------- 4) 保存设置：版式 + 清晰度两项 ----------
+    modal = re.search(r'<div class="save-modal".*?</div>\s*</div>\s*</div>', html, re.S)
+    modal_html = modal.group(0) if modal else ""
+    check('name="save-profile" value="desktop"' in modal_html
+          and 'name="save-profile" value="mobile"' in modal_html,
+          "保存设置页有「版式」两项（横版 16:9 / 竖版 3:4）")
+    check('name="save-clarity" value="high"' in modal_html
+          and 'name="save-clarity" value="standard"' in modal_html,
+          "保存设置页有「清晰度」两项（高清基准 2× / 标准 1×）")
+    check('name="save-profile" value="desktop" checked' in modal_html,
+          "默认版式 = 横版 16:9")
+    check('name="save-clarity" value="high" checked' in modal_html,
+          "默认清晰度 = 高清（基准 2×）")
+    check("版式 / LAYOUT" in modal_html and "清晰度 / CLARITY" in modal_html,
+          "两项各有中英标签")
+    check('data-profile-size="desktop">3200 × 1800' in html
+          and 'data-profile-size="mobile">1200 × 1600' in html,
+          "版式选项写明 3200×1800 / 1200×1600")
+    check('data-save-png-size>3200 × 1800' in html,
+          "PNG 复盘卡文案写明当前档位尺寸（3200×1800）")
+    check('id="save-modal"' in html and 'data-profile="desktop"' in html
+          and 'data-clarity="high"' in html,
+          "保存设置模态携带当前 profile / clarity 状态")
+
+    # ---------- 5) @page / zoom / jsPDF format 按档位与清晰度 ----------
+    check("@page d-high{size:3200px 1800px;margin:0}" in html,
+          "@page 横版高清 = 3200×1800")
+    check("@page d-std{size:1600px 900px;margin:0}" in html,
+          "@page 横版标准 = 1600×900（减半）")
+    check("@page m-high{size:1200px 1600px;margin:0}" in html,
+          "@page 竖版高清 = 1200×1600")
+    check("@page m-std{size:600px 800px;margin:0}" in html,
+          "@page 竖版标准 = 600×800（减半）")
+    check("#pages>.page,#pages>.pdf-cover{page:d-high;width:1600px!important;"
+          "height:900px!important;zoom:2.0000}" in html,
+          "横版打印：设计 1600×900 + zoom 2 → 3200×1800")
+    check("#pages-mobile>.page,#pages-mobile>.pdf-cover{page:m-high;"
+          "width:1200px!important;height:1600px!important;zoom:1.0000}" in html,
+          "竖版打印：1200×1600 + zoom 1")
+    check('body[data-clarity="standard"] #pages>.page,'
+          'body[data-clarity="standard"] #pages>.pdf-cover{page:d-std;'
+          "width:1600px!important;height:900px!important;zoom:1.0000}" in html,
+          "横版标准清晰度：同一设计页 + zoom 1 → 1600×900")
+    check('body[data-clarity="standard"] #pages-mobile>.page,'
+          'body[data-clarity="standard"] #pages-mobile>.pdf-cover{page:m-std;'
+          "width:1200px!important;height:1600px!important;zoom:0.5000}" in html,
+          "竖版标准清晰度：1200×1600 设计页 + zoom 0.5 → 600×800")
+    check('body[data-export-profile="mobile"] #pages{display:none!important}' in html
+          and 'body[data-export-profile="mobile"] #pages-mobile{display:block!important}' in html,
+          "打印时按 data-export-profile 只输出所选版式")
+    check("format: [outW, outH]" in html
+          and 'var scale = clarity === "standard" ? meta.captureScaleStandard '
+              ': meta.captureScaleHigh;' in html
+          and "scale: scale," in html,
+          "方案 B jsPDF format = 档位物理尺寸、html2canvas scale 按清晰度")
+    check('new jsPDFCtor({' in html and 'hotfixes: ["px_scaling"]' in html,
+          "方案 B 仍用内联 jsPDF（px 单位 / px_scaling）")
+    check('#pages>.page{width:1600px!important;height:900px!important}' in html
+          and '#pages-mobile>.page{width:1200px!important;height:1600px!important}' in html,
+          "方案 B 捕获用设计尺寸（横版 1600×900 / 竖版 1200×1600）")
+
+    # ---------- 6) 两版复盘卡 + PNG / 封面 ----------
+    desktop_card = _blueprint_svg_block(html, "debrief-svg-annotated")
+    mobile_card = _blueprint_svg_block(html, "debrief-svg-annotated-m")
+    check('viewBox="0 0 3200 1800"' in desktop_card,
+          "横版复盘卡 SVG viewBox = 3200×1800")
+    check('viewBox="0 0 1200 1600"' in mobile_card
+          and 'debrief-svg-mobile' in mobile_card,
+          "竖版复盘卡 SVG viewBox = 1200×1600（竖排重排）")
+    check("PNG 3200×1800" in desktop_card, "横版卡页脚写 PNG 3200×1800")
+    check("PNG 1200×1600" in mobile_card, "竖版卡页脚写 PNG 1200×1600")
+    check("COMBAT FLIGHT DEBRIEF" in desktop_card
+          and "COMBAT FLIGHT" in mobile_card and "DEBRIEF" in mobile_card,
+          "两版卡都有档案袋标题（竖版换行排）")
+    check("ANALYST REMARKS" in mobile_card and "总时长" not in mobile_card,
+          "竖版卡把 legend / 备注放在图下（核心信息重排）")
+    check('id="debrief-src"' in html and 'id="debrief-src-m"' in html,
+          "两版 PNG 导出容器（#debrief-src / #debrief-src-m）")
+    check('function renderDebriefCanvas(annotated, profile, clarity, done, fail)' in html
+          and 'var size = cardSize(profile, clarity);' in html,
+          "PNG 导出 canvas 尺寸 = 档位卡尺寸 × 清晰度")
+    check('id="pdf-cover"' in html and 'id="pdf-cover-m"' in html,
+          "两版 PDF 封面（#pdf-cover / #pdf-cover-m）")
+    cover_mobile = re.search(r'id="pdf-cover-m".*?id="debrief-svg-clean-m"', html, re.S)
+    check(cover_mobile is not None and 'viewBox="0 0 1200 1600"' in cover_mobile.group(0),
+          "竖版 PDF 封面 = 1200×1600 复盘卡")
+
+    # ---------- 7) 切换 profile 后页码 / 文案动态 ----------
+    check("function saveProfile()" in html and "function saveClarity()" in html
+          and "function saveTexts()" in html,
+          "内联 JS 暴露版式 / 清晰度状态与文案刷新（saveProfile/saveClarity/saveTexts）")
+    check('pagesEl.setAttribute("data-pdf-pages", String(pdfPages))' in html,
+          "切版式后 data-pdf-pages 随所选档位页数动态更新")
+    check('qsa("[data-save-pdf-pages]").forEach(function(el){' in html
+          and 'el.textContent = String(pdfPages);' in html,
+          "切版式后保存设置的 PDF 页数文案动态更新")
+    check('el.textContent = card[0] + " × " + card[1];' in html,
+          "切版式 / 清晰度后 PNG 卡尺寸文案动态更新")
+    compact = html.replace(" ", "")
+    check('"profiles":{"desktop"' in compact
+          and '"contentPages":10' in compact
+          and '"pdfPages":12' in compact,
+          "内联数据同时给出两版内容页数 / PDF 页数（横版 10/11、竖版 11/12）")
+    check("window.__pdfState = function()" in html
+          and "profile: profile," in html and "clarity: clarity," in html
+          and "pageCount: nodes.length," in html,
+          "__pdfState 暴露 profile / clarity / 当前档位页数")
+    check('window.__exportPdf = function(annotated, profile, clarity)' in html
+          and 'window.__exportDebrief = function(annotated, profile, clarity)' in html,
+          "导出钩子支持显式 profile / clarity（自动化验证用）")
+    check('localStorage' in html and 'SAVE_KEY' in html and 'savePersist()' in html,
+          "版式 / 清晰度 / 批注持久化到 localStorage")
+
+    # ---------- 8) 屏幕始终横版高清 + 单文件无外链 ----------
+    check('<body data-export-profile="desktop" data-clarity="high">' in html,
+          "默认报告：body data-export-profile=desktop / data-clarity=high")
+    check(".pages-mobile{display:none!important}" in html
+          and "#pages-mobile{display:none}" in html,
+          "屏幕只显示横版（竖版页面隐藏，仅在导出时渲染）")
+    check("function fitStage()" in html and '"--stage-scale"' in html,
+          "屏幕按 16:9 设计画布等比缩放到容器（--stage-scale）")
+    shell = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.S)
+    check("<script src" not in shell and "<link " not in shell,
+          "双版式报告仍是单文件（无外链脚本 / 样式）")
+    check("http://" not in shell.replace('xmlns="http://www.w3.org/2000/svg"', "")
+          and "https://" not in shell.replace('xmlns="http://www.w3.org/2000/svg"', ""),
+          "双版式报告没有 http(s) 外链（SVG xmlns 除外）")
+
+    # ---------- 9) 生成时选竖版：默认导出档位 / 保存设置初值 / A 预生成用竖版 ----------
+    mobile_default = render_report(model, profile="mobile")
+    check('<body data-export-profile="mobile" data-clarity="high">' in mobile_default,
+          "render_report(profile='mobile') → 默认导出档位 = 竖版")
+    mobile_modal = re.search(r'<div class="save-modal".*?</div>\s*</div>\s*</div>',
+                             mobile_default, re.S)
+    mobile_modal_html = mobile_modal.group(0) if mobile_modal else ""
+    check('name="save-profile" value="mobile" checked' in mobile_modal_html,
+          "竖版报告的保存设置默认选中竖版")
+    check('id="pages" class="pages-desktop" data-profile="desktop"'
+          ' data-pdf-pages="11" data-content-pages="10"' in mobile_default
+          and 'id="pages-mobile" class="pages-mobile" data-profile="mobile"'
+              ' data-pdf-pages="12" data-content-pages="11"' in mobile_default,
+          "竖版报告里两套页面数据都完整（横版 11 / 竖版 12 页不随默认档位丢失）")
+    standard_default = render_report(model, clarity="standard")
+    check('<body data-export-profile="desktop" data-clarity="standard">' in standard_default,
+          "render_report(clarity='standard') → 默认导出清晰度 = 标准（A 预生成减半）")
+    check('@page d-std{size:1600px 900px;margin:0}' in standard_default,
+          "标准清晰度的 A 预生成页面尺寸减半（1600×900）")
 
 
 def test_annotations() -> None:
@@ -2574,7 +3392,8 @@ def test_es_range_annotations(tmp: Path) -> None:
 
     def _highlight_group(svg_text: str, layer: str) -> str:
         match = re.search(
-            r'<g class="ann %s es-highlight"[^>]*>.*?</g>' % layer, svg_text, re.S
+            r'<g class="ann %s es-highlight[^>]*>.*?</g>' % layer,
+            svg_text, re.S,
         )
         return match.group(0) if match else ""
 
@@ -2637,6 +3456,9 @@ def test_es_range_annotations(tmp: Path) -> None:
           "打印层线宽 %.1f px（WYSIWYG）" % ES_HIGHLIGHT_PRINT_WIDTH)
     check("es-range-label" in screen_group and '<text class="ann-type"' in print_group,
           "屏幕 / 打印各有一份区间标注（打印态也可读）")
+    check("js-es" in screen_group and "js-es" in print_group
+          and 'data-es-t0="' in screen_group and 'data-es-layer="print"' in print_group,
+          "Es 区间高亮带 js-es + data-es-t0/t1（框选后按新区间重算路径）")
     check("es-highlight" not in _blueprint_svg_block(html, "svg-f1-speed"),
           "加粗红线只画在 Es 断崖所在图（速度页没有）")
 
@@ -2789,31 +3611,33 @@ def test_pdf_export(tmp: Path) -> None:
           "file:// 分支标记：pdfFileProtocol() = location.protocol === \"file:\"")
     check("function pdfModeName" in html and 'return "file-vendor";' in html,
           "pdfModeName() 在 file:// 下返回 file-vendor（必走浏览器内生成）")
-    check('if (!pdfFileProtocol() && file)' in html,
-          "按钮逻辑：http(s) 且存在 data-pdf 时才用预生成 PDF 直下")
-    check(html.find('if (!pdfFileProtocol() && file)')
-          < html.find("generatePdfInBrowser(annotated, done, fail);"),
-          "按钮逻辑：file:// 跳过 data-pdf 直下，落到浏览器内生成")
+    check('function pdfPrebuiltValid(profile, clarity)' in html
+          and 'if (!pdfFileProtocol() && pdfPrebuiltValid(profile, clarity)){' in html,
+          "按钮逻辑：http(s) 且预生成 PDF 对应当前档位 / 高清时才直下")
+    check(html.find('if (!pdfFileProtocol() && pdfPrebuiltValid(profile, clarity)){')
+          < html.find("generatePdfInBrowser(annotated, profile, clarity, done, fail);"),
+          "按钮逻辑：file:// / 非默认档位 / 标准清晰度都落到浏览器内生成")
     check("link.download" in html and "clickDownload" in html,
           "预生成 PDF 用 <a download> 点击下载（不弹打印界面）")
     check("function generatePdfInBrowser" in html
           and '"report.pdf"' in html
           and "html2canvas" in html,
           "方案 B 用内联 jsPDF + html2canvas 逐页生成 report.pdf")
-    check('qsa("#pages > .pdf-cover, #pages > section.page")' in html,
-          "方案 B 的捕获列表含封面（封面 → 9 页内容，按文档顺序）")
-    check("pageCount: pdfPageNodes().length" in html
-          and 'data-pdf-pages="%d"' % (html.count('<section class="page') + 1) in html,
+    check('root.querySelectorAll(":scope > .pdf-cover, :scope > section.page")' in html,
+          "方案 B 的捕获列表按档位取层、含封面（封面 → 全部内容页，按文档顺序）")
+    check("pageCount: nodes.length" in html
+          and 'data-pdf-pages="%d"' % (_content_pages(html) + 1) in html,
           "方案 B 页数 = 内容页 + 封面（data-pdf-pages / __pdfState.pageCount）")
-    check('(index + 1) + "/" + pages.length' in html,
-          "方案 B 逐页进度按 10 页计算（1/10 … 10/10）")
-    check("doc.addPage([W, H], \"landscape\")" in html,
+    check('(index + 1) + "/" + nodes.length' in html,
+          "方案 B 逐页进度按实际页数计算（1/N … N/N，N = pages.length）")
+    check("doc.addPage([outW, outH], orientation)" in html,
           "方案 B 第 2 页起 addPage 追加（封面在第 1 页）")
     check("body.pdf-capture" in html and "body.pdf-capture .ann-screen{display:none!important}" in html,
           "方案 B 的打印态仿真 CSS（.pdf-capture）已内联")
     check("window.__exportPdf" in html and "window.__pdfState" in html,
           "内联 JS 暴露 PDF 导出验证钩子（__exportPdf / __pdfState）")
-    check("file: pdfFileProtocol()" in html and "mode: pdfModeName()" in html,
+    check("file: pdfFileProtocol()" in html
+          and "mode: pdfModeName(profile, clarity)" in html,
           "__pdfState 暴露 file / mode（file:// 分支可断言）")
     check("直接下载 PDF" in html, "保存设置页文案仍是直接下载 PDF")
     full_injected = inject_pdf_data_attr(html, "report.pdf")
@@ -3378,7 +4202,7 @@ def test_speed_limits(tmp: Path) -> None:
     hud_html = out_hud.read_text(encoding="utf-8")
     check(code == 0 and "限速 f_15ex 1234 km/h" in hud_html,
           "CLI --hud-dir 读到临时配置里的机型限速 1234")
-    check("1345" not in hud_html, "CLI --hud-dir 不混入真实发布目录的限速")
+    check("1345 km/h" not in hud_html, "CLI --hud-dir 不混入真实发布目录的限速")
     help_text = io.StringIO()
     try:
         with contextlib.redirect_stdout(help_text):
@@ -3388,6 +4212,267 @@ def test_speed_limits(tmp: Path) -> None:
     check("--vne-kmh" in help_text.getvalue() and "--hud-dir" in help_text.getvalue(),
           "--help 列出 --vne-kmh / --hud-dir")
     check("blueprint" in help_text.getvalue(), "--help 列出默认主题 blueprint")
+    check("--profile" in help_text.getvalue() and "--clarity" in help_text.getvalue(),
+          "--help 列出 --profile / --clarity（双版式 + 清晰度导出）")
+
+    # CLI --profile / --clarity：默认导出档位写进 HTML（屏幕仍横版高清；body 属性决定 A 预生成）
+    out_mobile = tmp / "cli-mobile.html"
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        code = cli_main([str(jsonl), "--out", str(out_mobile), "--profile", "mobile",
+                         "--clarity", "standard"])
+    mobile_text = out_mobile.read_text(encoding="utf-8")
+    check(code == 0 and 'data-export-profile="mobile" data-clarity="standard"' in mobile_text,
+          "CLI --profile mobile --clarity standard 写进默认导出档位")
+    check('name="save-profile" value="mobile" checked' in mobile_text
+          and 'name="save-clarity" value="standard" checked' in mobile_text,
+          "CLI 档位 / 清晰度同步成保存设置的默认选项")
+
+
+def _write_brush_log(path: Path, seconds: float = 60.0, hz: float = 60.0) -> None:
+    """合成"长日志"（默认 60 s × 60 Hz = 3600 样本），给包络 / 框选自检用。
+
+    ``vy`` 在 41 s 处有一个**只占 1 个采样**的 +55 m/s 尖峰：等距抽稀（每 15 个取 1）
+    几乎必然跳过它，像素包络一定保留 —— 这就是包络相对旧抽稀的判据。
+    """
+    lines = [
+        json.dumps(
+            {
+                "type": "meta",
+                "schema": 2,
+                "app": "0.5.10-selftest",
+                "utc": _iso(EPOCH0, 7),
+                "vehicle": "f_16c",
+                "rate": "per-sample",
+            },
+            ensure_ascii=False,
+        )
+    ]
+    step = 1.0 / hz
+    count = int(round(seconds * hz))
+    t = 1.0
+    for index in range(count):
+        local = index * step
+        vy = 20.0 * math.sin(local / 3.0)
+        if abs(local - 41.0) <= step * 0.51:
+            vy += 55.0
+        aileron = float(round(70.0 * math.sin(local * 4.1)))
+        record = _sample(
+            t,
+            EPOCH0,
+            vehicle="f_16c",
+            vy_ms=round(vy, 2),
+            ias_kmh=round(780.0 + 120.0 * math.sin(local / 9.0), 1),
+            alt_m=round(3000.0 + 700.0 * math.sin(local / 21.0), 1),
+            aileron_pct=aileron,
+            stick_ailerons=round(aileron / 100.0, 3),
+        )
+        lines.append(json.dumps(record, ensure_ascii=False))
+        t = round(t + step, 3)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_brush_selection(tmp: Path) -> None:
+    """框选时间段 + 像素包络抽稀 + 按选区导出（0.5.10 1/2）。"""
+    print("\n[8c] 框选时间段 / 像素包络抽稀 / 按选区导出 PDF·PNG")
+
+    # ---------- 1) 包络算法：窄尖峰一定保留，等距抽稀一定丢 ----------
+    columns = 100
+    points = [(float(index), 200.0) for index in range(1200)]
+    spikes = (37, 311, 733, 1099)
+    for at in spikes:
+        points[at] = (float(at), 10.0)
+    env = RPT._envelope(points, columns)
+    check(env["columns"] == columns and env["spikes"] == len(spikes),
+          "包络按像素列分桶：尖峰列被识别出来（%d 列 / %d 个尖峰）"
+          % (env["columns"], env["spikes"]))
+    check(len(env["upper"]) <= columns and len(env["lower"]) <= columns
+          and len(env["zigzag"]) <= columns * 2,
+          "包络点数 ≤ 2×像素列（upper %d / zigzag %d）"
+          % (len(env["upper"]), len(env["zigzag"])))
+    top = min(py for _px, py in env["upper"])
+    check(abs(top - 10.0) < 1e-9,
+          "包络保留尖峰顶（上包络最小像素 y = %.1f，尖峰 = 10.0）" % top)
+    bottom = max(py for _px, py in env["lower"])
+    check(abs(bottom - 200.0) < 1e-9, "包络保留下沿（下包络最大像素 y = %.1f）" % bottom)
+    legacy = RPT._decimate(list(points), 40)
+    legacy_top = min(py for _px, py in legacy)
+    check(legacy_top > 10.0 + 1.0,
+          "旧等距抽稀把尖峰跳掉了（抽稀后最高只有 y=%.1f，尖峰 10.0 丢失）"
+          % legacy_top)
+    band = RPT._envelope_line_path(env["zigzag"])
+    check(("10.0" in band) and band.startswith("M") and "L" in band and "C" not in band,
+          "包络画成 zigzag 折线（穿真实极值点，不做贝塞尔削峰）")
+    check(RPT._envelope(points[:1], columns)["points"] == 1,
+          "单点序列包络退化安全（points=1）")
+
+    # ---------- 2) 像素列数按档位（横版 1414 / 竖版 1062） ----------
+    RPT._apply_profile(RPT.PROFILES["desktop"])
+    columns_desktop = RPT._chart_columns()
+    RPT._apply_profile(RPT.PROFILES["mobile"])
+    columns_mobile = RPT._chart_columns()
+    RPT._apply_profile(RPT.PROFILES["desktop"])
+    check(columns_desktop == 1414 and columns_mobile == 1062,
+          "像素列数 = 绘图区设计宽度（横版 %d / 竖版 %d）"
+          % (columns_desktop, columns_mobile))
+    check(RPT.ENVELOPE_TRIGGER == 2.0 and RPT.ENVELOPE_MIN_SPREAD_PX == 0.6,
+          "包络阈值：点数 > 2×列数才启用，列内极差 < 0.6 px 只留 1 点")
+    check(RPT._data_t(12.3456) == "12.346" and RPT._data_t(30.0) == "30",
+          "data-t 属性值 = 秒（3 位小数去尾零）")
+
+    # ---------- 3) 长日志报告：包络 / 图层分组 / 框选控件 / 数据 ----------
+    path = tmp / "brush-long.jsonl"
+    _write_brush_log(path)
+    model = P.analyze(str(path))
+    html = render_report(model)
+    desktop_html = _desktop_html(html)
+    mobile_html = _mobile_html(html)
+    big = _blueprint_svg_block(html, "svg-f1-vy")
+    env_match = re.search(
+        r'<path class="series-env" d="([^"]+)"[^>]*data-env="1" data-env-cols="(\d+)"'
+        r' data-env-points="(\d+)"', big)
+    check(env_match is not None,
+          "长日志曲线改走像素包络（.series-env + data-env 标记）")
+    if env_match:
+        env_d, env_cols, env_points = env_match.groups()
+        check(int(env_cols) == columns_desktop, "包络列数 = %d" % columns_desktop)
+        check(int(env_points) <= int(env_cols) * 2,
+              "包络点数 %s ≤ 2×列数 %d（体积可控）" % (env_points, int(env_cols) * 2))
+        check("C" not in env_d, "包络路径不含贝塞尔命令（不会削峰）")
+        py = [float(v) for _px, v in re.findall(
+            r"(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)", env_d)]
+        # 尖峰 = 该架次 vy 的全程最大值；按面板几何算出它的像素 y，
+        # 包络路径必须真正到达那个 y（等距抽稀做不到）。
+        data_for_peak = _flight_payload_json(html)
+        vy_values = [
+            value for value in
+            (data_for_peak["flights"][0]["series"].get("vy") or [])
+            if value is not None
+        ]
+        vy_peak = max(vy_values) if vy_values else 0.0
+        vy_panel = next(
+            (item for item in data_for_peak["flights"][0]["panels"]
+             if item["id"] == "f1-vy"), None)
+        if vy_panel and vy_panel.get("left"):
+            left_axis = vy_panel["left"]
+            frac = ((vy_peak - left_axis["min"])
+                    / (left_axis["max"] - left_axis["min"]))
+            expected_y = vy_panel["y1"] - frac * (vy_panel["y1"] - vy_panel["y0"])
+            check(abs(min(py) - expected_y) <= 0.8,
+                  "包络路径到达尖峰顶（最小像素 y=%.1f ≈ 尖峰 %.1f → y=%.1f）"
+                  % (min(py), vy_peak, expected_y))
+    check(desktop_html.count('<path class="series-env"') > 5,
+          "多张图的曲线都用包络（横版 %d 条）"
+          % desktop_html.count('<path class="series-env"'))
+    check(mobile_html.count('<path class="series-env"') > 5,
+          "竖版页面同样用包络（%d 条）"
+          % mobile_html.count('<path class="series-env"'))
+
+    # 图层分组 + data-t：框选时只重画曲线/时间轴/比例尺，其余按 data-t 平移
+    for marker in ('class="js-series"', 'class="js-xaxis"', 'class="js-yaxis"',
+                   'class="js-chrome"', 'class="js-axes"'):
+        check(marker in big, "图表图层分组 %s" % marker)
+    speed_svg = _blueprint_svg_block(html, "svg-f1-speed")
+    check('data-t="' in speed_svg and 'class="js-t"' in speed_svg,
+          "批注组带 data-t + js-t 包一层（JS 按新区间平移）")
+    check('data-t0="' in desktop_html and 'data-t1="' in desktop_html
+          or "data-t0" in html,
+          "数据中断竖带 / 无效区 / 平均速度区间带 data-t0/t1")
+    check("function renderEs(svg, panel, fl, t0, t1)" in html
+          and 'data-es-t0' in html,
+          "Es 断崖高亮支持按选区重算（js-es + data-es-t0/t1）")
+
+    # ---------- 4) 框选工具条 + 内联 JS ----------
+    check('id="brush-bar"' in html and 'data-stat-scope="full"' in html
+          and 'data-stat-scope="sel"' in html,
+          "页眉框选工具条：选区读数 + 统计全程/选区切换")
+    check('id="brush-reset"' in html and "复位（双击图表）" in html,
+          "「复位」按钮（有选区时高亮）")
+    check('id="brush-sel-text"' in html and 'id="brush-sel-hint"' in html,
+          "选区读数容器（已选 mm:ss–mm:ss · 共 X s）")
+    for marker in (
+        "function applySelection(",
+        "function resetSelection(",
+        "function rangeForPanel(panel)",
+        "function seriesHtml(panel, fl, t0, t1)",
+        "function envelopeOf(points, panel)",
+        "function bezierPath(points)",
+        "function timeTicks(t0, t1)",
+        "function shiftTimeLayer(svg, panel, t0, t1)",
+        "function computeSurfaceStats(fl, t0, t1)",
+        "var BRUSH_MIN_PX = 4;",
+        'addEventListener("pointerdown", onBrushDown)',
+        'addEventListener("dblclick"',
+        'window.__brushState = function()',
+        'window.__brushSelect = function(t0, t1)',
+        'window.__brushReset = function()',
+        'window.__brushStats = function(index)',
+        'hasSelection()) return false;',
+    ):
+        check(marker in html, "内联 JS：%s" % marker.replace('"', "'"))
+    check("拖动 &gt; 4 px 才进入框选" in html and "不影响悬停读数" in html,
+          "拖拽阈值提示（> 4 px 才框选，悬停不冲突）")
+    check("选区会同步到所有页" in html and "双击任意图表复位" in html,
+          "工具条文案：全局同步 / 双击复位")
+
+    # ---------- 5) 统计口径：默认全程 + 选区切换（数据与 DOM 钩子） ----------
+    meta_match = re.search(r'<div class="surface-meta"[^>]*>(.*?)</div>', desktop_html, re.S)
+    meta_html = meta_match.group(1) if meta_match else ""
+    check('data-surface-flight="1"' in (meta_match.group(0) if meta_match else "")
+          or 'data-surface-flight' in desktop_html,
+          "顶部信息条带 data-surface-flight（JS 按架次定位）")
+    for marker in ('data-sm-window', 'data-sm-samples', 'data-sm-r="ail"',
+                   'data-sm-p90', 'data-sm-steps', 'data-sm-scope'):
+        check(marker in meta_html, "顶部统计 DOM 钩子 %s（JS 原地改选区值）" % marker)
+    check("全程" in meta_html, "统计口径默认显示「全程」")
+    data = _flight_payload_json(html)
+    flight = (data.get("flights") or [{}])[0]
+    check(bool(flight.get("surface")) and "axes" in flight["surface"],
+          "内联数据带 surface.axes（JS 重算 r / p90 / 台阶 用）")
+    check(flight["surface"].get("windowT0") is not None
+          and flight["surface"].get("windowT1") is not None,
+          "内联数据带统计窗口时间（窗口 T0/T1）")
+    check(len(flight["surface"]["axes"]) == 3
+          and flight["surface"]["axes"][0].get("surf") == "AIL_SURF"
+          and flight["surface"]["axes"][0].get("cmd") == "AIL_CMD",
+          "surface.axes 给出 舵面/指令轴 数据列名（与 series 键一致）")
+    panel = (flight.get("panels") or [{}])[0]
+    check(all(key in panel for key in ("t0", "t1", "height", "labelTime",
+                                       "profile", "viewW")),
+          "面板几何带 t0/t1/height/labelTime/profile/viewW（JS 重画用）")
+    check(all(key in (panel.get("series") or [{}])[0]
+              for key in ("fill", "step", "width", "dash", "clip", "sid")),
+          "面板 series 定义带 fill/step/width/dash（JS 重画用）")
+    check("colors" in data and "esStyle" in data and data.get("envelope", {}).get("trigger"),
+          "内联数据带主题色 / Es 高亮样式 / 包络阈值")
+
+    # ---------- 6) 按选区导出：有选区强制 B + 提示 + 打印隐藏 ----------
+    save_modal = re.search(r'<div class="save-modal".*?</div>\s*</div>\s*</div>', html, re.S)
+    modal_html = save_modal.group(0) if save_modal else ""
+    check('data-save-sel-text' in modal_html and 'data-save-sel-hint' in modal_html,
+          "保存设置新增「选区 / SELECTION」提示行")
+    check("按选区导出将使用浏览器内生成（较慢）" in html,
+          "设置页提示「按选区导出将使用浏览器内生成（较慢）」")
+    check("PNG 复盘卡 / PDF 封面保持全程" in html,
+          "设置页说明 PNG 复盘卡 / PDF 封面保持全程")
+    check("if (hasSelection()) return false;" in html,
+          "有选区时 A 预生成 PDF 失效（pdfPrebuiltValid 强制 B）")
+    print_css = re.search(r"@media print\{.*?\.brush-bar.*?\}", html, re.S)
+    check(print_css is not None and "display:none!important" in print_css.group(0),
+          "打印样式隐藏框选控件（.brush-bar）")
+    check(".brush-bar,.brush-hint,.brush-rect,.brush-edge{display:none!important}" in html,
+          "打印 / PDF 不打印拖拽选区框")
+    check("body.pdf-capture .brush-bar" in html,
+          "B 路径（.pdf-capture）同样隐藏框选控件")
+
+    # ---------- 7) 短日志保持原观感（不触发包络，仍是贝塞尔平滑） ----------
+    short_path = tmp / "brush-short.jsonl"
+    _write_surface_report_log(short_path, flights=1, per_flight=60)
+    short_html = render_report(P.analyze(str(short_path)))
+    check("series-env" not in _blueprint_svg_block(short_html, "svg-f1-speed")
+          and "series-env" not in _blueprint_svg_block(short_html, "svg-f1-energy"),
+          "短日志（60 样本）不触发包络，仍是贝塞尔平滑（观感不变）")
+    check("function setup(desc)" in short_html and "function nearest(" in short_html,
+          "悬停十字线实现保持不变（复用 setup/nearest）")
 
 
 def main() -> int:
@@ -3399,6 +4484,9 @@ def main() -> int:
         test_energy_helpers()
         test_parse_full(tmp)
         test_parse_old(tmp)
+        test_surface_fields(tmp)
+        test_surface_preview(tmp)
+        test_surface_preview_interactive(tmp)
         test_report_html(tmp)
         test_average_helpers()
         test_avg_report_html(tmp)
@@ -3406,6 +4494,9 @@ def main() -> int:
         test_line_legibility(tmp)
         test_series_toggles(tmp)
         test_blueprint_report(tmp)
+        test_surface_report(tmp)
+        test_dual_profiles(tmp)
+        test_brush_selection(tmp)
         test_annotations()
         test_es_range_annotations(tmp)
         test_pdf_export(tmp)

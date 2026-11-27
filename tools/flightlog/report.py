@@ -30,7 +30,8 @@
   legend 补 ``GAP 数据中断 <秒>s · T+mm:ss``（老日志没有 gap 事件也能按样本间隔自动检测）；
 * **6 套美术主题**（``--theme blueprint|glass|manual|tactical|clean|mfd``，
   默认 ``blueprint`` = A 工程蓝图：深蓝图纸底 + 坐标纸网格 + 每页图框/图号
-  （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/9``（屏幕）/ ``SHEET n/10``（打印、PDF）
+  （``FIG. 03 · 比能量高度``）+ 页脚 ``SHEET n/N``（屏幕）/ ``SHEET (n+1)/(N+1)``
+  （打印、PDF，封面算第 1 页）
   + 右下角标题栏）；
   配色集中在 :data:`THEMES` 里，通过 CSS 变量输出，图表曲线/网格/事件线/统计卡
   全部取自同一份主题配置；
@@ -44,10 +45,36 @@
 * **保存二级页**：页眉「保存」→「保存设置」模态：PDF 完整版 / PNG 单张复盘卡、
   保留批注开关。PNG 复盘卡 = 生成报告时 Python 画好的内嵌 SVG（档案袋风格），
   JS 序列化 SVG → canvas → PNG 下载；PDF 完整版 = **封面（第 1 页，直接复用 PNG
-  复盘卡 SVG，与「保留批注」开关联动）+ 9 页内容**，``file://`` 下用内联
+  复盘卡 SVG，与「保留批注」开关联动）+ N 页内容**（N 由实际内容页数决定：``file://`` 下用内联
   jsPDF + html2canvas 逐页渲染后真下载（Chromium 会拦 ``<a download>``），
   http(s) 下优先下载 headless 预生成的同名 PDF；封面只在打印/PDF 里出现，
   屏幕不显示、不进翻页 pager、不影响 localStorage 页号；
+* **双版式（0.5.10 内）**：同一份单文件 HTML 里同时渲染 **横版 16:9（3200×1800，基准 2×）**
+  与 **竖版 3:4（1200×1600）** 两套页面 —— 屏幕按横版 16:9 设计画布等比缩放到窗口，
+  竖版页面默认隐藏、只在导出时启用。保存设置页新增「版式」与「清晰度」两项：
+  横版 / 竖版 × 高清（基准 2×）/ 标准（1×，物理尺寸减半）；页数 / 页码 / 页脚 /
+  PDF 进度 / 保存设置文案全部按「当前版式内容页数 + 封面」动态（横版 10 内容页 = 11 页
+  PDF，竖版把舵面页拆成 2 页 → 11 内容页 = 12 页 PDF；无舵面数据各少 1 页）。
+  PNG 复盘卡也分两版（横版 3200×1800 / 竖版 1200×1600，竖版按标题 / 字段 / 主图 /
+  legend / 备注重排）；清晰度同样作用于 PNG（标准 = 半分辨率）。
+* **框选时间段（0.5.10 1/2）**：在**任意一张图**上按住拖动 > 4 px 即进入框选（半透明
+  选区矩形），松手后把该时间区间同步到**所有页 / 所有图**（含舵面页 4 面板、竖版
+  3:4 页面、概览缩略图）；双击任意图复位到全程；翻页 / 切架次后选区保持。
+  页眉工具条显示「已选 mm:ss–mm:ss · 共 X s」并高亮「复位」；
+  ``Esc`` 也能复位。拖拽与悬停十字线互不冲突（阈值以下算悬停）。
+  **不做**双滑块（后续再说）。
+* **像素包络抽稀**：长日志不再"等距每 N 个样本取一个"（尖峰会被跳掉、噪声混叠成
+  实心块），改为**按屏幕像素列取 min/max 包络**（每列最多 2 点，列内极差 < 0.6 px
+  只留 1 点），画成上下交错的 zigzag 折线 —— 峰谷一定保留，点数 ≤ 2×像素宽。
+  框选缩放后内联 JS 用同一套包络按新区间重新分桶，放大后细节变多、缩小也不糊。
+  舵面页的灰阶梯 / 指令轴细线、差值面板同样适用；图例 / 批注 / 打印墨色规则不变。
+* **统计口径**：舵面页顶部统计（r / 对齐 1 采样 p90 / 量化台阶 / 样本）**默认始终按
+  全程**（Python 预算值，不随框选变化）；页眉工具条可切到「统计：选区」，用内联 JS
+  从全速率原始样本按当前选区重算同一口径（没有选区时该选项禁用）。
+* **按选区导出**：保存设置里的 PDF / PNG 走当前视图 —— 有选区时 PDF 的每页只画选区
+  范围（时间轴 / 网格 / 标注全部按选区重算；封面与 PNG 复盘卡**保持全程**）。
+  A 预生成 PDF 是静态文件，**有选区时强制走 B**（浏览器内逐页 html2canvas + jsPDF，
+  较慢），设置页会提示；无选区时 http 下仍可直下预生成 PDF。
 * 不依赖任何外部资源（无 CDN / 图片 / 外链脚本），离线双击即看。
 
 坐标/面板配置集中在文件开头的常量里；配色与字体栈见 ``THEMES``。
@@ -83,21 +110,205 @@ except Exception:  # pragma: no cover - 只在裁剪过的发行包里发生
 # 版式与配色
 # ---------------------------------------------------------------------------
 
+#: 清晰度档位（保存设置里的「清晰度」）：
+#:
+#: * ``high`` = 基准 2×（默认）：横版 3200×1800、竖版 1200×1600；
+#: * ``standard`` = 1×：横版 1600×900、竖版 600×800。
+#:
+#: 「标准」只用于导出（屏幕始终高清）；字号 / 版式不随清晰度变化 —— 变的只是
+#: 导出时按 ``physical / design`` 乘的渲染倍率（A 打印 = ``zoom``，B = html2canvas
+#: ``scale`` + jsPDF 页面尺寸，PNG = canvas 尺寸）。
+CLARITY_HIGH = "high"
+CLARITY_STANDARD = "standard"
+CLARITY_KEYS: Tuple[str, ...] = (CLARITY_HIGH, CLARITY_STANDARD)
+CLARITY_LABELS: Dict[str, str] = {
+    CLARITY_HIGH: "高清（基准 2×）",
+    CLARITY_STANDARD: "标准（1×）",
+}
+
+
+@dataclass(frozen=True)
+class PageProfile:
+    """一个页面档位（横版 / 竖版）的全部版式参数。
+
+    尺寸分两层：
+
+    * ``width`` / ``height`` —— **高清物理像素**（基准 2×）。PNG 复盘卡、PDF 页面
+      尺寸、``@page`` 都用它；
+    * ``design_w`` / ``design_h`` —— **版式设计坐标系**（CSS 布局单位）。同一份 CSS
+      同时服务两个档位：打印时按 ``zoom = width / design_w`` 放大到物理像素，
+      所以字号 / 图例 / 边框在画布上的相对大小不随清晰度变化。
+
+    SVG 图表用 ``view_w`` 作为 viewBox 宽度：竖版把 viewBox 宽度调小（1200），
+    图表文字在 1200 宽的页面上相对更大（"竖版字号放大"），图表高度按页面可用
+    高度单独配比，避免 ``preserveAspectRatio="none"`` 把文字拉变形。
+    """
+
+    key: str
+    #: 保存设置里的显示名，如「横版 16:9（电脑）」
+    label: str
+    #: 比例短标签，如 "16:9"
+    short: str
+    #: 高清物理像素（基准 2×）
+    width: int
+    height: int
+    #: 版式设计坐标系（CSS 布局单位；打印按 zoom 放大到物理像素）
+    design_w: int
+    design_h: int
+    #: SVG viewBox 宽度与左右边距（viewBox 单位）
+    view_w: float
+    margin_l: float
+    margin_r: float
+    #: 各类图表的 viewBox 高度（按页面实际可用高度配比）
+    page_chart_h: float
+    thumb_chart_h: float
+    global_chart_h: float
+    surface_chart_h: float
+    #: 舵面页拆页规则：每页放几张图（横版 1 页 4 张；竖版 2 页 × 2 张）
+    surface_split: Tuple[int, ...]
+    #: 复盘卡 / PDF 封面尺寸
+    card_w: int
+    card_h: int
+    #: 图例换行更积极（竖版页面窄）
+    legend_column: bool
+    #: 页脚 bottom（设计 px）
+    footer_bottom: float
+    #: DOM id 前缀 —— 同一份 HTML 里两版共存，图表 / 页面 id 必须唯一
+    id_prefix: str
+    page_id_prefix: str
+    #: 复盘卡 SVG id 后缀（PNG 两份卡 / PDF 封面两版互不撞 id）
+    card_suffix: str
+
+    @property
+    def render_scale_high(self) -> float:
+        """高清：设计坐标 → 物理像素的倍率。"""
+        return self.width / float(self.design_w)
+
+    @property
+    def standard_width(self) -> int:
+        return int(round(self.width / 2.0))
+
+    @property
+    def standard_height(self) -> int:
+        return int(round(self.height / 2.0))
+
+    def render_scale(self, clarity: str = CLARITY_HIGH) -> float:
+        """清晰度 → 渲染倍率（设计坐标 → 物理像素）。"""
+        if clarity == CLARITY_STANDARD:
+            return self.standard_width / float(self.design_w)
+        return self.render_scale_high
+
+    def physical_size(self, clarity: str = CLARITY_HIGH) -> Tuple[int, int]:
+        """清晰度 → 物理像素尺寸（PNG / PDF 页面）。"""
+        if clarity == CLARITY_STANDARD:
+            return self.standard_width, self.standard_height
+        return self.width, self.height
+
+    def pdf_pages(self, content_pages: int) -> int:
+        """PDF 总页数 = 封面（1）+ 内容页。"""
+        return int(content_pages) + 1
+
+
+#: 两个版式档位。屏幕 / 默认导出 = ``desktop``（横版 16:9）；``mobile``（竖版
+#: 3:4）只用于导出（保存设置里选竖版时）。
+PROFILES: Dict[str, PageProfile] = {
+    "desktop": PageProfile(
+        key="desktop",
+        label="横版 16:9（电脑）",
+        short="16:9",
+        width=3200,
+        height=1800,
+        design_w=1600,
+        design_h=900,
+        view_w=1500.0,
+        margin_l=78.0,
+        margin_r=96.0,
+        page_chart_h=730.0,
+        thumb_chart_h=620.0,
+        global_chart_h=215.0,
+        surface_chart_h=165.0,
+        surface_split=(4,),
+        card_w=3200,
+        card_h=1800,
+        legend_column=False,
+        footer_bottom=14.0,
+        id_prefix="",
+        page_id_prefix="",
+        card_suffix="-cover",
+    ),
+    "mobile": PageProfile(
+        key="mobile",
+        label="竖版 3:4（手机）",
+        short="3:4",
+        width=1200,
+        height=1600,
+        design_w=1200,
+        design_h=1600,
+        view_w=1200.0,
+        margin_l=62.0,
+        margin_r=76.0,
+        page_chart_h=1490.0,
+        thumb_chart_h=1200.0,
+        global_chart_h=450.0,
+        surface_chart_h=620.0,
+        surface_split=(2, 2),
+        card_w=1200,
+        card_h=1600,
+        legend_column=True,
+        footer_bottom=18.0,
+        id_prefix="m",
+        page_id_prefix="m-",
+        card_suffix="-cover-m",
+    ),
+}
+
+#: 默认档位 = 横版 16:9（屏幕浏览 + 横版 PDF/PNG）。
+DEFAULT_PROFILE_KEY = "desktop"
+PROFILE_KEYS: Tuple[str, ...] = ("desktop", "mobile")
+
+#: 当前渲染档位（由 :func:`_apply_profile` 切换；单进程渲染，不做并发保护）。
+ACTIVE_PROFILE: PageProfile = PROFILES[DEFAULT_PROFILE_KEY]
+
 #: SVG 内部坐标系宽度。页面用 preserveAspectRatio="none" 铺满容器，
-#: 因此这个值只决定"文字/线宽在 1500 单位里多大"，不决定实际像素。
-VIEW_W = 1500.0
-MARGIN_L = 78.0
-MARGIN_R = 96.0
+#: 因此这个值只决定"文字/线宽在多少 viewBox 单位里多大"，不决定实际像素。
+VIEW_W = ACTIVE_PROFILE.view_w
+MARGIN_L = ACTIVE_PROFILE.margin_l
+MARGIN_R = ACTIVE_PROFILE.margin_r
 PLOT_LEFT = MARGIN_L
 PLOT_RIGHT = VIEW_W - MARGIN_R
 PLOT_W = PLOT_RIGHT - PLOT_LEFT
 PAD_TOP = 14.0
 PAD_BOTTOM = 26.0
 
-#: 单条曲线最多画多少个点（超过就等距抽稀；悬停数据仍是全量）
+#: 单页图表的 viewBox 高度（页面铺满时按容器比例拉伸）
+PAGE_CHART_H = ACTIVE_PROFILE.page_chart_h
+#: 概览页比能量缩略图的 viewBox 高度
+THUMB_CHART_H = ACTIVE_PROFILE.thumb_chart_h
+#: 全局总览页每张堆叠图的高度
+GLOBAL_CHART_H = ACTIVE_PROFILE.global_chart_h
+#: 舵面页每张堆叠图的高度
+SURFACE_CHART_H = ACTIVE_PROFILE.surface_chart_h
+
+#: 单条曲线最多画多少个点（超过就等距抽稀；悬停数据仍是全量）。
+#: 0.5.10 起真正的降采样改用**像素包络**（见 :func:`_envelope`）：这个常量只剩
+#: 兼容意义（复盘卡 / ES 高亮段等仍按它限点数），报告曲线不再按它等距抽稀。
 MAX_SVG_POINTS = 1800
 #: 全局总览抽稀目标点数
 MAX_OVERVIEW_POINTS = 2600
+
+#: 像素包络抽稀：每"屏幕像素列"保留该列内样本的最小值 / 最大值（峰谷不丢）。
+#: 列数 = 绘图区在设计坐标下的宽度（横版 ≈ 1414 px、竖版 ≈ 1062 px），
+#: 因为 SVG 用 ``preserveAspectRatio="none"`` 铺满容器，1 个 viewBox 单位 ≈ 1 个
+#: 设计像素（横版 viewBox 1500 / 设计 1600，乘 1600/1500）。
+ENVELOPE_MIN_SPREAD_PX = 0.6
+#: 点数超过「像素列数 × 该倍率」才启用包络（低于它点没丢，仍画贝塞尔平滑）。
+ENVELOPE_TRIGGER = 2.0
+#: 仅供 A/B 截图证据：``FLIGHTLOG_LEGACY_DECIMATE=1`` 时退回 0.5.10 之前的
+#: "按 :data:`MAX_SVG_POINTS` 等距抽稀"（用同一份日志对照，证明包络不丢峰谷）。
+#: 正常生成报告不设置，行为与旧版一致。
+LEGACY_DECIMATE = str(os.environ.get("FLIGHTLOG_LEGACY_DECIMATE", "")).strip().lower() in (
+    "1", "true", "yes", "on",
+)
 #: 序列在两条曲线之间断开的时间阈值（秒）：相邻样本间隔 > 1 s 视为一次**数据中断**，
 #: 实线断开、改画虚线贝塞尔桥（8111 轮询卡顿时录制样本会出现这种空洞）。
 PATH_GAP_S = 1.0
@@ -114,13 +325,6 @@ GAP_BRIDGE_OPACITY = 0.42
 GAP_BRIDGE_WIDTH = 1.35
 GAP_BAND_OPACITY = 0.06
 GAP_HATCH_OPACITY = 0.38
-
-#: 单页图表的 viewBox 高度（页面铺满时按容器比例拉伸）
-PAGE_CHART_H = 650.0
-#: 概览页比能量缩略图的 viewBox 高度
-THUMB_CHART_H = 470.0
-#: 全局总览页每张堆叠图的高度
-GLOBAL_CHART_H = 200.0
 
 #: 默认主题 = A 工程蓝图（用户选定的形态）。
 DEFAULT_THEME = "blueprint"
@@ -176,7 +380,7 @@ ES_HIGHLIGHT_DOT_R = 2.0
 # B（file:// 场景必须）：Chromium 在 ``file://`` 页面里会拦截 ``<a download>``
 # （没有常规 origin，等于跨源），只能打开 PDF 查看器、不能真下载。所以报告**始终**
 # 内联 jsPDF + html2canvas（见 ``vendor/``）：按钮在 ``location.protocol === "file:"``
-# 时一律走 B，逐页渲染 10 页（封面 + 9 页内容）后 ``doc.save("report.pdf")``
+# 时一律走 B，逐页渲染 N 页（封面 + N−1 页内容）后 ``doc.save("report.pdf")``
 # 真下载；http/https 场景有 ``data-pdf`` 才直接用预生成文件，没有也退 B。
 
 #: 环境变量：显式指定浏览器可执行文件（排在最优先；便于测试/便携环境）。
@@ -244,13 +448,13 @@ header h1::before{
 .page>*{position:relative;z-index:1}
 .page-head{border-bottom:1px solid #8fc6e84d;padding-bottom:4px;align-items:baseline}
 .page-title{font-family:var(--font-title);font-size:18px;font-weight:700;letter-spacing:1.2px}
-.page-title::before{content:"FIG. " counter(fig,decimal-leading-zero) " · ";
+.page-title::before{content:"FIG. " attr(data-fig) " · ";
   font-family:var(--font-num);font-weight:400;font-size:12.5px;letter-spacing:.1em;
   color:var(--muted)}
 .page-sub{font-family:var(--font-num);font-size:11.5px;letter-spacing:.05em}
 .page-right{font-family:var(--font-num);font-size:11.5px;letter-spacing:.08em}
-body{counter-reset:fig}
-section.page{counter-increment:fig}
+/* 图号由 Python 按真实页序写成 data-fig（attr()），不用 CSS counter：
+   屏幕翻页时其它页 display:none，Chrome 不给不渲染的元素计数（会永远 FIG. 01）。 */
 .chart-wrap{border:1px solid #8fc6e84d;background:linear-gradient(180deg,#0a2744,#0b2a4a)}
 .chart-svg text{letter-spacing:.07em}
 .card,.avgbar{background:#0c2e50;border-color:#8fc6e859;border-radius:var(--radius-sm)}
@@ -285,7 +489,7 @@ section.page{counter-increment:fig}
   font-family:var(--font-num);font-size:9px;letter-spacing:.16em;color:var(--muted)}
 .bp-sheet{display:flex;align-items:center;border:1px solid #8fc6e859;padding:0 9px;
   color:#cfe6f8;white-space:nowrap}
-/* 打印/PDF 专用页脚：统一编号 (n+1)/10（PDF 第 1 页是封面）。屏幕隐藏，
+/* 打印/PDF 专用页脚：统一编号 (n+1)/(N+1)（PDF 第 1 页是封面）。屏幕隐藏，
    只在 @media print 与方案 B 的 body.pdf-capture 里显示（见 BLUEPRINT_PRINT_CSS）。 */
 .bp-sheet-print{display:none;align-items:center;border:1px solid #8fc6e859;padding:0 9px;
   color:#cfe6f8;white-space:nowrap}
@@ -313,7 +517,8 @@ section.page{counter-increment:fig}
 #: 蓝图主题的打印样式：白/米底档案纸 + 图号/页脚 + 手绘红圈 + 逐页分页。
 BLUEPRINT_PRINT_CSS = """
 /* ===== 打印 / PDF：C 档案袋纸张风格（白/米底 + 图号 + 页脚 + 手绘圈注） ===== */
-@page{size:1600px 1000px;margin:0}
+/* 页面尺寸（@page / width / height / zoom）由 _print_page_css() 按档位与清晰度生成，
+   这里只管纸张颜色 / 页脚 / 墨色。 */
 html,body{height:auto!important;overflow:visible!important;background:#fff!important}
 body{
   background:#fff!important;color:#2B2418!important;
@@ -324,9 +529,8 @@ header{display:none!important}
 main{position:static;display:block;min-height:0}
 .page{
   position:relative!important;inset:auto!important;display:flex!important;
-  flex-direction:column;width:1600px;height:1000px;padding:32px 34px 42px;
-  overflow:hidden;background:#F6F1E3!important;color:#2B2418!important;
-  page-break-after:always;break-after:page;border:0!important;
+  flex-direction:column;overflow:hidden;background:#F6F1E3!important;color:#2B2418!important;
+  border:0!important;
 }
 .page:last-child{page-break-after:auto;break-after:auto}
 .page::before{border-color:#8A734C!important}
@@ -357,8 +561,9 @@ html{
 .bp-foot{color:#6B5B41!important}
 .bp-sheet{border-color:#B7A483!important;color:#2B2418!important}
 .bp-sheet-print{border-color:#B7A483!important;color:#2B2418!important}
-/* 页脚统一编号：屏幕 .bp-sheet 写 n/9（和 9 页翻页一致）；打印 / PDF 换成
-   .bp-sheet-print 的 (n+1)/10 —— 第 1 页是封面，所以内容页从 02/10 起。
+/* 页脚统一编号：屏幕 .bp-sheet 写 n/N（和屏幕翻页一致）；打印 / PDF 换成
+   .bp-sheet-print 的 (n+1)/(N+1) —— 第 1 页是封面，所以内容页从 02/(N+1) 起。
+   N = 实际内容页数（9 或 10），由 Python 侧按 len(pages) 写死到每页页脚。
    规则同时进 @media print（方案 A）与 body.pdf-capture（方案 B）。 */
 .bp-sheet{display:none!important}
 .bp-sheet-print{display:flex!important}
@@ -373,6 +578,23 @@ html{
 .card,.avgbar{background:#FBF7EC!important;border-color:#B7A483!important}
 .badges span{background:#FBF7EC!important;border-color:#B7A483!important;color:#4A3D2A!important}
 .legend,.page-sub,.page-right{color:#5C4F3A!important}
+/* 舵面页（第 9 个内容页）：这些元素用 var(--panel/--muted/--) 取色，而打印态的
+   html 变量覆盖优先级低于 :root，所以这里显式钉成纸面墨色（否则屏幕上浅蓝的字
+   打印在米色纸上几乎看不见）。 */
+.surface-meta,.surface-stack .legend,.surface-stack .surface-hint,
+.surface-stack .trim-note,.surface-note{color:#5C4F3A!important}
+.surface-meta .sm-chip{background:#FBF7EC!important;border-color:#B7A483!important;
+  color:#5C4F3A!important}
+.surface-meta .sm-chip b,.surface-stack .chart-label{color:#2B2418!important}
+.surface-stack .chart-label span{color:#5C4F3A!important}
+.surface-stack .legend[role="group"]{color:#4A3D2A!important}
+.surface-note{border-top-color:#B7A483!important}
+.surface-empty{color:#6B5B41!important;border-color:#B7A483!important}
+/* 「解析提示」/「数据完整性」用主题变量取色（:root 的优先级高于打印态的 html{}），
+   纸面上会变成深底浅字 / 浅灰字；打印态显式钉成纸面墨色。 */
+.warn{background:#F7ECD6!important;border-color:#C8A86A!important;color:#6B431C!important}
+.integrity{color:#5C4F3A!important}
+.integrity b,.warn b{color:#2B2418!important}
 .legend .lg i{filter:grayscale(1) brightness(.55)}
 .lg i.dashed{background-image:linear-gradient(90deg,#2B2418 0 60%,transparent 60% 100%)!important}
 .avgbar .avg-k,.avgbar .avg-meta,.avgbar .avg-title{color:#5C4F3A!important}
@@ -472,6 +694,12 @@ THEMES: Dict[str, Theme] = {
             "pitch": "#60a5fa",
             "bank": "#ffb347",
             "roll": "#ff5c5c",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴 / 配平
+            "surf": "#c3d2e1",
+            "cmd_ail": "#4aa3ff",
+            "cmd_ele": "#ffb347",
+            "cmd_rud": "#4ade80",
+            "trim": "#ffd166",
             "death": "#ff5c5c",
             "spawn": "#4ade80",
             "vehicle_change": "#60a5fa",
@@ -591,6 +819,12 @@ THEMES: Dict[str, Theme] = {
             "pitch": "#8ecae6",
             "bank": "#ffb703",
             "roll": "#ef476f",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴 / 配平
+            "surf": "#c9d6de",
+            "cmd_ail": "#4cc9f0",
+            "cmd_ele": "#ffb703",
+            "cmd_rud": "#43d9ad",
+            "trim": "#ffd166",
             "death": "#ef476f",
             "spawn": "#70e4a0",
             "vehicle_change": "#4cc9f0",
@@ -715,6 +949,12 @@ header h1,.page-title{letter-spacing:1.2px;font-weight:600}
             "pitch": "#1f4fa8",
             "bank": "#b5651d",
             "roll": "#a3193f",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴 / 配平
+            "surf": "#3f3a30",
+            "cmd_ail": "#1f4fa8",
+            "cmd_ele": "#b5651d",
+            "cmd_rud": "#2f6b3a",
+            "trim": "#8a5a2b",
             "death": "#a31d1d",
             "spawn": "#2f6b3a",
             "vehicle_change": "#2b4e66",
@@ -806,9 +1046,8 @@ header{border-bottom:3px double #1c1c1c}
 header h1{font-family:var(--font-title);font-weight:600;letter-spacing:.6px}
 .page-head{border-bottom:1px solid #1c1c1c;padding-bottom:3px;align-items:flex-end}
 .page-title{font-family:var(--font-title);font-weight:600;letter-spacing:.4px;font-size:17px}
-body{counter-reset:fig}
-section.page{counter-increment:fig}
-.page-title::before{content:"图 " counter(fig) " · ";font-family:var(--font-num);font-weight:400;
+/* 图号同样按 Python 写死的 data-fig-n（屏幕翻页不受 display:none 影响）。 */
+.page-title::before{content:"图 " attr(data-fig-n) " · ";font-family:var(--font-num);font-weight:400;
   color:var(--muted);font-size:13px}
 .card{box-shadow:none;border-color:#cfc7b4;background:#faf7ee}
 .card b{font-family:var(--font-num)}
@@ -866,6 +1105,12 @@ header{background:#fff!important;border-bottom:2px solid #111!important}
             "pitch": "#9fc0d8",
             "bank": "#e8b04a",
             "roll": "#e06a5a",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴 / 配平
+            "surf": "#c9bc9a",
+            "cmd_ail": "#9fc0d8",
+            "cmd_ele": "#e8b04a",
+            "cmd_rud": "#a8c86a",
+            "trim": "#d9a441",
             "death": "#e06a5a",
             "spawn": "#d98f7a",
             "vehicle_change": "#d9a441",
@@ -996,6 +1241,12 @@ header{background:#2f3a2a!important}
             "pitch": "#1d4ed8",
             "bank": "#d97706",
             "roll": "#dc2626",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴 / 配平
+            "surf": "#6b7280",
+            "cmd_ail": "#2563eb",
+            "cmd_ele": "#ea580c",
+            "cmd_rud": "#059669",
+            "trim": "#b45309",
             "death": "#dc2626",
             "spawn": "#16a34a",
             "vehicle_change": "#3b82f6",
@@ -1095,7 +1346,7 @@ header{background:#fff!important}
     ),
     # ------------------------------------------------------------------
     # 6) blueprint：A 工程蓝图（默认）——深蓝图纸 / 坐标纸网格 / 图框 / 图号 /
-    #    页脚 SHEET n/9（屏幕）/ n/10（打印、PDF，封面算第 1 页）/ 右下角标题栏；
+    #    页脚 SHEET n/N（屏幕）/ (n+1)/(N+1)（打印、PDF，封面算第 1 页）/ 右下角标题栏；
     #    红色审阅标记，打印为白/米底档案纸。
     # ------------------------------------------------------------------
     "blueprint": Theme(
@@ -1129,6 +1380,12 @@ header{background:#fff!important}
             "pitch": "#7CC7FF",
             "bank": "#FFB347",
             "roll": "#FF7AA2",
+            # 舵面页（完整数据时第 9 个内容页）：舵面灰阶梯 / 三轴指令轴（蓝 / 橙 / 绿）/ 配平
+            "surf": "#C7D8E6",
+            "cmd_ail": "#6FA8FF",
+            "cmd_ele": "#FFB347",
+            "cmd_rud": "#7EE0B8",
+            "trim": "#FFD166",
             "death": "#FF5A3C",
             "spawn": "#7EE0B8",
             "vehicle_change": "#8FD3FF",
@@ -1237,6 +1494,12 @@ header{background:#fff!important}
             "pitch": "#2B4E66",
             "bank": "#7A5A2B",
             "roll": "#A8322B",
+            # 舵面页（完整数据时第 9 个内容页）：打印墨色（灰阶梯 / 蓝橙绿细线 / 配平棕）
+            "surf": "#5C5548",
+            "cmd_ail": "#2B4E66",
+            "cmd_ele": "#7A4A2B",
+            "cmd_rud": "#2F6B3A",
+            "trim": "#8A5A1F",
             "death": "#A8322B",
             "spawn": "#2F6B3A",
             "vehicle_change": "#2B4E66",
@@ -1292,6 +1555,18 @@ LINE_STYLES: Dict[str, Dict[str, Any]] = {
     "pitch": {"dash": None, "width": 2.2},
     "bank": {"dash": "8 4", "width": 2.0},
     "roll": {"dash": "2 3", "width": 1.8},
+    # 舵面页（完整数据时第 9 个内容页）：同一张图里"舵面粗阶梯 / 指令轴细线"靠线宽 + 阶梯双编码，
+    # 颜色取主题的 surf / cmd_ail / cmd_ele / cmd_rud / trim。
+    "AIL_SURF": {"dash": None, "width": 2.4},
+    "ELE_SURF": {"dash": None, "width": 2.4},
+    "RUD_SURF": {"dash": None, "width": 2.4},
+    "AIL_CMD": {"dash": None, "width": 1.25},
+    "ELE_CMD": {"dash": None, "width": 1.25},
+    "RUD_CMD": {"dash": None, "width": 1.25},
+    "DIFF_AIL": {"dash": None, "width": 1.35},
+    "DIFF_ELE": {"dash": None, "width": 1.35},
+    "DIFF_RUD": {"dash": None, "width": 1.35},
+    "TRIM": {"dash": None, "width": 1.5},
 }
 
 #: ``_series()`` 里 ``dash=True`` 的旧写法等价于这个 dash（雷达高度等次要曲线）。
@@ -1338,6 +1613,63 @@ def _apply_theme(theme: Theme) -> Theme:
         }
     )
     return theme
+
+
+def get_profile(name: Optional[str] = None) -> PageProfile:
+    """按名字取版式档位；``None`` / 空串 = 默认横版；未知档位抛 ``ValueError``。"""
+    key = (name or "").strip().lower() or DEFAULT_PROFILE_KEY
+    profile = PROFILES.get(key)
+    if profile is None:
+        raise ValueError(
+            "未知版式 %r；可选：%s" % (name, " / ".join(PROFILE_KEYS))
+        )
+    return profile
+
+
+def _apply_profile(profile: Optional[Any] = None) -> PageProfile:
+    """把版式档位的几何参数写进模块级常量（图表 / 页面构造函数在调用时读取）。
+
+    与 :func:`_apply_theme` 同一套做法：``render_report`` 先对每个档位调一次，
+    依次渲染横版 / 竖版两套页面，不需要把档位对象层层传参。
+    """
+    global ACTIVE_PROFILE, VIEW_W, MARGIN_L, MARGIN_R, PLOT_LEFT, PLOT_RIGHT, PLOT_W
+    global PAGE_CHART_H, THUMB_CHART_H, GLOBAL_CHART_H, SURFACE_CHART_H
+    if isinstance(profile, PageProfile):
+        active = profile
+    else:
+        active = get_profile(profile)
+    ACTIVE_PROFILE = active
+    VIEW_W = active.view_w
+    MARGIN_L = active.margin_l
+    MARGIN_R = active.margin_r
+    PLOT_LEFT = MARGIN_L
+    PLOT_RIGHT = VIEW_W - MARGIN_R
+    PLOT_W = PLOT_RIGHT - PLOT_LEFT
+    PAGE_CHART_H = active.page_chart_h
+    THUMB_CHART_H = active.thumb_chart_h
+    GLOBAL_CHART_H = active.global_chart_h
+    SURFACE_CHART_H = active.surface_chart_h
+    return active
+
+
+def normalize_clarity(name: Optional[str]) -> str:
+    """清晰度名归一化：``high`` / ``standard``，未知值按高清处理。"""
+    key = (name or "").strip().lower()
+    return CLARITY_STANDARD if key == CLARITY_STANDARD else CLARITY_HIGH
+
+
+def _pid(base: str) -> str:
+    """给图表 / DOM id 加当前档位前缀（横版不加，竖版加 ``m``）。
+
+    同一份 HTML 里横版、竖版两套页面共存，图表 id（``f1-speed`` / ``mf1-speed``）
+    与页面 id（``page-speed`` / ``m-page-speed``）必须互不冲突。
+    """
+    return "%s%s" % (ACTIVE_PROFILE.id_prefix, base)
+
+
+def _page_id(base: str) -> str:
+    """给页面 id 加当前档位前缀（竖版 ``m-page-speed``）。"""
+    return "%s%s" % (ACTIVE_PROFILE.page_id_prefix, base)
 
 
 # ---------------------------------------------------------------------------
@@ -2294,6 +2626,17 @@ SERIES_ROUND = {
     "inflight": 0,
     "es": 1,
     "des": 1,
+    # 舵面页（完整数据时第 9 个内容页）：舵面 1% 整数 / 指令轴×100（0.1 级）/ 差值 / 配平（0.001 级）
+    "AIL_SURF": 0,
+    "ELE_SURF": 0,
+    "RUD_SURF": 0,
+    "AIL_CMD": 2,
+    "ELE_CMD": 2,
+    "RUD_CMD": 2,
+    "DIFF_AIL": 1,
+    "DIFF_ELE": 1,
+    "DIFF_RUD": 1,
+    "TRIM": 3,
 }
 
 
@@ -2327,6 +2670,34 @@ def _fmt_number(value: Optional[float], digits: int = 1) -> str:
 
 def _fmt_coord(value: float) -> str:
     return "%.1f" % value
+
+
+def _data_t(value: Any) -> str:
+    """``data-t`` / ``data-t0`` 属性值：秒，最多 3 位小数、去尾零。
+
+    框选缩放时内联 JS 读这些属性重算像素 x（不再依赖 Python 侧的瞬时坐标），
+    所以事件竖线 / 断口竖带 / 无效区 / 批注圈 / 平均速度区间都带上它。
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    if not math.isfinite(number):
+        return "0"
+    text = "%.3f" % number
+    text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _svg_group(css_class: str, markup: str) -> str:
+    """把一段 SVG 片段包成 ``<g class="...">``；空片段直接返回空串。
+
+    图层分组是框选缩放的基础：内联 JS 只替换 ``.js-series`` / ``.js-xaxis`` /
+    ``.js-chrome`` 三个组的内容，其余图层按 ``data-t`` 平移（悬停层不受影响）。
+    """
+    if not markup:
+        return ""
+    return '<g class="%s">%s</g>' % (css_class, markup)
 
 
 def _nice_ticks(lo: float, hi: float, target: int = 5) -> Tuple[float, float, float, List[float]]:
@@ -2473,6 +2844,137 @@ def _decimate(points: List[Tuple[float, float]], limit: int) -> List[Tuple[float
     return out
 
 
+def _chart_columns() -> int:
+    """当前档位下一张图横向有多少"屏幕像素列"（设计坐标 px）。"""
+    profile = ACTIVE_PROFILE
+    return max(160, int(round(PLOT_W * (profile.design_w / float(profile.view_w)))))
+
+
+def _envelope(
+    points: Sequence[Tuple[float, float]],
+    columns: Optional[int] = None,
+) -> Dict[str, Any]:
+    """像素点列 → **按屏幕像素列分桶的 min/max 包络**（等距抽稀会丢峰谷）。
+
+    以前按「每隔 N 个样本取一个」抽稀：长日志（60 Hz × 450 s = 2.7 万样本）抽到
+    1800 点后，尖峰被跳掉、噪声被混叠，画出来糊成实心块。现在按**像素列**分桶：
+
+    * 每列取该列内所有样本的 y 最小值 / 最大值（= 上下包络），列内极差小于
+      ``ENVELOPE_MIN_SPREAD_PX`` 时只留 1 个中点（平滑段不浪费点）；
+    * 每列 x 用桶中心（首/末列用真实首尾 x），上下包络各自单调递增；
+    * 输出点数 ≤ ``2 × columns``（目标：单页单图 ≤ 2× 像素宽点数）。
+
+    返回 ``dict``：
+
+    * ``upper`` / ``lower`` —— 上 / 下包络点列 ``[(x, y), ...]``（y 小的在上）；
+    * ``zigzag`` —— 上下交错的一条折线（``M 上0 → 下0 → 上1 → 下1 …``）；
+    * ``columns`` / ``points`` —— 实际列数 / 输出折线点数（体积预算用）；
+    * ``spikes`` —— 至少一列的小值和大值都被保留（自检用：等距抽稀会丢）。
+    """
+    total = len(points)
+    if total < 2:
+        return {
+            "upper": list(points),
+            "lower": list(points),
+            "zigzag": list(points),
+            "columns": 1 if total else 0,
+            "points": total,
+            "spikes": 0,
+        }
+    cols = int(columns or _chart_columns())
+    cols = max(8, min(cols, total))
+    span = PLOT_RIGHT - PLOT_LEFT
+    if span <= 0:
+        return {
+            "upper": list(points),
+            "lower": list(points),
+            "zigzag": list(points),
+            "columns": cols,
+            "points": total,
+            "spikes": 0,
+        }
+    col_w = span / float(cols)
+    # 每列：[min_y, max_y, count]
+    buckets: List[Optional[List[float]]] = [None] * cols
+    for x, y in points:
+        index = int((x - PLOT_LEFT) / col_w)
+        if index < 0:
+            index = 0
+        elif index >= cols:
+            index = cols - 1
+        bucket = buckets[index]
+        if bucket is None:
+            buckets[index] = [y, y, 1]
+        else:
+            if y < bucket[0]:
+                bucket[0] = y
+            if y > bucket[1]:
+                bucket[1] = y
+            bucket[2] += 1
+    first_x = float(points[0][0])
+    last_x = float(points[-1][0])
+    upper: List[Tuple[float, float]] = []
+    lower: List[Tuple[float, float]] = []
+    zigzag: List[Tuple[float, float]] = []
+    spikes = 0
+    for index, bucket in enumerate(buckets):
+        if bucket is None:
+            continue
+        lo, hi = float(bucket[0]), float(bucket[1])
+        # 首 / 末列贴住绘图区左右边界，中间列用桶中心（误差 < 1 px）
+        if index == 0:
+            x = first_x
+        elif index == cols - 1:
+            x = last_x
+        else:
+            x = PLOT_LEFT + (index + 0.5) * col_w
+        if hi - lo < ENVELOPE_MIN_SPREAD_PX:
+            mid = (lo + hi) / 2.0
+            upper.append((x, mid))
+            lower.append((x, mid))
+            zigzag.append((x, mid))
+        else:
+            upper.append((x, lo))
+            lower.append((x, hi))
+            zigzag.append((x, lo))
+            zigzag.append((x, hi))
+            spikes += 1
+    return {
+        "upper": upper,
+        "lower": lower,
+        "zigzag": zigzag,
+        "columns": cols,
+        "points": len(zigzag),
+        "spikes": spikes,
+    }
+
+
+def _envelope_band_path(
+    upper: Sequence[Tuple[float, float]],
+    lower: Sequence[Tuple[float, float]],
+) -> str:
+    """上下包络 → 闭合填充带路径（上包络左→右，下包络右→左）。"""
+    if len(upper) < 2 or len(lower) < 2:
+        return ""
+    parts: List[str] = ["M%s,%s" % (_fmt_coord(upper[0][0]), _fmt_coord(upper[0][1]))]
+    for x, y in upper[1:]:
+        parts.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(y)))
+    for x, y in reversed(lower):
+        parts.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(y)))
+    parts.append("Z")
+    return "".join(parts)
+
+
+def _envelope_line_path(points: Sequence[Tuple[float, float]]) -> str:
+    """包络折线（不做贝塞尔平滑：上下沿必须穿过真实极值点，平滑会削峰）。"""
+    if not points:
+        return ""
+    parts: List[str] = ["M%s,%s" % (_fmt_coord(points[0][0]), _fmt_coord(points[0][1]))]
+    for x, y in points[1:]:
+        parts.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(y)))
+    return "".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # 平滑路径：Catmull-Rom 切线 + Fritsch–Carlson 限幅 → 三次贝塞尔
 # ---------------------------------------------------------------------------
@@ -2578,6 +3080,26 @@ def _bezier_path(points: Sequence[Tuple[float, float]]) -> str:
     return "M%s,%s%s" % (_fmt_coord(first[0]), _fmt_coord(first[1]), _bezier_commands(segments))
 
 
+def _step_path(points: Sequence[Tuple[float, float]]) -> str:
+    """像素点列 → 阶梯折线（先水平后垂直）。
+
+    舵面是 1% 量化的整数，画成阶梯才能看出"台阶"；平滑贝塞尔会把台阶抹成
+    斜线，反而不像真实舵面。抽稀后的点列同样适用（水平段会跨过被抽掉的点）。
+    """
+    if not points:
+        return ""
+    out: List[str] = ["M%s,%s" % (_fmt_coord(points[0][0]), _fmt_coord(points[0][1]))]
+    prev_y = points[0][1]
+    for x, y in points[1:]:
+        if abs(y - prev_y) > 1e-9:
+            out.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(prev_y)))
+            out.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(y)))
+            prev_y = y
+    last = points[-1]
+    out.append("L%s,%s" % (_fmt_coord(last[0]), _fmt_coord(prev_y)))
+    return "".join(out)
+
+
 def _edge_slope_px(
     segment: Sequence[Tuple[float, float]],
     side: str,
@@ -2676,6 +3198,25 @@ def _make_axis(values: Sequence[float], cmin: float, cmax: float) -> _Axis:
     return _Axis(lo, hi, cmin, cmax, step, ticks)
 
 
+def _axis_for(
+    values: Sequence[float],
+    bounds: Optional[Sequence[float]],
+    cmin: float,
+    cmax: float,
+) -> _Axis:
+    """按数据 min/max 造轴；给了 ``bounds``（如配平的 2%–98% 分位）则按它定范围。
+
+    仍走 :func:`_nice_ticks` 把分位边界扩成整齐刻度（轴标注明「分位显示」）。
+    """
+    if bounds is not None and len(bounds) >= 2:
+        lo, hi = float(bounds[0]), float(bounds[1])
+        if not (math.isfinite(lo) and math.isfinite(hi)) or hi - lo < 1e-9:
+            return _make_axis(values, cmin, cmax)
+        nlo, nhi, step, ticks = _nice_ticks(lo, hi, target=5)
+        return _Axis(nlo, nhi, cmin, cmax, step, ticks)
+    return _make_axis(values, cmin, cmax)
+
+
 class _XAxis:
     def __init__(self, t0: float, t1: float, cmin: float, cmax: float) -> None:
         self.t0 = t0
@@ -2699,17 +3240,22 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
             clip: Optional[str] = None, fill: Optional[str] = None,
             tooltip: bool = True, signed: bool = False,
             tooltip_label: Optional[str] = None,
-            series_id: Optional[str] = None) -> Dict[str, Any]:
+            series_id: Optional[str] = None,
+            step: bool = False, clamp: bool = False) -> Dict[str, Any]:
     """一条曲线的定义。
 
     ``dash`` / ``width`` 省略时取 :data:`LINE_STYLES` 里按 ``key`` 登记的线型
-    （速度页 IAS/TAS/Mach/平均速度、姿态页 Pitch/Bank/Roll 已集中登记）；
+    （速度页 IAS/TAS/Mach/平均速度、姿态页 Pitch/Bank/Roll、舵面页的阶梯/细线已集中登记）；
     ``dash=True`` 兼容旧写法（= :data:`DEFAULT_DASH`），字符串则按 SVG
     ``stroke-dasharray`` 原样使用。
 
     ``series_id`` 是"图例开关"用的独立 id（默认为 ``key``）。同一份数据被拆成
     多段独立显示时（dEs/dt 的获得/损失能量、clip=pos/neg）用不同的 id，
     点一个图例只隐藏它自己那一段；``key`` 仍是取数/悬停用的数据列名。
+
+    ``step=True`` 把曲线画成阶梯（舵面 1% 量化，突出整数台阶）；
+    ``clamp=True`` 把超出轴范围的值压到绘图区边缘（配平轴按分位显示，
+    地面尖峰不画到图外；悬停读数仍是真实值）。
     """
     style = line_style(key)
     if dash is None:
@@ -2735,6 +3281,8 @@ def _series(key: str, label: str, color: str, unit: str, axis: str = "left",
         "tooltip": tooltip,
         "signed": signed,
         "tooltip_label": tooltip_label,
+        "step": bool(step),
+        "clamp": bool(clamp),
     }
 
 
@@ -2888,6 +3436,96 @@ def _overview_panel_specs() -> List[Dict[str, Any]]:
     ]
 
 
+#: 舵面页三根轴：(短 id, 中文名, 舵面字段, 指令轴字段, 指令轴×100 色键)。
+SURFACE_AXES: Tuple[Tuple[str, str, str, str, str], ...] = (
+    ("ail", "副翼", "aileron_pct", "stick_ailerons", "cmd_ail"),
+    ("ele", "升降舵", "elevator_pct", "stick_elevator", "cmd_ele"),
+    ("rud", "方向舵", "rudder_pct", "pedals", "cmd_rud"),
+)
+
+#: 舵面页的数据列名（= 图例开关 series id = 悬停取数键）。列由
+#: :func:`_surface_columns` 从样本里现场展开，只有本架次真有这些字段时才进 payload。
+SURFACE_COLUMNS: Tuple[str, ...] = (
+    "AIL_SURF", "AIL_CMD",
+    "ELE_SURF", "ELE_CMD",
+    "RUD_SURF", "RUD_CMD",
+    "DIFF_AIL", "DIFF_ELE", "DIFF_RUD",
+    "TRIM",
+)
+
+#: 配平轴显示范围：按 2%–98% 分位取（地面尖峰 0.9+ 只占极小比例时不会压塌全图）。
+TRIM_QUANTILE_LO = 0.02
+TRIM_QUANTILE_HI = 0.98
+
+#: 舵面页统计窗口的最短空中段（秒）：比它短就退回整段（与独立预览页口径一致）。
+SURFACE_MIN_AIR_WINDOW_S = 5.0
+
+
+def _surface_panel_specs(trim_bounds: Optional[Tuple[float, float]] = None) -> List[Dict[str, Any]]:
+    """舵面页的 4 张堆叠图：9A 副翼 / 9B 升降舵 / 9C 方向舵 / 9D 差值 + 配平。
+
+    * 9A–9C：舵面（灰阶梯，1% 量化）+ 指令轴×100（细彩线，蓝 / 橙 / 绿）；
+    * 9D：三轴 ``舵面 − 指令轴×100`` 叠画（左轴 %，0 基线）+ 配平（右轴琥珀细线）。
+
+    颜色全部取 :data:`COLORS`（主题调色板），线宽/阶梯取 :data:`LINE_STYLES`。
+    缺字段的曲线由 :func:`_render_chart` 自动丢弃，不会画 0 线。
+    """
+    height = SURFACE_CHART_H
+    specs: List[Dict[str, Any]] = []
+    for index, (axis_id, label, surf_key, stick_key, color_key) in enumerate(SURFACE_AXES):
+        code = "9" + "ABC"[index]
+        surf_col = axis_id.upper() + "_SURF"
+        cmd_col = axis_id.upper() + "_CMD"
+        specs.append(
+            {
+                "key": "surface_%s" % axis_id,
+                "code": code,
+                "title": "%s %s" % (code, label),
+                "subtitle": "舵面（灰阶梯 · 1%% 量化）/ 指令轴×100（细线）",
+                "height": height,
+                "left_unit": "%",
+                "series": [
+                    _series(
+                        surf_col, surf_col.replace("_", " ") + " 舵面",
+                        COLORS["surf"], "%", decimals=0, step=True, series_id=surf_col,
+                    ),
+                    _series(
+                        cmd_col, cmd_col.replace("_", " ") + " 指令轴×100",
+                        COLORS[color_key], "%", decimals=1, series_id=cmd_col,
+                    ),
+                ],
+            }
+        )
+    diff_series: List[Dict[str, Any]] = []
+    for axis_id, label, surf_key, stick_key, color_key in SURFACE_AXES:
+        diff_col = "DIFF_" + axis_id.upper()
+        diff_series.append(
+            _series(
+                diff_col, diff_col.replace("_", " ") + " 差值",
+                COLORS[color_key], "%", decimals=1, series_id=diff_col,
+            )
+        )
+    trim_spec: Dict[str, Any] = {
+        "key": "surface_diff",
+        "code": "9D",
+        "title": "9D 差值（舵面 − 指令轴×100）+ 配平",
+        "subtitle": "左轴 差值 %（0 基线）/ 右轴 配平（分位显示）",
+        "height": height,
+        "left_unit": "%",
+        "right_unit": "配平",
+        "series": diff_series + [
+            _series(
+                "TRIM", "TRIM 配平", COLORS["trim"], "", axis="right",
+                decimals=3, series_id="TRIM",
+            ),
+        ],
+    }
+    if trim_bounds is not None:
+        trim_spec["axis_bounds"] = {"right": tuple(trim_bounds)}
+    specs.append(trim_spec)
+    return specs
+
+
 # ---------------------------------------------------------------------------
 # SVG 片段
 # ---------------------------------------------------------------------------
@@ -2904,6 +3542,9 @@ def _svg_series(
 
     * 非中断段（相邻样本间隔 ≤ ``PATH_GAP_S``）不再画折线，改用
       :func:`_bezier_path`（Catmull-Rom 切线 + 限幅）平滑穿过各点；
+    * **长序列改走像素包络**：样本数 > 2×像素列数时按屏幕像素列取 min/max
+      （:func:`_envelope`），画成上下交错的 zigzag 折线，峰谷不被抽稀抹掉；
+      短序列仍是平滑贝塞尔（行为不变）；
     * 每个 > 1 s 的时间空洞：实线断开，在断口两侧点之间补一条**虚线、
       低透明度、同色**的三次贝塞尔桥（表示插值 / 中断），不画实线直连；
     * 面积图的**底边保持直线**（``M baseline → L 首点 → 贝塞尔 → L baseline``）。
@@ -2941,16 +3582,80 @@ def _svg_series(
     for index, segment in enumerate(segments):
         pixels: List[Tuple[float, float]] = []
         for t, v in segment:
+            if defn.get("clamp"):
+                # 轴范围按分位/固定值定死时，超范围值压在绘图区边缘（悬停仍读真实值，
+                # 见 payload 里的原始序列）——避免配平地面尖峰把线画到图外。
+                v = min(max(float(v), yaxis.lo), yaxis.hi)
             py = yaxis(v)
             if py is None:
                 continue
             pixels.append((xaxis(t), py))
         if not pixels:
             continue
-        if len(pixels) > 1:
-            # 像素空间抽稀（保持 MAX_SVG_POINTS 口径；抽稀后仍按顺序穿过这些点）
-            pixels = _decimate(pixels, MAX_SVG_POINTS)
-        if len(pixels) == 1:
+        # ---- 降采样：长日志按"屏幕像素列"取 min/max 包络；短序列保持贝塞尔平滑 ----
+        columns = _chart_columns()
+        budget = max(64, int(columns * ENVELOPE_TRIGGER))
+        env: Optional[Dict[str, Any]] = None
+        if LEGACY_DECIMATE:
+            # A/B 对照：旧版等距抽稀（会丢尖峰）——只用于截图证据
+            if len(pixels) > 1:
+                pixels = _decimate(pixels, MAX_SVG_POINTS)
+        elif len(pixels) > budget:
+            env = _envelope(pixels, columns)
+        else:
+            pixels = _decimate(pixels, budget)
+        if env is not None:
+            upper = env["upper"]
+            zigzag = env["zigzag"]
+            env_attr = ' data-env="1" data-env-cols="%d" data-env-points="%d"' % (
+                int(env["columns"]),
+                int(env["points"]),
+            )
+            # 面积图：上包络 → 基线（保留原来的"面积填充"观感，不额外增加点数）
+            if fill and len(upper) > 1:
+                if fill == "zero":
+                    baseline = yaxis(0.0)
+                else:
+                    baseline = yaxis(yaxis.lo)
+                if baseline is not None:
+                    first, last = upper[0], upper[-1]
+                    area_parts: List[str] = [
+                        "M%s,%s L%s,%s"
+                        % (
+                            _fmt_coord(first[0]),
+                            _fmt_coord(baseline),
+                            _fmt_coord(first[0]),
+                            _fmt_coord(first[1]),
+                        )
+                    ]
+                    for x, y in upper[1:]:
+                        area_parts.append("L%s,%s" % (_fmt_coord(x), _fmt_coord(y)))
+                    area_parts.append(
+                        "L%s,%s Z" % (_fmt_coord(last[0]), _fmt_coord(baseline))
+                    )
+                    opacity = "0.16" if fill == "min" else "0.22"
+                    parts.append(
+                        '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"%s/>'
+                        % ("".join(area_parts), color, opacity, series_attr)
+                    )
+            # 上下包络交错的 zigzag：一列里 min/max 都保留，峰谷不会被抽稀抹掉。
+            # 线在像素列级密度下自然连成"带"，不再糊成实心块。
+            if len(zigzag) == 1:
+                parts.append(
+                    '<circle cx="%s" cy="%s" r="2.2" fill="%s"%s/>'
+                    % (_fmt_coord(zigzag[0][0]), _fmt_coord(zigzag[0][1]), color,
+                       series_attr)
+                )
+            else:
+                env_width = max(0.9, float(width) * 0.85)
+                parts.append(
+                    '<path class="series-env" d="%s" fill="none" stroke="%s"'
+                    ' stroke-width="%s" stroke-linejoin="round" stroke-linecap="round"'
+                    ' opacity="0.92"%s vector-effect="non-scaling-stroke"%s%s/>'
+                    % (_envelope_line_path(zigzag), color, env_width, dash,
+                       series_attr, env_attr)
+                )
+        elif len(pixels) == 1:
             parts.append(
                 '<circle cx="%s" cy="%s" r="2.2" fill="%s"%s/>'
                 % (_fmt_coord(pixels[0][0]), _fmt_coord(pixels[0][1]), color, series_attr)
@@ -2980,10 +3685,12 @@ def _svg_series(
                         '<path d="%s" fill="%s" fill-opacity="%s" stroke="none"%s/>'
                         % (area, color, opacity, series_attr)
                     )
+            # 舵面（1% 量化）画阶梯；其它曲线仍是三次贝塞尔平滑。
+            curve_d = _step_path(pixels) if defn.get("step") else _bezier_path(pixels)
             parts.append(
                 '<path d="%s" fill="none" stroke="%s" stroke-width="%s" stroke-linejoin="round"'
                 ' stroke-linecap="round"%s vector-effect="non-scaling-stroke"%s/>'
-                % (_bezier_path(pixels), color, width, dash, series_attr)
+                % (curve_d, color, width, dash, series_attr)
             )
 
         # 到下一段的断口：虚线贝塞尔桥（表示插值 / 中断，不画实线直连）
@@ -3022,7 +3729,16 @@ def _svg_axes(
     y0: float,
     y1: float,
 ) -> str:
-    parts: List[str] = []
+    """网格 / 刻度。
+
+    分成两组输出，方便内联 JS 在**框选缩放**时只重画时间轴（``.js-xaxis``）：
+
+    * ``.js-yaxis`` —— 水平网格 + 左右 y 轴刻度（框选只缩时间轴，y 轴不动）；
+    * ``.js-xaxis`` —— 竖向网格 + 底部时间刻度（JS 按新区间重画）。
+
+    图框边框留在两组之外（与时间区间无关）。
+    """
+    parts: List[str] = ['<g class="js-yaxis">']
     # 水平网格 + 左轴刻度
     if left is not None:
         step = left.step
@@ -3070,6 +3786,8 @@ def _svg_axes(
                 )
             )
     # 竖向网格 + 底部时间刻度
+    parts.append("</g>")
+    parts.append('<g class="js-xaxis">')
     for tick in xticks:
         px = xaxis(tick)
         parts.append(
@@ -3092,6 +3810,7 @@ def _svg_axes(
                     _fmt_time(tick, xstep),
                 )
             )
+    parts.append("</g>")
     # 边框
     parts.append(
         '<rect x="%s" y="%s" width="%s" height="%s" fill="none" stroke="%s"'
@@ -3123,9 +3842,10 @@ def _svg_events(
         px = min(max(xaxis(t), PLOT_LEFT), PLOT_RIGHT)
         color = EVENT_COLORS.get(event.get("kind", ""), COLORS["other"])
         parts.append(
-            '<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1.4"'
+            '<line data-t="%s" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1.4"'
             ' stroke-dasharray="5 4" opacity="0.85"/>'
-            % (_fmt_coord(px), _fmt_coord(y0), _fmt_coord(px), _fmt_coord(y1), color)
+            % (_data_t(t), _fmt_coord(px), _fmt_coord(y0), _fmt_coord(px),
+               _fmt_coord(y1), color)
         )
     return "".join(parts)
 
@@ -3147,8 +3867,11 @@ def _svg_regions(
         x = xaxis(start)
         width = xaxis(end) - x
         parts.append(
-            '<rect x="%s" y="%s" width="%s" height="%s" fill="%s" fill-opacity="%s"/>'
+            '<rect data-t0="%s" data-t1="%s" x="%s" y="%s" width="%s" height="%s"'
+            ' fill="%s" fill-opacity="%s"/>'
             % (
+                _data_t(region["t0"]),
+                _data_t(region["t1"]),
                 _fmt_coord(x),
                 _fmt_coord(y0),
                 _fmt_coord(width),
@@ -3192,9 +3915,11 @@ def _svg_gap_bands(
         x = xaxis(start)
         width = max(xaxis(end) - x, 0.8)
         parts.append(
-            '<rect class="gap-band" x="%s" y="%s" width="%s" height="%s" fill="%s"'
-            ' fill-opacity="%s"/>'
+            '<rect class="gap-band" data-t0="%s" data-t1="%s" x="%s" y="%s" width="%s"'
+            ' height="%s" fill="%s" fill-opacity="%s"/>'
             % (
+                _data_t(item["t0"]),
+                _data_t(item["t1"]),
                 _fmt_coord(x),
                 _fmt_coord(y0),
                 _fmt_coord(width),
@@ -3204,9 +3929,11 @@ def _svg_gap_bands(
             )
         )
         parts.append(
-            '<rect class="gap-hatch" x="%s" y="%s" width="%s" height="%s"'
-            ' fill="url(#%s)" fill-opacity="%s"/>'
+            '<rect class="gap-hatch" data-t0="%s" data-t1="%s" x="%s" y="%s" width="%s"'
+            ' height="%s" fill="url(#%s)" fill-opacity="%s"/>'
             % (
+                _data_t(item["t0"]),
+                _data_t(item["t1"]),
                 _fmt_coord(x),
                 _fmt_coord(y0),
                 _fmt_coord(width),
@@ -3233,9 +3960,10 @@ def _svg_vlines(
             continue
         px = xaxis(t)
         parts.append(
-            '<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1"'
+            '<line data-t="%s" x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="1"'
             ' stroke-dasharray="2 4" opacity="0.65"/>'
             % (
+                _data_t(t),
                 _fmt_coord(px),
                 _fmt_coord(y0),
                 _fmt_coord(px),
@@ -3270,10 +3998,12 @@ def _svg_avg_overlay(
     band_w = max(0.0, x2 - x1)
     # 统计区间浅色底纹（在曲线之上、但只有 7% 不透明度，不影响看曲线）
     parts.append(
-        '<rect id="avg-band-%s" class="avg-band" x="%s" y="%s" width="%s" height="%s"'
-        ' fill="%s" fill-opacity="0.09"/>'
+        '<rect id="avg-band-%s" class="avg-band" data-t0="%s" data-t1="%s" x="%s" y="%s"'
+        ' width="%s" height="%s" fill="%s" fill-opacity="0.09"/>'
         % (
             chart_id,
+            _data_t(start),
+            _data_t(end),
             _fmt_coord(x1),
             _fmt_coord(y0),
             _fmt_coord(band_w),
@@ -3284,11 +4014,12 @@ def _svg_avg_overlay(
     # 区间两条边界：竖向细虚线
     for slot, px in (("edge0", x1), ("edge1", x2)):
         parts.append(
-            '<line id="avg-%s-%s" class="avg-edge" x1="%s" y1="%s" x2="%s" y2="%s"'
-            ' stroke="%s" stroke-width="1" stroke-dasharray="3 4" opacity="0.6"/>'
+            '<line id="avg-%s-%s" class="avg-edge" data-t="%s" x1="%s" y1="%s" x2="%s"'
+            ' y2="%s" stroke="%s" stroke-width="1" stroke-dasharray="3 4" opacity="0.6"/>'
             % (
                 slot,
                 chart_id,
+                _data_t(start if slot == "edge0" else end),
                 _fmt_coord(px),
                 _fmt_coord(y0),
                 _fmt_coord(px),
@@ -3615,7 +4346,8 @@ def _svg_es_range_highlights(
             '<circle class="es-highlight-dot" cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>'
         )
         screen = (
-            '<g class="ann ann-screen es-highlight"%s%s>'
+            '<g class="ann ann-screen es-highlight js-es"%s%s data-es-layer="screen"'
+            ' data-es-t0="%s" data-es-t1="%s" data-es-series="%s" data-es-axis="%s">'
             '<path class="es-highlight-path" d="%s" fill="none" stroke="%s"'
             ' stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"'
             ' opacity="%.2f" vector-effect="non-scaling-stroke"/>'
@@ -3625,6 +4357,8 @@ def _svg_es_range_highlights(
             "</g>"
         ) % (
             series_attr, data_range,
+            _data_t(t0), _data_t(t1), html.escape(str(series_key)),
+            html.escape(str(item.get("axis") or "left")),
             path, ES_HIGHLIGHT_COLOR, ES_HIGHLIGHT_WIDTH, ES_HIGHLIGHT_OPACITY,
             x_start, y_start, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_COLOR,
             x_end, y_end, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_COLOR,
@@ -3638,7 +4372,8 @@ def _svg_es_range_highlights(
             ptx = min(max(x_start + 6.0, PLOT_LEFT + 2.0), PLOT_RIGHT - ptw - 2.0)
         pty = y1 - 10.0
         printed = (
-            '<g class="ann ann-print es-highlight"%s%s>'
+            '<g class="ann ann-print es-highlight js-es"%s%s data-es-layer="print"'
+            ' data-es-t0="%s" data-es-t1="%s" data-es-series="%s" data-es-axis="%s">'
             '<path class="es-highlight-path" d="%s" fill="none" stroke="%s"'
             ' stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"'
             ' opacity="%.2f" vector-effect="non-scaling-stroke"/>'
@@ -3647,6 +4382,8 @@ def _svg_es_range_highlights(
             "</g>"
         ) % (
             series_attr, data_range,
+            _data_t(t0), _data_t(t1), html.escape(str(series_key)),
+            html.escape(str(item.get("axis") or "left")),
             path, ES_HIGHLIGHT_PRINT_COLOR, ES_HIGHLIGHT_PRINT_WIDTH, 0.92,
             x_start, y_start, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_PRINT_COLOR,
             x_end, y_end, ES_HIGHLIGHT_DOT_R, ES_HIGHLIGHT_PRINT_COLOR,
@@ -3699,6 +4436,10 @@ def _svg_annotations(
         # 引线：从数据点连到标注条最近的边
         edge_x = bx if bx >= px else bx + bw
         edge_y = by + bh / 2.0
+        # 框选缩放时整组按 `data-t` 平移（圈/方框/引线/文字一起动，圈心始终压在数据点上）
+        parts.append(
+            '<g class="js-t" data-t="%s">' % _data_t(annotation.get("t", 0.0))
+        )
         group: List[str] = ['<g class="ann ann-screen"%s>' % ann_series_attr]
         group.append(
             '<line class="ann-mark" x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f"'
@@ -3771,6 +4512,7 @@ def _svg_annotations(
         )
         pgroup.append("</g>")
         parts.append("".join(pgroup))
+        parts.append("</g>")
     return "".join(parts)
 
 
@@ -3796,6 +4538,7 @@ def _svg_event_marks(
             annotation_code(mark.get("kind")),
         )
         bx, by, bw, bh = _place_label(px, py, text, boxes, y0, y1)
+        parts.append('<g class="js-t" data-t="%s">' % _data_t(mark.get("t", 0.0)))
         parts.append(
             '<g class="ann ann-screen">'
             '<path class="ann-mark" d="M%.1f,%.1f L%.1f,%.1f M%.1f,%.1f L%.1f,%.1f"/>'
@@ -3835,6 +4578,7 @@ def _svg_event_marks(
                 html.escape(death_text),
             )
         )
+        parts.append("</g>")
     return "".join(parts)
 
 
@@ -3896,7 +4640,9 @@ def _svg_blueprint_chrome(
             % (dim_x - 6, mid, COLORS["axis"], dim_x - 6, mid,
                html.escape("RANGE " + label))
         )
-    # 底部比例尺：60 s 对应的像素长度（贴在图线内侧，避开时间刻度）
+    # 底部比例尺：60 s 对应的像素长度（贴在图线内侧，避开时间刻度）。
+    # 框选缩放后时间刻度会变 → 单独成组，内联 JS 按新区间重画。
+    parts.append('<g class="js-chrome">')
     if len(xticks) >= 2:
         span = xticks[-1] - xticks[0]
         if span > 0:
@@ -3924,6 +4670,7 @@ def _svg_blueprint_chrome(
                     % (bar_x1 + 8.0, bar_y + 3.0, COLORS["axis"],
                        html.escape("SCALE %d s" % round(seg)))
                 )
+    parts.append("</g>")
     parts.append("</g>")
     return "".join(parts)
 
@@ -3986,10 +4733,12 @@ def _render_chart(
         bucket.extend(v for v in values if v is not None)
     left_axis: Optional[_Axis] = None
     right_axis: Optional[_Axis] = None
+    # 面板可以用 axis_bounds 覆盖轴范围（舵面页 9D 的配平轴按 2%–98% 分位显示）。
+    bounds = panel.get("axis_bounds") or {}
     if left_values:
-        left_axis = _make_axis(left_values, y1, y0)
+        left_axis = _axis_for(left_values, bounds.get("left"), y1, y0)
     if right_values:
-        right_axis = _make_axis(right_values, y1, y0)
+        right_axis = _axis_for(right_values, bounds.get("right"), y1, y0)
 
     xstep, xticks = _time_ticks(t0, t1, target=8)
 
@@ -4045,11 +4794,18 @@ def _render_chart(
         ' preserveAspectRatio="none" role="img" aria-label="%s">'
         % (chart_id, VIEW_W, height, html.escape(panel["title"]))
     ]
-    parts.append(_svg_gap_bands(band_items, xaxis, t0, t1, y0, y1, chart_id))
-    parts.append(_svg_regions(regions, xaxis, t0, t1, y0, y1))
-    parts.append(_svg_vlines(vlines, xaxis, t0, t1, y0, y1))
-    parts.append(_svg_axes(left_axis, right_axis, xstep, xticks, xaxis, t_label, height, y0, y1))
-    parts.append(_svg_events(events, xaxis, t0, t1, y0, y1))
+    # 每层一个 `<g class="js-*">`：框选缩放时内联 JS 只重画「曲线层 / 时间轴 / 比例尺」，
+    # 其余图层按元素的 `data-t` 平移，不用整张 SVG 重生成（悬停层的圆点也不会被抹掉）。
+    parts.append(_svg_group("js-gaps", _svg_gap_bands(band_items, xaxis, t0, t1, y0, y1, chart_id)))
+    parts.append(_svg_group("js-regions", _svg_regions(regions, xaxis, t0, t1, y0, y1)))
+    parts.append(_svg_group("js-vlines", _svg_vlines(vlines, xaxis, t0, t1, y0, y1)))
+    parts.append(
+        _svg_group(
+            "js-axes",
+            _svg_axes(left_axis, right_axis, xstep, xticks, xaxis, t_label, height, y0, y1),
+        )
+    )
+    parts.append(_svg_group("js-events", _svg_events(events, xaxis, t0, t1, y0, y1)))
     # 悬停层放在曲线下面，曲线再覆盖上去；十字线由 JS 追加在最上层
     hover_group: List[str] = []
     for defn in defs:
@@ -4060,14 +4816,22 @@ def _render_chart(
         if not any(v is not None for v in values):
             continue
         hover_group.append(_svg_series(defn, times, values, xaxis, axis))
-    parts.append("".join(hover_group))
+    parts.append(_svg_group("js-series", "".join(hover_group)))
     if avg is not None:
-        parts.append(_svg_avg_overlay(avg, chart_id, xaxis, left_axis, right_axis, y0, y1))
+        parts.append(
+            _svg_group(
+                "js-avg",
+                _svg_avg_overlay(avg, chart_id, xaxis, left_axis, right_axis, y0, y1),
+            )
+        )
     # 区间批注（Es 断崖）：在同一曲线的 [t0, t1] 上叠一条加粗红线（画在曲线**上面**，
     # 盖住原来那条细线），屏幕 / 打印各一层；标注文字放区间上方，不压曲线。
     parts.append(
-        _svg_es_range_highlights(
-            ann_items, series, times, xaxis, left_axis, right_axis, y0, y1
+        _svg_group(
+            "js-eslayer",
+            _svg_es_range_highlights(
+                ann_items, series, times, xaxis, left_axis, right_axis, y0, y1
+            ),
         )
     )
 
@@ -4099,13 +4863,16 @@ def _render_chart(
         legend_items.append(item)
 
     if ann_items:
-        parts.append(_svg_annotations(ann_items, y0, y1))
+        parts.append(_svg_group("js-anns", _svg_annotations(ann_items, y0, y1)))
     if mark_items:
-        parts.append(_svg_event_marks(mark_items, y0, y1))
+        parts.append(_svg_group("js-marks", _svg_event_marks(mark_items, y0, y1)))
 
     if ACTIVE_THEME.key == "blueprint":
         parts.append(
-            _svg_blueprint_chrome(left_axis, right_axis, xaxis, y0, y1, xticks)
+            _svg_group(
+                "js-bp",
+                _svg_blueprint_chrome(left_axis, right_axis, xaxis, y0, y1, xticks),
+            )
         )
     parts.append("</svg>")
 
@@ -4174,6 +4941,16 @@ def _render_chart(
         "x1": PLOT_RIGHT,
         "y0": y0,
         "y1": y1,
+        # 框选缩放用：当前图的完整时间范围 / 高度 / 是否画时间刻度。
+        # 内联 JS 按选区重画 `.js-series` + `.js-xaxis` + `.js-chrome`，
+        # 其余图层（网格 / 事件 / 批注 / 断口 / 平均线）按 `data-t` 平移。
+        "t0": float(t0),
+        "t1": float(t1),
+        "height": float(height),
+        "labelTime": bool(t_label),
+        # 档位 / viewBox 宽度：JS 据此换算"屏幕像素列"数（包络分桶口径与 Python 一致）
+        "profile": ACTIVE_PROFILE.key,
+        "viewW": float(VIEW_W),
         "left": left_axis.as_dict() if left_axis is not None else None,
         "right": right_axis.as_dict() if right_axis is not None else None,
         "series": [
@@ -4184,6 +4961,10 @@ def _render_chart(
                 "color": defn["color"],
                 "axis": defn["axis"],
                 "clip": defn.get("clip"),
+                "fill": defn.get("fill"),
+                "step": bool(defn.get("step")),
+                "width": defn.get("width", 1.7),
+                "dash": defn.get("dash"),
                 "decimals": defn.get("decimals", 1),
                 "unit": defn.get("unit", ""),
                 "tooltip": defn.get("tooltip", True),
@@ -4508,6 +5289,296 @@ def _render_all_panels(
     return rendered
 
 
+# ---------------------------------------------------------------------------
+# 舵面页数据准备（完整数据时第 9 个内容页）
+# ---------------------------------------------------------------------------
+#
+# 数据来源：``Flight.samples`` 里的 7 个采集字段（parse.py 的 EXTRA_NUMERIC_FIELDS），
+# **不进** ``flight.series``（其它页/统计/MFD 看不到这些键，行为不变）。
+# 只有本架次真有这些字段时才展开成 SURFACE_COLUMNS；缺键是 None，绝不补 0。
+#
+# 统计口径与独立预览页（surface_preview.py）一致（handoff §8 的基线数字）：
+#   * 窗口 = 最长一段连续 ``inflight``（< 5 s 退回全程）——地面静止段会把 p90 压到
+#     0.2–0.4%，和空中段的 2–3% 不是同一件事，所以统计只在空中窗口上算；
+#   * 相关 r = 指令轴（−1..1）与舵面（−100..100）的皮尔逊相关；
+#   * 对齐 1 采样后 p90 = |舵面[i−1] − 指令轴[i]×100| 的 90 分位（指令轴滞后约 1 采样）；
+#   * 量化台阶数 = 舵面唯一值个数；最大残差 = |舵面 − 指令轴×100| 最大值；
+#   * 配平轴按 2%–98% 分位定显示范围（分位显示），全程极值只进图例。
+
+
+def _surface_columns(flight: Flight) -> Optional[Dict[str, List[Optional[float]]]]:
+    """把 7 个采集字段展开成舵面页数据列；一个字段都没有时返回 ``None``。
+
+    列名就是图例开关 / 悬停取数的 series id（:data:`SURFACE_COLUMNS`）：
+    舵面保持 −100..+100，指令轴统一 ×100，差值 = 舵面 − 指令轴×100。
+    """
+    samples = flight.samples
+    if not samples:
+        return None
+    columns: Dict[str, List[Optional[float]]] = {}
+    present = False
+    for axis_id, _label, surf_key, stick_key, _color_key in SURFACE_AXES:
+        surf: List[Optional[float]] = []
+        cmd: List[Optional[float]] = []
+        diff: List[Optional[float]] = []
+        for sample in samples:
+            s = sample.get(surf_key)
+            k = sample.get(stick_key)
+            surf.append(s)
+            cmd.append(None if k is None else float(k) * 100.0)
+            diff.append(None if (s is None or k is None) else float(s) - float(k) * 100.0)
+            if s is not None or k is not None:
+                present = True
+        columns[axis_id.upper() + "_SURF"] = surf
+        columns[axis_id.upper() + "_CMD"] = cmd
+        columns["DIFF_" + axis_id.upper()] = diff
+    trim = [sample.get("trimmer") for sample in samples]
+    if any(value is not None for value in trim):
+        present = True
+    columns["TRIM"] = trim
+    return columns if present else None
+
+
+def _surface_window(flight: Flight) -> Tuple[List[Dict[str, Any]], str]:
+    """统计窗口：最长一段连续 ``inflight``（地面段会把动作压扁），返回 (样本, 文案)。"""
+    samples = flight.samples
+    if not samples:
+        return [], ""
+    best_start, best_end = 0, len(samples) - 1
+    best_span = 0.0
+    index = 0
+    total = len(samples)
+    while index < total:
+        if not samples[index].get("inflight"):
+            index += 1
+            continue
+        end = index
+        while end + 1 < total and samples[end + 1].get("inflight"):
+            end += 1
+        span = float(samples[end].get("t") or 0.0) - float(samples[index].get("t") or 0.0)
+        if span > best_span:
+            best_span = span
+            best_start, best_end = index, end
+        index = end + 1
+    if best_span >= SURFACE_MIN_AIR_WINDOW_S:
+        rows = samples[best_start:best_end + 1]
+        text = "空中 %s–%s s" % (
+            _fmt_number(rows[0].get("t"), 1),
+            _fmt_number(rows[-1].get("t"), 1),
+        )
+        return rows, text
+    text = "全程 %s–%s s" % (
+        _fmt_number(samples[0].get("t"), 1),
+        _fmt_number(samples[-1].get("t"), 1),
+    )
+    return list(samples), text
+
+
+def _percentile(ordered: Sequence[float], q: float) -> Optional[float]:
+    """已排序序列的分位数（nearest-rank，口径与独立预览页一致）。"""
+    if not ordered:
+        return None
+    index = int(len(ordered) * q)
+    return ordered[min(len(ordered) - 1, max(0, index))]
+
+
+def _corr(xs: Sequence[float], ys: Sequence[float]) -> Optional[float]:
+    """皮尔逊相关系数；样本 < 8 或方差为 0 时返回 None（页面写「—」）。"""
+    if len(xs) < 8:
+        return None
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    dx = math.sqrt(sum((x - mean_x) ** 2 for x in xs))
+    dy = math.sqrt(sum((y - mean_y) ** 2 for y in ys))
+    return num / (dx * dy) if dx and dy else None
+
+
+def _surface_axis_stats(
+    rows: Sequence[Dict[str, Any]], surf_key: str, stick_key: str
+) -> Dict[str, Any]:
+    """一根轴的统计：相关 / 最大残差 / 对齐 1 采样后 p90 / 量化台阶数。"""
+    surf_values: List[float] = []
+    stick_values: List[float] = []
+    quantized: set = set()
+    diffs: List[float] = []
+    for row in rows:
+        surf = row.get(surf_key)
+        stick = row.get(stick_key)
+        if surf is None or stick is None:
+            continue
+        surf_values.append(float(surf))
+        stick_values.append(float(stick))
+        diffs.append(float(surf) - float(stick) * 100.0)
+        quantized.add(round(float(surf), 3))
+    if not surf_values:
+        return {"n": 0}
+    # 舵面前移 1 个采样再比（/indicators 隔轮取 + 复用缓存 → 指令轴滞后约 1 采样）。
+    aligned: List[float] = []
+    for index in range(1, len(rows)):
+        previous = rows[index - 1].get(surf_key)
+        current = rows[index].get(stick_key)
+        if previous is None or current is None:
+            continue
+        aligned.append(abs(float(previous) - float(current) * 100.0))
+    aligned.sort()
+    abs_diff = sorted(abs(value) for value in diffs)
+    return {
+        "n": len(surf_values),
+        "surf_min": min(surf_values),
+        "surf_max": max(surf_values),
+        "stick_min": min(stick_values),
+        "stick_max": max(stick_values),
+        "corr": _corr(stick_values, surf_values),
+        "max_abs_diff": abs_diff[-1],
+        "aligned_p90": _percentile(aligned, 0.9) if aligned else None,
+        "steps": len(quantized),
+    }
+
+
+def _surface_trim_stats(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """配平统计：全程范围 / 非零样本数 / 2%–98% 分位（轴范围按分位显示）。"""
+    values = sorted(
+        float(row["trimmer"]) for row in rows if row.get("trimmer") is not None
+    )
+    if not values:
+        return {"n": 0}
+    nonzero = sum(1 for value in values if abs(value) > 1e-9)
+    return {
+        "n": len(values),
+        "min": values[0],
+        "max": values[-1],
+        "nz": nonzero,
+        "qlo": _percentile(values, TRIM_QUANTILE_LO),
+        "qhi": _percentile(values, TRIM_QUANTILE_HI),
+    }
+
+
+def _surface_trim_bounds(trim: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    """配平轴的显示范围（2%–98% 分位 + 15% 余量）；没有配平数据时返回 None。"""
+    if not trim or not trim.get("n"):
+        return None
+    qlo, qhi = float(trim["qlo"]), float(trim["qhi"])
+    if qhi - qlo < 0.02:
+        mid = (qlo + qhi) / 2.0
+        qlo, qhi = mid - 0.01, mid + 0.01
+    pad = (qhi - qlo) * 0.15 or 0.01
+    return (qlo - pad, qhi + pad)
+
+
+def _has_any(values: Sequence[Optional[float]]) -> bool:
+    return any(value is not None for value in values)
+
+
+def _surface_item(
+    spec: Dict[str, Any],
+    block: Optional[Dict[str, Any]],
+    columns: Dict[str, List[Optional[float]]],
+    trim: Dict[str, Any],
+) -> Dict[str, Any]:
+    """一张面板的渲染结果 + 缺字段提示（缺的轴写文字，不画 0 线）。"""
+    key = spec["key"]
+    hints: List[str] = []
+    if key == "surface_diff":
+        has_diff = any(
+            _has_any(columns.get(column) or ())
+            for column in ("DIFF_AIL", "DIFF_ELE", "DIFF_RUD")
+        )
+        has_trim = _has_any(columns.get("TRIM") or ())
+        if not has_trim:
+            hints.append("该窗口没有配平数据（trimmer 只在关闭「航电增稳 / 教练模式」时有值）")
+        if not has_diff and not has_trim:
+            return {
+                "spec": spec,
+                "block": None,
+                "geometry": None,
+                "empty": "该窗口没有差值 / 配平数据（机型未上报这 4 个字段）",
+            }
+    else:
+        axis_id = key.rsplit("_", 1)[-1]
+        label = spec["title"].split(" ", 1)[-1]
+        has_surf = _has_any(columns.get(axis_id.upper() + "_SURF") or ())
+        has_cmd = _has_any(columns.get(axis_id.upper() + "_CMD") or ())
+        if not has_surf and not has_cmd:
+            return {
+                "spec": spec,
+                "block": None,
+                "geometry": None,
+                "empty": "该窗口没有%s数据（机型未上报舵面 / 指令轴字段）" % label,
+            }
+        if not has_surf:
+            hints.append("该窗口没有%s舵面数据" % label)
+        if not has_cmd:
+            hints.append("该窗口没有%s指令轴数据" % label)
+    if block is not None:
+        block = dict(block)
+        legend = block["legend"]
+        for hint in hints:
+            legend += '<span class="lg surface-hint">%s</span>' % _html_escape(hint)
+        if key == "surface_diff" and trim.get("n"):
+            note = (
+                "配平 %s…%s"
+                % (_fmt_signed(trim["min"], 3), _fmt_signed(trim["max"], 3))
+                + "（轴按 2%–98% 分位显示）"
+                + " · 非零 {:,}/{:,}".format(int(trim["nz"]), int(trim["n"]))
+            )
+            legend += '<span class="lg trim-note">%s</span>' % _html_escape(note)
+        block["legend"] = legend
+    return {
+        "spec": spec,
+        "block": block,
+        "geometry": block["geometry"] if block is not None else None,
+        "empty": "",
+    }
+
+
+def _surface_payload(
+    flight: Flight,
+    columns: Dict[str, List[Optional[float]]],
+    series: Dict[str, Sequence[Optional[float]]],
+    times: Sequence[float],
+    t0: float,
+    t1: float,
+    events: Sequence[Dict[str, Any]] = (),
+    regions: Sequence[Dict[str, Any]] = (),
+    event_legend: Sequence[Dict[str, Any]] = (),
+    gap_events: Sequence[Dict[str, Any]] = (),
+) -> Dict[str, Any]:
+    """渲染舵面页的 4 张图（数据在 ``series`` 里，times 与其它页一致）。"""
+    rows, window_text = _surface_window(flight)
+    stats: Dict[str, Dict[str, Any]] = {}
+    for axis_id, _label, surf_key, stick_key, _color_key in SURFACE_AXES:
+        stats[axis_id] = _surface_axis_stats(rows, surf_key, stick_key)
+    trim = _surface_trim_stats(rows)
+    specs = _surface_panel_specs(_surface_trim_bounds(trim))
+    items: List[Dict[str, Any]] = []
+    for spec in specs:
+        block = _render_chart(
+            spec,
+            times,
+            series,
+            t0,
+            t1,
+            _pid("f%d-%s" % (flight.index, spec["key"])),
+            True,
+            events=events,
+            regions=regions,
+            event_legend=event_legend,
+            gap_events=gap_events,
+        )
+        items.append(_surface_item(spec, block, columns, trim))
+    return {
+        "stats": stats,
+        "trim": trim,
+        "window": window_text,
+        "window_t0": float(rows[0].get("t")) if rows and rows[0].get("t") is not None else t0,
+        "window_t1": float(rows[-1].get("t")) if rows and rows[-1].get("t") is not None else t1,
+        "rows": len(rows),
+        "items": items,
+        "panels": [item["geometry"] for item in items if item["geometry"] is not None],
+    }
+
+
 def _build_flight_payload(
     flight: Flight, limits: Optional[SpeedLimits] = None
 ) -> Dict[str, Any]:
@@ -4520,6 +5591,12 @@ def _build_flight_payload(
     payload_series: Dict[str, List[Optional[float]]] = {}
     for key, values in series.items():
         payload_series[key] = _round_series(values, _series_digits(key))
+    # 舵面页（完整数据时第 9 个内容页）：7 个采集字段只在本架次真有数据时才展开成列；
+    # 列名与图例开关 series id 相同，悬停读数直接复用 __FLIGHTLOG__ 里的 series。
+    surface_columns = _surface_columns(flight)
+    if surface_columns is not None:
+        for key, values in surface_columns.items():
+            payload_series[key] = _round_series(values, _series_digits(key))
 
     all_events = _events_dicts(flight)
     # gap（数据中断）不画竖线/不进事件条：曲线断口 + 淡灰竖带 + legend 已经说明；
@@ -4548,7 +5625,7 @@ def _build_flight_payload(
     panels: List[Dict[str, Any]] = []
     default_avg: Optional[Dict[str, Any]] = None
     for spec in _flight_panel_specs():
-        chart_id = "f%d-%s" % (flight.index, spec["key"])
+        chart_id = _pid("f%d-%s" % (flight.index, spec["key"]))
         chart_avg: Optional[Dict[str, Any]] = None
         if spec["key"] == "speed":
             # 默认统计范围 = 整个当前架次（用户可在页面上手动改）
@@ -4575,7 +5652,7 @@ def _build_flight_payload(
         series,
         t0,
         t1,
-        "ovf%d-es" % flight.index,
+        _pid("ovf%d-es" % flight.index),
         True,
         events=events,
         regions=regions,
@@ -4585,6 +5662,25 @@ def _build_flight_payload(
     )
     if thumb is not None:
         panels.append(thumb["geometry"])
+
+    # 舵面页（完整数据时第 9 个内容页）：只有本架次真采集到舵面字段时才准备数据块；
+    # 4 张堆叠图的几何一起并入 panels（悬停十字线对整页 4 张图联动）。
+    surface: Optional[Dict[str, Any]] = None
+    if surface_columns is not None:
+        surface = _surface_payload(
+            flight,
+            surface_columns,
+            payload_series,
+            times,
+            t0,
+            t1,
+            events=events,
+            regions=regions,
+            event_legend=kill_events,
+            gap_events=gap_events,
+        )
+        if surface["panels"]:
+            panels.extend(surface["panels"])
 
     player = getattr(flight, "player", None)
     title = "架次 %d · %s · %s – %s" % (
@@ -4614,6 +5710,7 @@ def _build_flight_payload(
         "panels": panels,
         "blocks": blocks,
         "thumb": thumb,
+        "surface": surface,
         "avg_default": default_avg,
         "events": events,
         "badges": _flight_badges(flight),
@@ -4700,7 +5797,7 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
         series_f,
         t0,
         t1,
-        "ov",
+        _pid("ov"),
         events=events,
         regions=regions,
         vlines=vlines,
@@ -4720,7 +5817,7 @@ def _overview_payload(model: LogModel) -> Optional[Dict[str, Any]]:
         "panels": [block["geometry"] for _spec, block in kept],
         "html": {
             "blocks": kept,
-            "strip": _render_event_strip(events, t0, t1, "ev-overview"),
+            "strip": _render_event_strip(events, t0, t1, _pid("ev-overview")),
             "events": events,
         },
     }
@@ -4876,7 +5973,7 @@ def _strip_html(flight_payload: Dict[str, Any], page_key: str) -> str:
         flight_payload["events"],
         flight_payload["t0"],
         flight_payload["t1"],
-        "ev-f%d-%s" % (flight_payload["index"], page_key),
+        _pid("ev-f%d-%s" % (flight_payload["index"], page_key)),
     )
     return strip or ""
 
@@ -4986,17 +6083,17 @@ def _avg_bar_html(flight_payload: Dict[str, Any]) -> str:
         meta_text = "该架次没有速度数据"
     disabled = "" if avg else " disabled"
     return (
-        '<div class="avgbar" id="avgbar-speed" data-avg-flight="%d"'
+        '<div class="avgbar" id="%s" data-avg-flight="%d"'
         ' data-avg-t0="%s" data-avg-t1="%s">'
         '<div class="avg-title">平均速度<b>可手动设置计算范围</b></div>'
         '<div class="avg-vals">%s</div>'
         '<div class="avg-ctl">'
         '<label class="avg-range">范围'
-        '<input id="avg-start-speed" class="avg-input" type="number" data-avg-start'
+        '<input id="%s" class="avg-input" type="number" data-avg-start'
         ' step="0.1" min="%s" max="%s" value="%s" inputmode="decimal"'
         ' aria-label="平均速度统计开始时间（秒）"%s>'
         '<span>s</span><span class="avg-dash">–</span>'
-        '<input id="avg-end-speed" class="avg-input" type="number" data-avg-end'
+        '<input id="%s" class="avg-input" type="number" data-avg-end'
         ' step="0.1" min="%s" max="%s" value="%s" inputmode="decimal"'
         ' aria-label="平均速度统计结束时间（秒）"%s>'
         "<span>s</span></label>"
@@ -5007,14 +6104,17 @@ def _avg_bar_html(flight_payload: Dict[str, Any]) -> str:
         '<span class="avg-msg" data-avg-msg role="status" aria-live="polite"></span></div>'
         "</div>"
         % (
+            _pid("avgbar-speed"),
             flight_index,
             _fmt_seconds_input(t0),
             _fmt_seconds_input(t1),
             "".join(value_parts),
+            _pid("avg-start-speed"),
             _fmt_seconds_input(t0),
             _fmt_seconds_input(t1),
             _fmt_seconds_input(range_start),
             disabled,
+            _pid("avg-end-speed"),
             _fmt_seconds_input(t0),
             _fmt_seconds_input(t1),
             _fmt_seconds_input(range_end),
@@ -5022,6 +6122,24 @@ def _avg_bar_html(flight_payload: Dict[str, Any]) -> str:
             _html_escape(meta_text),
         )
     )
+
+
+def _section_open(base_id: str, active: bool = False, page_key: str = "") -> str:
+    """拼 ``<section>`` 开标签：页面 id / class 按当前档位区分两套页面。
+
+    * 横版：``class="page" id="page-speed"``（和旧版完全一致）；
+    * 竖版：``class="page page-m" id="m-page-speed"`` —— 同一份 HTML 里两版共存，
+      屏幕翻页 / 打印各取一套，id 不能撞。
+    """
+    classes = ["page"]
+    if ACTIVE_PROFILE.page_id_prefix:
+        classes.append("page-m")
+    if active:
+        classes.append("active")
+    attrs = ' id="%s"' % _page_id(base_id)
+    if page_key:
+        attrs += ' data-page="%s"' % page_key
+    return '<section class="%s"%s>' % (" ".join(classes), attrs)
 
 
 def _overview_page_html(
@@ -5046,8 +6164,8 @@ def _overview_page_html(
             )
         )
     return (
-        '<section class="page active" id="page-overview" data-page="overview">'
-        '<div class="page-head"><div class="page-title">概览</div>'
+        _section_open("page-overview", active=True, page_key="overview")
+        + '<div class="page-head"><div class="page-title">概览</div>'
         '<div class="page-sub">汇总指标 + 比能量缩略图；多架次时用右上角切换</div>'
         '<div class="page-right nav-hint">按 ← → 或 PageUp/PageDown 翻页</div></div>'
         '<div class="page-body"><div class="ovwrap">'
@@ -5078,15 +6196,13 @@ def _data_page_html(spec: Dict[str, Any], views_html: str) -> str:
         units.append("右轴 %s" % spec["right_unit"])
     units.append("时间轴 秒 (s)")
     return (
-        '<section class="page" id="page-%s" data-page="%s">'
-        '<div class="page-head"><div class="page-title">%s</div>'
+        _section_open("page-%s" % key, page_key=key)
+        + '<div class="page-head"><div class="page-title">%s</div>'
         '<div class="page-sub">%s</div>'
         '<div class="page-right">%s</div></div>'
         '<div class="page-body single">%s</div>'
         "</section>"
         % (
-            key,
-            key,
             _html_escape(spec["title"]),
             _html_escape(spec.get("subtitle") or ""),
             _html_escape(" · ".join(units)),
@@ -5107,16 +6223,14 @@ def _speed_page_html(
         units.append("右轴 %s" % spec["right_unit"])
     units.append("时间轴 秒 (s)")
     return (
-        '<section class="page" id="page-%s" data-page="%s">'
-        '<div class="page-head"><div class="page-title">%s</div>'
+        _section_open("page-%s" % key, page_key=key)
+        + '<div class="page-head"><div class="page-title">%s</div>'
         '<div class="page-sub">%s</div>'
         '<div class="page-right">%s</div></div>'
         '<div class="page-body speed-body">%s'
         '<div class="speed-views">%s</div>'
         "</div></section>"
         % (
-            key,
-            key,
             _html_escape(spec["title"]),
             _html_escape(spec.get("subtitle") or ""),
             _html_escape(" · ".join(units)),
@@ -5124,6 +6238,7 @@ def _speed_page_html(
             views_html,
         )
     )
+
 
 
 def _global_page_html(overview: Dict[str, Any]) -> str:
@@ -5151,8 +6266,8 @@ def _global_page_html(overview: Dict[str, Any]) -> str:
         )
     strip = overview["html"].get("strip")
     return (
-        '<section class="page" id="page-global" data-page="global">'
-        '<div class="page-head"><div class="page-title">全局总览</div>'
+        _section_open("page-global", page_key="global")
+        + '<div class="page-head"><div class="page-title">全局总览</div>'
         '<div class="page-sub">全部架次拼在同一条时间轴上，竖虚线为架次边界</div>'
         '<div class="page-right">时间轴 秒 (s)</div></div>'
         '<div class="page-body"><div class="stackwrap">'
@@ -5163,6 +6278,215 @@ def _global_page_html(overview: Dict[str, Any]) -> str:
             "".join(items),
         )
     )
+
+
+def _surface_meta_html(surface: Dict[str, Any], flight_index: int = 0) -> str:
+    """舵面页顶部信息条：窗口 / 样本 / 三轴相关 r / 对齐 1 采样 p90 / 量化台阶数。
+
+    这里的数值是 **Python 侧按全程（默认统计窗口）算好的**；框选之后由内联 JS
+    :func:`window.__brushStats` 用全速率原始样本按「选区」重算并原地改写
+    ``[data-sm-*]`` 里的读数（默认仍是「全程」，不随框选变化）。
+    """
+    stats = surface.get("stats") or {}
+    window_text = surface.get("window") or "—"
+    chips: List[str] = [
+        '<span class="sm-chip"><b>窗口</b>'
+        '<span data-sm-window>%s</span></span>' % _html_escape(window_text),
+        '<span class="sm-chip"><b>样本</b>'
+        '<span data-sm-samples>{:,}</span></span>'.format(int(surface.get("rows") or 0)),
+    ]
+    for axis_id, label, _surf_key, _stick_key, color_key in SURFACE_AXES:
+        item = stats.get(axis_id) or {}
+        corr = item.get("corr")
+        max_diff = item.get("max_abs_diff")
+        p90 = item.get("aligned_p90")
+        # 信息条只放紧凑读数；「最大残差」等完整口径进 title（鼠标悬停可看）。
+        detail = "%s：相关 %s · 最大残差 %s%% · 对齐 1 采样后 p90 %s%% · 量化台阶 %s" % (
+            label,
+            "—" if corr is None else "%.4f" % corr,
+            "—" if max_diff is None else "%.2f" % max_diff,
+            "—" if p90 is None else "%.2f" % p90,
+            item.get("steps", "—") if item.get("n") else "—",
+        )
+        chips.append(
+            '<span class="sm-chip sm-ax" title="%s"><i style="background:%s"></i>'
+            '<b>r %s</b><span data-sm-r="%s">%s</span></span>'
+            % (_html_escape(detail), COLORS[color_key], _html_escape(label),
+               _html_escape(axis_id),
+               "—" if corr is None else "%.4f" % corr)
+        )
+    p90_bits: List[str] = []
+    step_bits: List[str] = []
+    for axis_id, _label, _surf_key, _stick_key, _color_key in SURFACE_AXES:
+        item = stats.get(axis_id) or {}
+        p90 = item.get("aligned_p90")
+        p90_bits.append("—" if p90 is None else "%.2f" % p90)
+        step_bits.append(str(item.get("steps", "—")) if item.get("n") else "—")
+    chips.append(
+        '<span class="sm-chip"><b>对齐 1 采样 p90</b>'
+        '<span data-sm-p90>%s</span> %%</span>' % " / ".join(p90_bits)
+    )
+    chips.append(
+        '<span class="sm-chip"><b>量化台阶</b>'
+        '<span data-sm-steps>%s</span></span>' % " / ".join(step_bits)
+    )
+    chips.append(
+        '<span class="sm-chip sm-scope" data-sm-scope title="统计口径：默认全程，'
+        '顶部「统计：选区」可切到当前框选区间">全程</span>'
+    )
+    return '<div class="surface-meta" data-surface-flight="%d">%s</div>' % (
+        int(flight_index),
+        "".join(chips),
+    )
+
+
+def _surface_panel_html(item: Dict[str, Any]) -> str:
+    """一张堆叠面板：图号小标题 + 图例（series toggle）+ 图，或「该窗口没有…数据」。"""
+    spec = item["spec"]
+    units: List[str] = []
+    if spec.get("left_unit"):
+        units.append("左轴 %s" % spec["left_unit"])
+    if spec.get("right_unit"):
+        units.append("右轴 %s" % spec["right_unit"])
+    parts = [
+        '<div class="stack-item">',
+        '<div class="chart-label">%s<span>%s</span></div>'
+        % (_html_escape(spec["title"]), _html_escape(" · ".join(units))),
+    ]
+    block = item.get("block")
+    if block is not None:
+        parts.append(
+            '<div class="legend-row"><div class="legend" role="group"'
+            ' aria-label="曲线显示开关：点按隐藏/显示，双击只看这一条">%s</div>%s</div>'
+            % (block["legend"], _series_bar_html())
+        )
+        parts.append('<div class="chart-wrap">%s</div>' % block["svg"])
+    else:
+        parts.append(
+            '<div class="surface-empty">%s</div>'
+            % _html_escape(item.get("empty") or "该窗口没有数据")
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _surface_notes_html() -> str:
+    """舵面页底部一行注释（1% 量化 / 采样滞后 / trimmer 前提 / A-10 分裂副翼）。"""
+    bits = [
+        "舵面按 1% 量化（阶梯）；指令轴 = 配平 + 增稳后的最终指令"
+        "（同源、粗细两版，不是「玩家输入 vs 飞机响应」）",
+        "指令轴滞后约 1 采样（≈24 ms）——9D 差值尖峰是采样滞后，不是操纵差动",
+        "trimmer 只在关闭「航电增稳 / 教练模式」时有值；恒 0 = 这局没有配平在生效",
+        "A-10 系列分裂副翼（deceleron）会让 airbrake% 跟随副翼，舵面数据需单独看",
+    ]
+    return '<div class="surface-note">%s</div>' % _html_escape(" · ".join(bits))
+
+
+def _surface_view_html(
+    flight_payload: Dict[str, Any],
+    is_active: bool,
+    item_range: Optional[Tuple[int, int]] = None,
+    show_meta: bool = True,
+    show_notes: bool = True,
+) -> str:
+    """一页里"某个架次"的舵面内容：事件条 + 信息条 + 4 张堆叠图 + 页脚注释。
+
+    竖版把 4 张图拆成 2 页（每页 2 张）：``item_range`` 指定本页取哪几张；
+    页脚注释只在最后一页输出，信息条每页都带（拆页后单独看也说得通）。
+    """
+    surface = flight_payload.get("surface")
+    parts = [
+        '<div class="flight-view%s" data-flight="%d" data-default-hidden="">'
+        % (" active" if is_active else "", flight_payload["index"])
+    ]
+    if surface is None:
+        parts.append(
+            '<div class="empty">该架次没有舵面字段（0.5.10 之前录制，'
+            "或 ACMI 回放不含这 7 个字段）</div>"
+        )
+    else:
+        strip = _strip_html(flight_payload, "surface")
+        if strip:
+            parts.append('<div class="strip">%s</div>' % strip)
+        if show_meta:
+            parts.append(
+                _surface_meta_html(surface, int(flight_payload.get("index") or 0))
+            )
+        parts.append('<div class="surface-stack">')
+        items = surface["items"]
+        if item_range is not None:
+            items = items[item_range[0]:item_range[1]]
+        for item in items:
+            parts.append(_surface_panel_html(item))
+        parts.append("</div>")
+        if show_notes:
+            parts.append(_surface_notes_html())
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _surface_page_html(
+    flight_payloads: Sequence[Dict[str, Any]], default_index: int
+) -> List[str]:
+    """舵面 / 配平 / 指令轴页（姿态页之后、全局总览之前；完整数据时第 9 个内容页）。
+
+    每页放几张图由档位决定：横版 ``surface_split=(4,)`` = 一页 4 张（和旧版一致）；
+    竖版 ``(2, 2)`` = 拆成 2 页（① 副翼+升降 ② 方向+差值+配平），页数 / 页码 /
+    PDF 进度全部由实际页数推导。
+    """
+    split = ACTIVE_PROFILE.surface_split or (len(SURFACE_AXES) + 1,)
+    if len(split) <= 1:
+        ranges: List[Optional[Tuple[int, int]]] = [None]
+    else:
+        ranges = []
+        start = 0
+        for size in split:
+            ranges.append((start, start + int(size)))
+            start += int(size)
+    pages: List[str] = []
+    for page_index, item_range in enumerate(ranges):
+        views = [
+            _surface_view_html(
+                flight_payload,
+                flight_payload["index"] == default_index,
+                item_range=item_range,
+                show_notes=(page_index == len(ranges) - 1),
+            )
+            for flight_payload in flight_payloads
+        ]
+        if len(ranges) > 1:
+            title = "舵面 / 配平 / 指令轴（%d/%d）" % (page_index + 1, len(ranges))
+            subtitle = "本页 2 张图：舵面实际偏转（1% 量化阶梯）与指令轴×100 同源对比"
+            if page_index == 0:
+                subtitle = "本页 2 张图：副翼 / 升降舵的舵面（1% 量化阶梯）与指令轴×100 对比"
+            else:
+                subtitle = "本页 2 张图：方向舵 + 三轴差值 / 配平（9D 右轴按分位显示）"
+        else:
+            title = "舵面 / 配平 / 指令轴"
+            subtitle = (
+                "舵面实际偏转（1% 量化阶梯）与指令轴×100"
+                "（配平 + 增稳后的最终指令）同源对比；9D = 三轴差值 + 配平"
+            )
+        head = (
+            '<div class="page-head"><div class="page-title">%s</div>'
+            '<div class="page-sub">%s</div>'
+            '<div class="page-right">左轴 %% · 9D 右轴 配平</div></div>'
+            % (_html_escape(title), _html_escape(subtitle))
+        )
+        base_id = "page-surface" if page_index == 0 else "page-surface-%d" % (page_index + 1)
+        page_key = "surface" if page_index == 0 else "surface-%d" % (page_index + 1)
+        pages.append(
+            "".join(
+                [
+                    _section_open(base_id, page_key=page_key),
+                    head,
+                    '<div class="page-body surface-body"><div class="surface-views">',
+                    "".join(views),
+                    "</div></div></section>",
+                ]
+            )
+        )
+    return pages
 
 
 def _flight_label(flight_payload: Dict[str, Any]) -> str:
@@ -5312,9 +6636,9 @@ def _blueprint_chrome_html(page_no: int, page_total: int,
 
     页脚输出两个 span，由打印 CSS 切换（两份 DOM 完全一致，A/B 两条 PDF 路径共用）：
 
-    * ``.bp-sheet``：屏幕态 ``SHEET n/9`` —— 和屏幕 9 页翻页一致；
-    * ``.bp-sheet-print``：打印 / PDF 态 ``SHEET (n+1)/10`` —— PDF 第 1 页是封面，
-      所以第 n 个内容页 = PDF 第 n+1 页、总页数 = page_total + 1。
+    * ``.bp-sheet``：屏幕态 ``SHEET n/N`` —— 和屏幕 N 页翻页一致；
+    * ``.bp-sheet-print``：打印 / PDF 态 ``SHEET (n+1)/(N+1)`` —— PDF 第 1 页是封面，
+      所以第 n 个内容页 = PDF 第 n+1 页、总页数 = page_total + 1（N+1）。
     """
     return (
         '<div class="bp-chrome" aria-hidden="true">'
@@ -5352,20 +6676,45 @@ def _inject_page_chrome(page: str, chrome: str) -> str:
 
 
 def _inject_page_no(page: str, page_no: int) -> str:
-    """给 ``<section ...>`` 开标签补 ``data-page-no``（1 起，和页码/SHEET 一致）。
+    """给 ``<section ...>`` 开标签补 ``data-page-no`` / ``data-fig``（1 起）。
 
-    内联 JS 用这个页号拼 localStorage 键（``wtflightlog:<文件>:p<页号>``），
+    内联 JS 用 ``data-page-no`` 拼 localStorage 键（``wtflightlog:<文件>:p<页号>``），
     因此各页的曲线显示状态互不影响；DOM 顺序变了也不会串页。
+
+    ``data-fig`` 是**图号**（``FIG. 09``）：屏幕翻页时其它页是 ``display:none``，
+    CSS ``counter`` 在 Chrome 里不会给不渲染的元素计数（以前的屏幕图号永远是
+    FIG. 01，只有打印/PDF 正常）。这里由 Python 按真实页序写死，屏幕与打印一致。
     """
     end = page.find(">")
     if end < 0:
         return page
-    return page[:end] + ' data-page-no="%d"' % page_no + page[end:]
+    attrs = ' data-page-no="%d" data-fig="%02d" data-fig-n="%d"' % (
+        page_no,
+        page_no,
+        page_no,
+    )
+    page = page[:end] + attrs + page[end:]
+    # 图号伪元素（``.page-title::before``）只能读到**自己元素**的属性，
+    # 所以把 data-fig 也挂到页标题上（attr() 不继承）。
+    return page.replace(
+        '<div class="page-title">',
+        '<div class="page-title" data-fig="%02d" data-fig-n="%d">'
+        % (page_no, page_no),
+        1,
+    )
 
 
 def _build_payload(
-    model: LogModel, limits: Optional[SpeedLimits] = None
+    model: LogModel,
+    limits: Optional[SpeedLimits] = None,
+    profile: Optional[Any] = None,
 ) -> Dict[str, Any]:
+    """渲染一个档位的完整 payload（页面 / 复盘卡 / 封面 / 内联数据）。
+
+    ``render_report`` 对 ``desktop`` / ``mobile`` 各调用一次；函数开头会
+    :func:`_apply_profile`，之后所有图表 / 页面构造函数读到的都是该档位几何。
+    """
+    active = _apply_profile(profile)
     flight_payloads: List[Dict[str, Any]] = [
         _build_flight_payload(flight, limits) for flight in model.flights
     ]
@@ -5445,6 +6794,12 @@ def _build_payload(
         else:
             pages.append(_data_page_html(spec, "".join(views)))
 
+    # 舵面 / 配平 / 指令轴（姿态页之后、全局总览之前）：任意架次采集到 7 字段才加一页；
+    # schema<2 / ACMI 回放等全缺时保持原来的 9 页（页码/页脚/PDF 总页数全部由
+    # len(pages) 推导，见下面 chrome 注入与 _build_payload 返回值）。
+    if any(flight_payload.get("surface") for flight_payload in flight_payloads):
+        pages.extend(_surface_page_html(flight_payloads, default_index))
+
     overview = _overview_payload(model)
     # 多玩家时不拼"全局总览"：不同玩家的时间轴互相重叠，拼在一起没有意义
     if overview is not None and not multi_player:
@@ -5453,7 +6808,7 @@ def _build_payload(
     # 每页写死页号（1 起）：曲线显示状态按页存 localStorage，翻页/打印都不串。
     pages = [_inject_page_no(page, index + 1) for index, page in enumerate(pages)]
 
-    # A 工程蓝图：每页注入图框 / 图号 / 页脚（屏幕 SHEET n/9、打印/PDF SHEET n+1/10）
+    # A 工程蓝图：每页注入图框 / 图号 / 页脚（屏幕 SHEET n/N、打印/PDF SHEET (n+1)/(N+1)，
     # / 右下角标题栏
     blueprint_meta: Optional[Dict[str, str]] = None
     if ACTIVE_THEME.key == "blueprint" and pages:
@@ -5508,16 +6863,17 @@ def _build_payload(
             vne_items.append(item)
     player = limits.player_name if limits is not None else ""
     debrief_html = _debrief_host_html(
-        model, flight_payloads, blueprint_meta, player_name=player,
+        model, flight_payloads, blueprint_meta, player_name=player, profile=active,
     )
     # PDF 第 1 页封面：复用 PNG 复盘卡（annotated + clean 两份），屏幕隐藏、只打印。
-    # 封面是 PDF 第 1 页：页脚统一编号 SHEET 01/<PDF 总页数>（内容页从 02/10 起）。
+    # 封面是 PDF 第 1 页：页脚统一编号 SHEET 01/<PDF 总页数>（内容页从 02/(N+1) 起）。
     cover_html = _pdf_cover_html(
         model, flight_payloads, blueprint_meta, player_name=player,
-        pdf_total=len(pages) + 1,
+        pdf_total=len(pages) + 1, profile=active,
     )
     pdf_page_count = len(pages) + (1 if cover_html else 0)
     return {
+        "profile": active.key,
         "title": "%s · %s" % (title_prefix, os.path.basename(model.path)),
         "file": os.path.basename(model.path),
         "meta": model.meta,
@@ -5529,6 +6885,9 @@ def _build_payload(
         "limits": limits_info,
         "vne": vne_items,
         "blueprint": blueprint_meta,
+        # 两版合并内联数据用：原始 flight payload / overview payload（含 panels 几何）
+        "raw_flights": flight_payloads,
+        "raw_overview": overview,
         "html": {
             "pages": pages,
             "page_count": len(pages),
@@ -5593,8 +6952,35 @@ def _debrief_card_svg(
     meta: Dict[str, str],
     suffix: str = "",
     sheet_text: str = "SHEET 01/01",
+    profile: Optional[Any] = None,
 ) -> str:
-    """一张 1600×1000 的复盘卡（C 档案袋风格）：纸底 + 印章 + 关键数据 + 标注图 + 打字机注。
+    """按档位画复盘卡：横版 3200×1800 / 竖版 1200×1600。"""
+    active = get_profile(profile) if not isinstance(profile, PageProfile) else profile
+    if active.key == "mobile":
+        return _debrief_card_svg_mobile(
+            model, flight_payload, clean, meta, suffix=suffix,
+            sheet_text=sheet_text, profile=active,
+        )
+    return _debrief_card_svg_desktop(
+        model, flight_payload, clean, meta, suffix=suffix,
+        sheet_text=sheet_text, profile=active,
+    )
+
+
+def _debrief_card_svg_desktop(
+    model: LogModel,
+    flight_payload: Dict[str, Any],
+    clean: bool,
+    meta: Dict[str, str],
+    suffix: str = "",
+    sheet_text: str = "SHEET 01/01",
+    profile: Optional[Any] = None,
+) -> str:
+    """一张 16:9 复盘卡（C 档案袋风格）：纸底 + 印章 + 关键数据 + 标注图 + 打字机注。
+
+    版式设计坐标系仍是 1600×1000（旧版卡的全部坐标不动），整块内容按
+    ``min(card_w/1600, card_h/1000)`` 等比缩放居中到 ``card_w × card_h``
+    （横版 = 1.8× → 2880×1800），所以 3200×1800 的 PNG 仍是矢量清晰。
 
     ``clean=True`` 时去掉所有手绘圈 / 编号 / 分析员注记（保留曲线、坐标、事件线）。
 
@@ -5604,8 +6990,8 @@ def _debrief_card_svg(
     两份卡在同一个文档里撞 id。
 
     ``sheet_text`` 是卡右上角的图号 / 页码文字：PNG 单张卡保持 ``SHEET 01/01``
-    （默认值，单张卡不是 PDF 页）；只有 PDF 封面（第 1 页 / 共 10 页）传
-    ``SHEET 01/10`` 覆盖。
+    （默认值，单张卡不是 PDF 页）；只有 PDF 封面（第 1 页 / 共 N 页）传
+    ``SHEET 01/N`` 覆盖（N = PDF 总页数 = 封面 + 内容页）。
     """
     times = [float(t) for t in (flight_payload.get("times") or []) if t is not None]
     series = flight_payload.get("series") or {}
@@ -5628,16 +7014,24 @@ def _debrief_card_svg(
     flat.sort(key=lambda item: float(item["t"]))
 
     # ---------- 画布与纸张 ----------
+    #：设计坐标系 1600×1000（旧版所有坐标不动）；外层画布 = 档位卡尺寸（横版 3200×1800）。
     W, H = 1600, 1000
+    active = profile if isinstance(profile, PageProfile) else get_profile(profile)
+    CW, CH = active.card_w, active.card_h
+    scale = min(CW / float(W), CH / float(H))
+    tx = (CW - W * scale) / 2.0
+    ty = (CH - H * scale) / 2.0
     parts: List[str] = []
     svg_id = ("debrief-svg-clean" if clean else "debrief-svg-annotated") + suffix
     tag = ("a" if clean else "b") + suffix
     parts.append(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"'
         ' id="%s" class="debrief-svg" role="img" aria-label="%s">'
-        % (W, H, W, H, svg_id,
+        % (CW, CH, CW, CH, svg_id,
            html.escape("飞行复盘卡（无批注）" if clean else "飞行复盘卡（带批注）"))
     )
+    parts.append('<rect width="%d" height="%d" fill="#C9B28A"/>' % (CW, CH))
+    parts.append('<g transform="translate(%.1f %.1f) scale(%.4f)">' % (tx, ty, scale))
     parts.append(
         '<defs>'
         '<pattern id="pcard-lines-%s" width="7" height="7" patternUnits="userSpaceOnUse">'
@@ -6142,10 +7536,12 @@ def _debrief_card_svg(
     )
     parts.append(
         '<text x="84" y="936" font-family="Courier New,monospace" font-size="9.5"'
-        ' fill="#6B5B41" letter-spacing="1.2">ARCHIVED %s · %s · PNG 1600×1000 · %s</text>'
+        ' fill="#6B5B41" letter-spacing="1.2">ARCHIVED %s · %s · PNG %d×%d · %s</text>'
         % (
             _html_escape(meta.get("date") or "—"),
             _html_escape(meta.get("dwg") or "WT-FL-LOG"),
+            CW,
+            CH,
             _html_escape("CLEAN" if clean else "ANNOTATED"),
         )
     )
@@ -6155,8 +7551,559 @@ def _debrief_card_svg(
         % (_html_escape(meta.get("project") or "WTHUD FLIGHT LOG"),
            _html_escape(meta.get("rev") or "C"))
     )
+    parts.append("</g></svg>")
+    return "".join(parts)
+
+
+def _debrief_card_svg_mobile(
+    model: LogModel,
+    flight_payload: Dict[str, Any],
+    clean: bool,
+    meta: Dict[str, str],
+    suffix: str = "",
+    sheet_text: str = "SHEET 01/01",
+    profile: Optional[Any] = None,
+) -> str:
+    """一张竖版 1200×1600 复盘卡：核心信息重排（标题 / 字段 / 主图 / legend / 备注）。
+
+    与横版同一套档案袋视觉（纸底 / 胶带 / 图号 / 印章 / 分析员签字 / 打字机注），
+    只是把"左栏字段 + 右栏图"改成竖排：字段两列 → KPI 2×2 → 三张主图 → legend。
+    """
+    active = profile if isinstance(profile, PageProfile) else get_profile(profile)
+    CW, CH = active.card_w, active.card_h
+
+    times = [float(t) for t in (flight_payload.get("times") or []) if t is not None]
+    series = flight_payload.get("series") or {}
+    if not times:
+        times = [0.0, 1.0]
+    t0 = float(flight_payload.get("t0") or times[0])
+    t1 = float(flight_payload.get("t1") or times[-1])
+    if t1 <= t0:
+        t1 = t0 + 1.0
+    stats = flight_payload.get("stats") or {}
+    vehicle = flight_payload.get("vehicle") or meta.get("vehicle") or "未知机型"
+    duration = t1 - t0
+    samples = len(flight_payload.get("times") or [])
+    death_t = flight_payload.get("death_t")
+    annotations = flight_payload.get("annotations") or {}
+    flat: List[Dict[str, Any]] = []
+    for page in ("speed", "altitude", "energy", "aoa_ny"):
+        for annotation in annotations.get(page) or []:
+            flat.append(annotation)
+    flat.sort(key=lambda item: float(item["t"]))
+
+    parts: List[str] = []
+    svg_id = ("debrief-svg-clean" if clean else "debrief-svg-annotated") + suffix
+    tag = ("a" if clean else "b") + suffix
+    parts.append(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"'
+        ' id="%s" class="debrief-svg debrief-svg-mobile" role="img" aria-label="%s">'
+        % (CW, CH, CW, CH, svg_id,
+           html.escape("飞行复盘卡 · 竖版（无批注）" if clean else "飞行复盘卡 · 竖版（带批注）"))
+    )
+    parts.append(
+        '<defs>'
+        '<pattern id="pcardm-lines-%s" width="7" height="7" patternUnits="userSpaceOnUse">'
+        '<rect width="7" height="7" fill="#C9B28A"/>'
+        '<path d="M0,0 L7,0 M0,3 L7,3" stroke="#B79E74" stroke-width="0.7" opacity="0.5"/>'
+        "</pattern>"
+        '<pattern id="pcardm-paper-%s" width="4" height="4" patternUnits="userSpaceOnUse">'
+        '<rect width="4" height="4" fill="#F2EBD8"/>'
+        '<path d="M0,0 L4,0" stroke="#E2D6BB" stroke-width="0.6" opacity="0.6"/>'
+        "</pattern>"
+        "</defs>"
+        % (tag, tag)
+    )
+    parts.append('<rect width="%d" height="%d" fill="url(#pcardm-lines-%s)"/>'
+                 % (CW, CH, tag))
+    parts.append('<rect x="40" y="34" width="%d" height="%d" fill="#00000018"/>'
+                 % (CW - 76, CH - 62))
+    parts.append(
+        '<rect x="30" y="24" width="%d" height="%d" fill="url(#pcardm-paper-%s)"'
+        ' stroke="#8A734C" stroke-width="1.5"/>'
+        % (CW - 60, CH - 48, tag)
+    )
+    parts.append(
+        '<rect x="42" y="36" width="%d" height="%d" fill="none" stroke="#B7A483"'
+        ' stroke-width="0.8" stroke-dasharray="5 4"/>' % (CW - 84, CH - 72)
+    )
+    for tx, ty, rot in ((66, 26, -7), (1012, 22, 5), (70, 1500, 3), (1000, 1506, -4)):
+        parts.append(
+            '<rect x="%d" y="%d" width="118" height="24" fill="#E8DCC0" opacity="0.72"'
+            ' transform="rotate(%d %d %d)"/>' % (tx, ty, rot, tx + 59, ty + 12)
+        )
+
+    # ---------- 页眉 ----------
+    parts.append(
+        '<text x="64" y="76" font-family="Courier New,Consolas,monospace" font-size="9.5"'
+        ' fill="#6B5B41" letter-spacing="2.4">WAR THUNDER · FLIGHT LOG DIVISION · DEBRIEF</text>'
+    )
+    parts.append(
+        '<text x="64" y="122" font-family="Courier New,Consolas,monospace" font-size="33"'
+        ' font-weight="700" fill="#2B2418" letter-spacing="1.2">COMBAT FLIGHT</text>'
+    )
+    parts.append(
+        '<text x="64" y="158" font-family="Courier New,Consolas,monospace" font-size="33"'
+        ' font-weight="700" fill="#2B2418" letter-spacing="1.2">DEBRIEF</text>'
+    )
+    parts.append(
+        '<text x="64" y="184" font-family="Microsoft YaHei UI,Microsoft YaHei,sans-serif"'
+        ' font-size="13" fill="#6B5B41" letter-spacing="4">飞 行 复 盘 卡 · 竖 版 · DEBRIEF CARD</text>'
+    )
+    parts.append(
+        '<text x="1136" y="82" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="13" font-weight="700" fill="#8E2A24" letter-spacing="1">NO. %s</text>'
+        % _html_escape(meta.get("dwg") or "WT-FL-LOG")
+    )
+    parts.append(
+        '<text x="1136" y="102" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="8.5" fill="#6B5B41" letter-spacing="1.4">CLASSIFIED · DEBRIEF COPY</text>'
+    )
+    parts.append(
+        '<text x="1136" y="122" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="9" fill="#6B5B41" letter-spacing="1">REV %s · %s</text>'
+        % (_html_escape(meta.get("rev") or "C"), _html_escape(meta.get("date") or "—"))
+    )
+    parts.append(
+        '<text x="1136" y="142" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="9" fill="#6B5B41" letter-spacing="1">%s</text>'
+        % _html_escape(sheet_text)
+    )
+    parts.append('<line x1="64" y1="202" x2="1136" y2="202" stroke="#8A734C" stroke-width="2"/>')
+
+    # ---------- 字段（两列三行） ----------
+    mission = "FLT-%s" % (meta.get("dwg") or "LOG").replace("WT-FL-", "")
+    outcome = "LOST · DEATH %s s" % _fmt_number(death_t, 1) if death_t is not None else "SURVIVED"
+    pilot = str(
+        flight_payload.get("player") or meta.get("player") or "UNKNOWN"
+    ).strip() or "UNKNOWN"
+    if len(pilot) > 22:
+        pilot = pilot[:21] + "…"
+    fields = [
+        ("MISSION 任务", mission),
+        ("ACFT 机型", vehicle),
+        ("DATE 日期", "%s   LOCAL" % (meta.get("date") or "—")),
+        ("DURATION 时长", "%.1f s · %d samples" % (duration, samples)),
+        ("PILOT 飞行员", pilot),
+        ("OUTCOME 结果", outcome),
+    ]
+    for index, (label, value) in enumerate(fields):
+        column = index % 2
+        row = index // 2
+        x = 64.0 + column * 552.0
+        y = 232.0 + row * 62.0
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="9"'
+            ' fill="#6B5B41" letter-spacing="1.3">%s</text>'
+            % (x, y, _html_escape(label))
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="13"'
+            ' fill="#2B2418">%s</text>' % (x, y + 18, _html_escape(value))
+        )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#C3B294"'
+            ' stroke-width="0.8" stroke-dasharray="2 3"/>' % (x, y + 26, x + 500, y + 26)
+        )
+    if not clean:
+        parts.append(
+            '<text x="64" y="420" font-family="Courier New,monospace" font-size="8.5"'
+            ' fill="#8E2A24" letter-spacing="1.1">RED = REVIEW MARK · 红圈编号见下方 LEGEND</text>'
+        )
+
+    # ---------- KPI 2×2 ----------
+    def kpi(label: str, value: str, unit: str, x: float, y: float) -> None:
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="9"'
+            ' fill="#6B5B41" letter-spacing="1.4">%s</text>' % (x, y, _html_escape(label))
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="22"'
+            ' font-weight="700" fill="#2B2418">%s<tspan font-size="10" font-weight="400"'
+            ' fill="#52708A"> %s</tspan></text>'
+            % (x, y + 25, _html_escape(value), _html_escape(unit))
+        )
+
+    stats_i = stats.get("ias") or {}
+    stats_ny = stats.get("ny") or {}
+    stats_alt = stats.get("alt") or {}
+    energy = stats.get("energy") or {}
+    kpi("MAX IAS 最大指示空速", _fmt_number(stats_i.get("max"), 0), "km/h", 64, 450)
+    kpi("MAX G 最大过载", _fmt_number(stats_ny.get("abs_max"), 2), "g", 616, 450)
+    kpi("ES 比能量范围", "%s–%s" % (_fmt_number(energy.get("min"), 0),
+                                  _fmt_number(energy.get("max"), 0)), "m", 64, 512)
+    kpi("MAX ALT 最大气压高度", _fmt_number(stats_alt.get("max"), 0), "m", 616, 512)
+    parts.append(
+        '<text x="64" y="566" font-family="Courier New,monospace" font-size="8.5"'
+        ' fill="#6B5B41" letter-spacing="1.1">SOURCE %s · SCHEMA %s · %s %s</text>'
+        % (
+            _html_escape(os.path.basename(model.path)),
+            _html_escape((model.meta or {}).get("schema") or "1"),
+            _html_escape((model.meta or {}).get("app") or "WtHud"),
+            _html_escape((model.meta or {}).get("rate") or ""),
+        )
+    )
+
+    # ---------- 主图（竖排三张） ----------
+    X0, X1 = 64.0, 1136.0
+    PA = {"top": 604.0, "bot": 752.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    PB = {"top": 776.0, "bot": 892.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    PC = {"top": 916.0, "bot": 1024.0, "lo": 0.0, "hi": 0.0, "ticks": []}
+    ias_vals = series.get("ias") or []
+    alt_vals = series.get("alt") or []
+    es_vals = series.get("es") or []
+    ny_vals = series.get("ny") or []
+    PA["lo"], PA["hi"], PA["ticks"] = _card_axis(ias_vals, target=4)
+    alt_lo, alt_hi, alt_ticks = _card_axis(alt_vals, target=3)
+    PB["lo"], PB["hi"], PB["ticks"] = _card_axis(es_vals, target=3)
+    PC["lo"], PC["hi"], PC["ticks"] = _card_axis(ny_vals, target=3)
+
+    def xf(t: float) -> float:
+        return X0 + (t - t0) / (t1 - t0) * (X1 - X0)
+
+    def yf(panel: Dict[str, Any], value: float) -> float:
+        return panel["top"] + (panel["hi"] - value) / (panel["hi"] - panel["lo"]) * (
+            panel["bot"] - panel["top"]
+        )
+
+    parts.append(
+        '<text x="64" y="590" font-family="Courier New,monospace" font-size="10.5"'
+        ' fill="#2B2418" letter-spacing="1.4">FIG. 2 — FLIGHT PROFILE'
+        '   ·   IAS / ALT / Es / Ny vs MISSION TIME</text>'
+    )
+    for panel, caption, ticks, right_ticks in (
+        (PA, "2A  IAS（实线） / ALT（虚线） [km/h · m]", PA["ticks"], alt_ticks),
+        (PB, "2B  SPECIFIC ENERGY ALTITUDE  Es [m]", PB["ticks"], []),
+        (PC, "2C  NORMAL LOAD  Ny [g]", PC["ticks"], []),
+    ):
+        parts.append(
+            '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#FBF7EC"'
+            ' stroke="#C0AE8C" stroke-width="1"/>'
+            % (X0, panel["top"], X1 - X0, panel["bot"] - panel["top"])
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" font-family="Courier New,monospace" font-size="9"'
+            ' fill="#4A3D2A" letter-spacing="0.4">%s</text>'
+            % (X0 + 5, panel["top"] + 12, _html_escape(caption))
+        )
+        for tick in ticks:
+            y = yf(panel, tick)
+            parts.append(
+                '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#DCD0B6"'
+                ' stroke-width="0.8"/>' % (X0, y, X1, y)
+            )
+            parts.append(
+                '<text x="%.1f" y="%.1f" text-anchor="end" font-family="Courier New,monospace"'
+                ' font-size="8.5" fill="#6B5B41">%s</text>'
+                % (X0 - 5, y + 3, _fmt_number(tick, 0))
+            )
+        if right_ticks:
+            for tick in right_ticks:
+                y = panel["top"] + (alt_hi - tick) / (alt_hi - alt_lo) * (
+                    panel["bot"] - panel["top"]
+                )
+                parts.append(
+                    '<text x="%.1f" y="%.1f" text-anchor="start" font-family="Courier New"'
+                    ' font-size="8.5" fill="#8A734C">%s</text>'
+                    % (X1 + 4, y + 3, _fmt_number(tick, 0))
+                )
+    for tick in range(0, int(t1 - t0) + 1, 60):
+        x = xf(t0 + tick)
+        if x > X1:
+            break
+        for panel in (PA, PB, PC):
+            parts.append(
+                '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#E4D8BE"'
+                ' stroke-width="0.8"/>' % (x, panel["top"], x, panel["bot"])
+            )
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#C0AE8C"'
+            ' stroke-width="0.8"/>' % (x, PC["bot"], x, PC["bot"] + 4)
+        )
+        parts.append(
+            '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New"'
+            ' font-size="8.5" fill="#6B5B41">%s</text>'
+            % (x, PC["bot"] + 16, _html_escape(_tc_text(t0 + tick, tenths=False)))
+        )
+
+    def alt_yf(value: float) -> float:
+        return PA["top"] + (alt_hi - value) / (alt_hi - alt_lo) * (
+            PA["bot"] - PA["top"]
+        )
+
+    alt_path = _card_polyline(times, alt_vals, xf, alt_yf)
+    if alt_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#8A734C" stroke-width="1"'
+            ' stroke-dasharray="4 4"/>' % alt_path
+        )
+    ias_path = _card_polyline(times, ias_vals, xf, lambda v: yf(PA, v))
+    if ias_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#2B2418" stroke-width="1.7"/>' % ias_path
+        )
+    es_path = _card_polyline(times, es_vals, xf, lambda v: yf(PB, v))
+    if es_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#3A3226" stroke-width="1.3"/>' % es_path
+        )
+    ny_path = _card_polyline(times, ny_vals, xf, lambda v: yf(PC, v))
+    if ny_path:
+        parts.append(
+            '<path d="%s" fill="none" stroke="#3A3226" stroke-width="1.1"/>' % ny_path
+        )
+    if PC["lo"] < 0 < PC["hi"]:
+        zero_y = yf(PC, 0.0)
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#C3B294"'
+            ' stroke-width="0.9" stroke-dasharray="6 4"/>' % (X0, zero_y, X1, zero_y)
+        )
+
+    # 死亡 / 击落竖线
+    death_index = len(flat)
+    if death_t is not None and t0 <= float(death_t) <= t1:
+        dx = xf(float(death_t))
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#A8322B"'
+            ' stroke-width="1.1" stroke-dasharray="6 5" opacity="0.8"/>'
+            % (dx, PA["top"], dx, PC["bot"])
+        )
+        if not clean:
+            death_label = "%s DEATH" % _annotation_number(death_index)
+            dl_x = dx + 5.0
+            dl_anchor = "start"
+            if dl_x + _text_width(death_label, 10.5) > X1 - 4:
+                dl_x = dx - 5.0
+                dl_anchor = "end"
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s"'
+                ' font-family="Courier New,monospace" font-size="10" fill="#9E2F26"'
+                ' letter-spacing="0.3">%s</text>'
+                % (dl_x, PA["top"] - 5.0, dl_anchor, _html_escape(death_label))
+            )
+    kills_visible = [
+        kill
+        for kill in (flight_payload.get("kill_events") or [])
+        if t0 <= float(kill["t"]) <= t1
+    ]
+    kill_index_base = len(flat) + (1 if death_t is not None else 0)
+    for offset, kill in enumerate(kills_visible):
+        kx = xf(float(kill["t"]))
+        parts.append(
+            '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#1F6F7A"'
+            ' stroke-width="1.1" stroke-dasharray="6 5" opacity="0.85"/>'
+            % (kx, PA["top"], kx, PC["bot"])
+        )
+        if not clean:
+            kill_label = "%s KILL" % _annotation_number(kill_index_base + offset)
+            kl_x = kx + 5.0
+            kl_anchor = "start"
+            if kl_x + _text_width(kill_label, 10.5) > X1 - 4:
+                kl_x = kx - 5.0
+                kl_anchor = "end"
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" text-anchor="%s"'
+                ' font-family="Courier New,monospace" font-size="10" fill="#1F6F7A"'
+                ' letter-spacing="0.3">%s</text>'
+                % (kl_x, PA["bot"] + 12.0, kl_anchor, _html_escape(kill_label))
+            )
+
+    # 批注圈 + 编号（与横版同一套编号规则）
+    if not clean:
+        panel_for = {"ias": PA, "alt": PA, "es": PB, "ny": PC}
+        for index, annotation in enumerate(flat):
+            key = annotation.get("series") or ""
+            panel = panel_for.get(key)
+            if _annotation_is_range(annotation) and panel is not None:
+                t0a, t1a = float(annotation["t0"]), float(annotation["t1"])
+                range_yf = alt_yf if key == "alt" else (
+                    lambda value, p=panel: yf(p, value)
+                )
+                range_t, range_v = _range_series_slice(
+                    times, series.get(key) or [], t0a, t1a
+                )
+                highlight = _card_polyline(range_t, range_v, xf, range_yf)
+                if highlight:
+                    parts.append(
+                        '<path class="ann-crayon ann-range-highlight" d="%s"'
+                        ' fill="none" stroke="%s" stroke-width="%.1f"'
+                        ' stroke-linecap="round" stroke-linejoin="round"'
+                        ' opacity="0.82"/>'
+                        % (highlight, ES_RANGE_COLOR, ES_HIGHLIGHT_PRINT_WIDTH)
+                    )
+                    ends = (
+                        (xf(range_t[0]), range_yf(range_v[0])),
+                        (xf(range_t[-1]), range_yf(range_v[-1])),
+                    )
+                    for end_x, end_y in ends:
+                        if end_y is None:
+                            continue
+                        parts.append(
+                            '<circle class="ann-crayon-dot" cx="%.1f" cy="%.1f"'
+                            ' r="3.2" fill="%s"/>' % (end_x, end_y, ES_RANGE_COLOR)
+                        )
+                note = "%s %s" % (_annotation_number(index), _annotation_mark_text(annotation))
+                note_w = _text_width(note, 10.0)
+                note_x = xf(t1a) - note_w - 4.0
+                if note_x < X0 + 2.0:
+                    note_x = min(max(xf(t0a) + 4.0, X0 + 2.0), X1 - note_w - 2.0)
+                parts.append(
+                    '<text class="ann-type" x="%.1f" y="%.1f" font-family="Courier New,monospace"'
+                    ' font-size="10" fill="#9E2F26" letter-spacing="0.3">%s</text>'
+                    % (note_x, panel["bot"] + 12.0, _html_escape(note))
+                )
+                continue
+            value = annotation.get("value")
+            if panel is None or value is None:
+                continue
+            try:
+                value_f = float(value)
+            except (TypeError, ValueError):
+                continue
+            y = alt_yf(value_f) if key == "alt" else yf(panel, value_f)
+            y = min(max(y, panel["top"] + 6), panel["bot"] - 6)
+            x = xf(float(annotation["t"]))
+            rx, ry = 22.0, 10.0
+            parts.append(
+                '<path class="ann-crayon" d="%s" fill="none" stroke="#B0362A"'
+                ' stroke-width="2.8" stroke-linecap="round" opacity="0.78"/>'
+                % _wobble_ring(x, y, rx, ry, index * 1.6, n=36)
+            )
+            parts.append(
+                '<path class="ann-crayon" d="%s" fill="none" stroke="#B0362A"'
+                ' stroke-width="1.4" stroke-linecap="round" opacity="0.5"/>'
+                % _wobble_ring(x, y, rx * 0.88, ry * 0.84, index * 1.6 + 2.4, n=36)
+            )
+            note = "%s %s" % (_annotation_number(index), _annotation_mark_text(annotation))
+            note_x = x + rx + 6
+            if note_x + _text_width(note, 10.0) > X1 - 4:
+                note_x = x - rx - 6 - _text_width(note, 10.0)
+            note_y = y - ry - 5
+            if note_y < panel["top"] + 11:
+                note_y = y + ry + 13
+            parts.append(
+                '<text class="ann-type" x="%.1f" y="%.1f" font-family="Courier New,monospace"'
+                ' font-size="10" fill="#9E2F26" letter-spacing="0.3">%s</text>'
+                % (max(X0 + 2, note_x), note_y, _html_escape(note))
+            )
+
+    # ---------- legend / 印章 / 签字 / 页脚 ----------
+    parts.append(
+        '<line x1="64" y1="1072" x2="1136" y2="1072" stroke="#B7A483" stroke-width="1"/>'
+    )
+    notes_top = 1094.0
+    if clean:
+        parts.append(
+            '<text x="64" y="%.1f" font-family="Courier New,monospace" font-size="11.5"'
+            ' fill="#6B5B41" letter-spacing="0.3">CLEAN COPY — 本卡未启用批注：'
+            '只保留曲线 / 坐标 / 事件竖线（无圈注、无批注对照表）</text>' % notes_top
+        )
+    else:
+        legend_lines: List[str] = [
+            _annotation_card_line(annotation, index)
+            for index, annotation in enumerate(flat)
+        ]
+        if death_t is not None:
+            legend_lines.append(_death_card_line({"t": death_t}, death_index))
+        for offset, kill in enumerate(kills_visible):
+            legend_lines.append(_kill_card_line(kill, kill_index_base + offset))
+        parts.append(
+            '<text x="64" y="%.1f" font-family="Courier New,monospace" font-size="9.5"'
+            ' fill="#6B5B41" letter-spacing="1.6">ANALYST REMARKS · 分析员注记 — '
+            '红圈编号对照 LEGEND</text>' % notes_top
+        )
+        max_rows = 7
+        shown = legend_lines[:max_rows]
+        for index, line in enumerate(shown):
+            size = 11.0 if _text_width(line, 11.0) <= 1040.0 else 9.5
+            parts.append(
+                '<text x="64" y="%.1f" font-family="Courier New,monospace"'
+                ' font-size="%.1f" fill="#3A3023">%s</text>'
+                % (notes_top + 20 + index * 17, size, _html_escape(line))
+            )
+        extra = len(legend_lines) - len(shown)
+        note_y = notes_top + 20 + len(shown) * 17 + 3
+        if extra > 0:
+            parts.append(
+                '<text x="64" y="%.1f" font-family="Courier New,monospace" font-size="9"'
+                ' fill="#6B5B41">… 另有 %d 条批注（见 PDF 各页）</text>' % (note_y, extra)
+            )
+        else:
+            parts.append(
+                '<text x="64" y="%.1f" font-family="Courier New,monospace" font-size="8.5"'
+                ' fill="#6B5B41" letter-spacing="0.8">红圈 / 编号为自动审阅批注，'
+                '时间相近（&lt;10 s）已合并；数值取自全速率样本。</text>' % note_y
+            )
+    stamp_x, stamp_y = 790.0, 1310.0
+    parts.append(
+        '<g transform="rotate(-9 %.1f %.1f)" opacity="0.82">'
+        '<rect x="%.1f" y="%.1f" width="236" height="68" fill="none" stroke="#A8322B"'
+        ' stroke-width="3.6"/>'
+        '<rect x="%.1f" y="%.1f" width="228" height="60" fill="none" stroke="#A8322B"'
+        ' stroke-width="1.4"/>'
+        '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New,monospace"'
+        ' font-size="26" font-weight="700" fill="#A8322B" letter-spacing="3.4">DEBRIEF</text>'
+        '<text x="%.1f" y="%.1f" text-anchor="middle" font-family="Courier New,monospace"'
+        ' font-size="8.5" fill="#A8322B" letter-spacing="2.2">REVIEWED · WTHUD ANALYST</text>'
+        "</g>"
+        % (
+            stamp_x + 118, stamp_y + 34,
+            stamp_x + 4, stamp_y + 4,
+            stamp_x + 8, stamp_y + 8,
+            stamp_x + 118, stamp_y + 35,
+            stamp_x + 118, stamp_y + 50,
+        )
+    )
+    parts.append(
+        '<path d="M836,1404 C850,1382 858,1410 868,1394 C876,1382 882,1408 892,1398'
+        ' C904,1388 908,1404 922,1396 C934,1390 938,1402 952,1394"'
+        ' fill="none" stroke="#2B2418" stroke-width="1.7" stroke-linecap="round"/>'
+    )
+    parts.append(
+        '<line x1="824" y1="1412" x2="980" y2="1412" stroke="#4A3D2A" stroke-width="1.1"/>'
+    )
+    parts.append(
+        '<text x="1136" y="1424" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="8.5" fill="#6B5B41" letter-spacing="1.1">ANALYST SIGNATURE · 分析员签字'
+        '<tspan fill="#8E2A24" letter-spacing="0.7">   ■■■■■ . Bulannikov</tspan></text>'
+    )
+    parts.append(
+        '<line x1="64" y1="1461" x2="900" y2="1461" stroke="#B7A483" stroke-width="0.9"/>'
+    )
+    parts.append(
+        '<text x="64" y="1482" font-family="Courier New,monospace" font-size="8.8"'
+        ' fill="#6B5B41" letter-spacing="0.9">ARCHIVED %s · %s · PNG %d×%d · %s</text>'
+        % (
+            _html_escape(meta.get("date") or "—"),
+            _html_escape(meta.get("dwg") or "WT-FL-LOG"),
+            CW,
+            CH,
+            _html_escape("CLEAN" if clean else "ANNOTATED"),
+        )
+    )
+    parts.append(
+        '<text x="64" y="1504" font-family="Courier New,monospace" font-size="8.8"'
+        ' fill="#6B5B41" letter-spacing="0.9">SOURCE %s · SCHEMA %s · %s</text>'
+        % (
+            _html_escape(os.path.basename(model.path)),
+            _html_escape((model.meta or {}).get("schema") or "1"),
+            _html_escape((model.meta or {}).get("app") or "WtHud"),
+        )
+    )
+    parts.append(
+        '<text x="1136" y="1482" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="8.8" fill="#6B5B41" letter-spacing="1">%s · REV %s</text>'
+        % (_html_escape(meta.get("project") or "WTHUD FLIGHT LOG"),
+           _html_escape(meta.get("rev") or "C"))
+    )
+    parts.append(
+        '<text x="1136" y="1504" text-anchor="end" font-family="Courier New,monospace"'
+        ' font-size="8.8" fill="#6B5B41" letter-spacing="1">%s · %s</text>'
+        % (_html_escape(sheet_text), _html_escape("CLEAN" if clean else "ANNOTATED"))
+    )
     parts.append("</svg>")
     return "".join(parts)
+
 
 
 def _debrief_card_source(
@@ -6190,21 +8137,32 @@ def _debrief_host_html(
     flight_payloads: Sequence[Dict[str, Any]],
     bp: Optional[Dict[str, str]],
     player_name: str = "",
+    profile: Optional[Any] = None,
 ) -> str:
-    """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。"""
+    """隐藏容器：内嵌两份复盘卡 SVG（带批注 / 无批注）+ 下载文件名前缀。
+
+    横版 / 竖版各一个容器（``#debrief-src`` / ``#debrief-src-m``），保存设置里的
+    「版式」决定导出哪一版卡；两版的 SVG / pattern id 都带后缀，同文档里不撞。
+    """
+    active = get_profile(profile) if not isinstance(profile, PageProfile) else profile
     main, meta = _debrief_card_source(flight_payloads, bp, player_name)
     if main is None:
         return ""
     stem = os.path.splitext(os.path.basename(model.path))[0]
     prefix = "debrief-%s-" % stem
+    mobile = active.key == "mobile"
+    host_id = "debrief-src-m" if mobile else "debrief-src"
+    suffix = "-m" if mobile else ""
     return (
-        '<div id="debrief-src" aria-hidden="true" data-prefix="%s">'
+        '<div id="%s" aria-hidden="true" data-prefix="%s" data-profile="%s">'
         "%s%s"
         "</div>"
         % (
+            host_id,
             _html_escape(prefix),
-            _debrief_card_svg(model, main, False, meta),
-            _debrief_card_svg(model, main, True, meta),
+            active.key,
+            _debrief_card_svg(model, main, False, meta, suffix=suffix, profile=active),
+            _debrief_card_svg(model, main, True, meta, suffix=suffix, profile=active),
         )
     )
 
@@ -6222,40 +8180,48 @@ def _pdf_cover_html(
     bp: Optional[Dict[str, str]],
     player_name: str = "",
     pdf_total: int = 0,
+    profile: Optional[Any] = None,
 ) -> str:
     """PDF 第 1 页封面：**直接复用** PNG 复盘卡的 SVG（annotated + clean 两份）。
 
     * 屏幕：``#pdf-cover{display:none}``（CSS），不进 ``.page`` 集合 → 不占翻页、
       不进 pager、不影响 localStorage 页号；
-    * 打印 / PDF（方案 A headless 打印 + 方案 B html2canvas）：变成 1600×1000 的
-      第 1 页，``page-break-after:always``，无页边距、整页铺满；
+    * 打印 / PDF（方案 A headless 打印 + 方案 B html2canvas）：变成档位物理尺寸
+      （横版 3200×1800 / 竖版 1200×1600）的第 1 页，``page-break-after:always``，
+      无页边距、整页铺满；
     * 批注联动：打印态里默认显示 annotated 卡，``body.no-annot`` 时换成 clean 卡
       （与正文页「保留批注」开关同一个 class，方案 B 导出前会切这个 class）。
 
-    两份卡的 SVG id / pattern id 都带 ``-cover`` 后缀，避免和 ``#debrief-src``
-    里用于 PNG 导出的两份卡撞 id。
+    两份卡的 SVG id / pattern id 都带后缀（横版 ``-cover`` / 竖版 ``-cover-m``），
+    避免和 ``#debrief-src`` 里用于 PNG 导出的两份卡撞 id。
 
     ``pdf_total`` 是完整 PDF 的总页数（封面 + 内容页）。>0 时把卡上的页脚改成
     ``SHEET 01/<pdf_total>``（封面是 PDF 第 1 页）；PNG 复盘卡不传，仍写 01/01。
     """
+    active = get_profile(profile) if not isinstance(profile, PageProfile) else profile
     main, meta = _debrief_card_source(flight_payloads, bp, player_name)
     if main is None:
         return ""
     sheet_text = "SHEET 01/%02d" % pdf_total if pdf_total > 0 else "SHEET 01/01"
+    suffix = active.card_suffix
     cards = "".join(
         '<div class="pdf-cover-card pdf-cover-%s" data-cover="%s">%s</div>'
         % (
             variant,
             variant,
             _debrief_card_svg(
-                model, main, clean, meta, suffix="-cover", sheet_text=sheet_text,
+                model, main, clean, meta, suffix=suffix,
+                sheet_text=sheet_text, profile=active,
             ),
         )
         for variant, clean in PDF_COVER_VARIANTS
     )
+    mobile = active.key == "mobile"
+    cover_id = "pdf-cover-m" if mobile else "pdf-cover"
     return (
-        '<div class="pdf-cover" id="pdf-cover" data-pdf-page="cover"'
-        ' aria-hidden="true">%s</div>' % cards
+        '<div class="pdf-cover%s" id="%s" data-pdf-page="cover"'
+        ' data-profile="%s" aria-hidden="true">%s</div>'
+        % (" pdf-cover-m" if mobile else "", cover_id, active.key, cards)
     )
 
 
@@ -6599,6 +8565,42 @@ body.no-annot .ann-legend{display:none!important}
 .chart-label{flex:0 0 auto;font-size:12.5px;font-weight:650;color:var(--chart-label-fg)}
 .chart-label span{font-weight:400;color:var(--muted);margin-left:8px;font-size:11.5px}
 .stack-item .legend{margin:0 0 2px;font-size:11.5px}
+/* 舵面 / 配平 / 指令轴页（姿态页之后 / 全局总览之前）：顶部信息条 + 4 张面板竖排 + 底注 */
+.surface-body{display:flex;flex-direction:column;min-height:0}
+.surface-views{position:relative;flex:1 1 auto;min-height:0}
+.surface-views>.flight-view{position:absolute;inset:0}
+.surface-meta{
+  flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 7px;
+  font-family:var(--font-num);font-size:10.5px;line-height:1.5;color:var(--muted);
+  margin:0 0 3px;font-variant-numeric:tabular-nums;letter-spacing:.02em;
+}
+.surface-meta .sm-chip{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-xs);
+  padding:0 7px;white-space:nowrap;
+}
+.surface-meta .sm-chip b{color:var(--text);font-weight:600;margin-right:5px}
+.surface-meta .sm-chip i{
+  display:inline-block;width:9px;height:3px;border-radius:1px;margin-right:4px;
+  vertical-align:middle;
+}
+.surface-stack{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:3px}
+.surface-stack .stack-item{flex:1 1 0;min-height:0}
+.surface-stack .chart-label{font-size:12px}
+.surface-stack .chart-label span{font-size:11px;margin-left:6px}
+.surface-stack .legend{font-size:10.5px;gap:10px;margin:0 0 1px}
+.surface-stack .lg svg.lg-line{width:22px;height:7px}
+/* 缺字段：写「该窗口没有…数据」，不画 0 线（None ≠ 0） */
+.surface-empty{
+  display:flex;align-items:center;padding:0 5px;font-size:11.5px;color:var(--muted);
+  border:1px dashed var(--line);border-radius:var(--radius-xs);
+  font-family:var(--font-num);letter-spacing:.02em;
+}
+.surface-stack .surface-hint{color:var(--muted);font-style:normal}
+.surface-stack .trim-note{color:var(--muted)}
+.surface-note{
+  flex:0 0 auto;margin-top:2px;padding-top:2px;border-top:1px dotted var(--line);
+  font-size:10px;line-height:1.45;color:var(--muted);letter-spacing:.01em;
+}
 /* 翻页控件 */
 .pager{
   flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:14px;
@@ -6730,34 +8732,114 @@ a{color:var(--link)}
   border:1px solid var(--accent);border-radius:var(--radius-xs)}
 .save-btn.ghost{background:transparent;color:var(--ghost-fg)}
 body.modal-open{overflow:hidden}
-#debrief-src{position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
-/* PDF 封面（第 1 页）：屏幕不显示、也不在 .page 集合里 → 不占翻页 / 不进 pager /
+/* PNG 复盘卡隐藏容器：横版 #debrief-src / 竖版 #debrief-src-m 都移到屏外，不占版面 */
+#debrief-src,#debrief-src-m{
+  position:absolute;left:-10000px;top:0;width:1px;height:1px;overflow:hidden}
+/* ---------- 框选时间段（图表拖拽框选 / 双击复位 / 统计口径切换） ---------- */
+.brush-bar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:5px;
+  font-size:11.5px;color:var(--muted);line-height:1.35;
+}
+.brush-bar .brush-sel{display:inline-flex;align-items:baseline;gap:6px;min-width:0}
+.brush-bar .brush-sel b{font-family:var(--font-num);font-size:12px;color:var(--text);
+  letter-spacing:.05em;font-weight:600}
+.brush-bar[data-selection="yes"] .brush-sel b{color:var(--accent)}
+.brush-bar .brush-sel span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44ch}
+.brush-scope{display:inline-flex;border:1px solid var(--line);border-radius:var(--radius-xs);
+  overflow:hidden;flex:0 0 auto}
+.brush-btn{
+  font-family:inherit;font-size:11.5px;color:var(--btn-fg);background:var(--btn-bg);
+  border:0;border-right:1px solid var(--line);padding:2px 10px;cursor:pointer;white-space:nowrap;
+}
+.brush-btn:last-child{border-right:0}
+.brush-btn.active{background:var(--btn-active-bg);color:var(--btn-active-fg)}
+.brush-btn:disabled{opacity:.45;cursor:not-allowed}
+.brush-reset{
+  font-family:inherit;font-size:11.5px;color:var(--ghost-fg);background:transparent;
+  border:1px solid var(--line);border-radius:var(--radius-xs);padding:2px 11px;cursor:pointer;
+  white-space:nowrap;
+}
+.brush-reset:not(:disabled){color:var(--accent);border-color:var(--accent);
+  box-shadow:inset 0 0 0 1px var(--accent)}
+.brush-reset:disabled{opacity:.45;cursor:not-allowed}
+.brush-hint{font-size:11px;color:var(--hint-fg);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+/* 拖拽中的半透明选区矩形（直接画在 SVG 里，随 preserveAspectRatio 拉伸） */
+.brush-rect{fill:var(--accent);fill-opacity:.16;stroke:var(--accent);stroke-width:1.2;
+  stroke-dasharray:4 3;pointer-events:none}
+.brush-edge{stroke:var(--accent);stroke-width:1;stroke-dasharray:3 3;opacity:.75;
+  pointer-events:none}
+.chart-svg.is-brushable{cursor:crosshair}
+/* 保存设置里的「选区」提示行 */
+.save-sel{font-size:12px;line-height:1.5}
+.save-sel b{display:block;font-family:var(--font-num);font-size:10.5px;color:var(--muted);
+  letter-spacing:.05em;margin-top:2px}
+.save-sel.warn b{color:var(--avg-msg-warn,#A8322B)}
+.save-dialog{max-height:calc(100vh - 32px);overflow:auto}
+
+/* PDF 封面（第 1 页，两版各一个）：屏幕不显示、也不在 .page 集合里 → 不占翻页 / 不进 pager /
    不影响 localStorage 页号；只在 @media print 与方案 B 的 .pdf-capture 里变成整页。 */
-#pdf-cover{display:none}
+#pdf-cover,#pdf-cover-m{display:none}
 """
 
 #: 方案 B（找不到 Edge/Chrome 时在浏览器内生成 PDF）的「打印态仿真」基础布局。
 #: html2canvas 只能读屏幕样式，导出时给 ``<body>`` 挂 ``.pdf-capture``，
-#: 把每一页摆成 1600×1000 的纸、隐藏交互层、只留打印批注层（主题纸张 / 墨色
-#: 由 :func:`_pdf_capture_css` 从 ``@media print`` 规则复制过来）。
-PDF_CAPTURE_CSS = """
+#: 把每一页摆成**设计尺寸**的纸（横版 1600×900 / 竖版 1200×1600）、隐藏交互层、
+#: 只留打印批注层；清晰度由 html2canvas 的 ``scale`` 乘（标准 = 半分辨率），
+#: 所以这里**不能**用 zoom（否则 html2canvas 抓不到正确尺寸）。
+def _capture_base_css() -> str:
+    d = PROFILES["desktop"]
+    m = PROFILES["mobile"]
+    return """
 body.pdf-capture{height:auto!important;overflow:visible!important}
-body.pdf-capture .app{height:auto!important;display:block!important}
-body.pdf-capture main{position:static!important;display:block!important;min-height:0!important}
+body.pdf-capture .stage{
+  position:static!important;display:block!important;inset:auto!important;overflow:visible!important}
+body.pdf-capture .app{
+  width:auto!important;height:auto!important;transform:none!important;display:block!important}
+body.pdf-capture main{
+  position:static!important;display:block!important;min-height:0!important;height:auto!important}
+body.pdf-capture #pages-mobile{display:none!important}
+body.pdf-capture[data-export-profile="mobile"] #pages{display:none!important}
+body.pdf-capture[data-export-profile="mobile"] #pages-mobile{display:block!important}
 body.pdf-capture .page{
   position:relative!important;inset:auto!important;display:flex!important;
-  width:1600px!important;height:1000px!important;min-height:0!important;
-  margin:0!important;overflow:hidden!important;page-break-after:auto!important;
+  min-height:0!important;margin:0!important;overflow:hidden!important;
+  page-break-after:auto!important;
 }
+body.pdf-capture #pages>.page{width:%dpx!important;height:%dpx!important}
+body.pdf-capture #pages-mobile>.page{width:%dpx!important;height:%dpx!important}
+body.pdf-capture .pdf-cover{
+  position:relative!important;display:block!important;margin:0!important;
+  padding:0!important;overflow:hidden!important;background:#F6F1E3!important;
+}
+body.pdf-capture #pages>.pdf-cover{width:%dpx!important;height:%dpx!important}
+body.pdf-capture #pages-mobile>.pdf-cover{width:%dpx!important;height:%dpx!important}
+body.pdf-capture .pdf-cover-card{display:block!important;width:100%%!important;
+  height:100%%!important;line-height:0}
+body.pdf-capture .pdf-cover-card svg{display:block!important;width:100%%!important;
+  height:100%%!important}
+body.pdf-capture .pdf-cover-clean{display:none!important}
+body.pdf-capture.no-annot .pdf-cover-annotated{display:none!important}
+body.pdf-capture.no-annot .pdf-cover-clean{display:block!important}
 body.pdf-capture .pager,body.pdf-capture .side,body.pdf-capture .hint,
 body.pdf-capture .header-save,body.pdf-capture .save-modal,
-body.pdf-capture #debrief-src,body.pdf-capture #tip{display:none!important}
+body.pdf-capture #debrief-src,body.pdf-capture #debrief-src-m,
+body.pdf-capture #tip{display:none!important}
 body.pdf-capture .series-bar{display:none!important}
 body.pdf-capture .ann-screen{display:none!important}
 body.pdf-capture .ann-print{display:inline!important}
 body.pdf-capture.no-annot .ann-print{display:none!important}
 body.pdf-capture.no-annot .ann-legend{display:none!important}
-"""
+""" % (
+        d.design_w,
+        d.design_h,
+        m.design_w,
+        m.design_h,
+        d.design_w,
+        d.design_h,
+        m.design_w,
+        m.design_h,
+    )
 
 
 CSS_PRINT = """
@@ -6771,27 +8853,30 @@ CSS_PRINT = """
   header{background:var(--print-header-bg);border-color:var(--line)}
   main{position:static}
   .page{
-    position:relative;inset:auto;display:flex!important;height:auto;min-height:72vh;
-    page-break-after:always;border-top:1px solid var(--line);
+    position:relative;inset:auto;display:flex!important;
   }
-  .page:first-of-type{border-top:0}
-  /* PDF 封面：第 1 页 = PNG 复盘卡（1600×1000、无页边距、整页铺满）。
-     封面用独立容器而不是 .page：屏幕翻页 / pager / localStorage 页号都不受影响。 */
-  #pdf-cover{
-    position:relative;display:block;width:1600px;height:1000px;margin:0;padding:0;
+  /* PDF 封面：第 1 页 = PNG 复盘卡（无页边距、整页铺满）。
+     封面用独立容器而不是 .page：屏幕翻页 / pager / localStorage 页号都不受影响。
+     尺寸（1600×900 设计 / 3200×1800 物理）由 _print_page_css() 按档位定义。 */
+  #pdf-cover,#pdf-cover-m{
+    position:relative;display:block;margin:0;padding:0;
     overflow:hidden;background:#F6F1E3;
     page-break-after:always;break-after:page;
   }
-  #pdf-cover .pdf-cover-card{display:block;width:1600px;height:1000px;line-height:0}
-  #pdf-cover .pdf-cover-card svg{display:block;width:1600px;height:1000px}
+  .pdf-cover-card{display:block;width:100%;height:100%;line-height:0}
+  .pdf-cover-card svg{display:block;width:100%;height:100%}
   /* 批注开关联动：默认 annotated 卡，body.no-annot 时换成 clean 卡 */
-  #pdf-cover .pdf-cover-clean{display:none}
-  body.no-annot #pdf-cover .pdf-cover-annotated{display:none}
-  body.no-annot #pdf-cover .pdf-cover-clean{display:block}
+  .pdf-cover .pdf-cover-clean,.pdf-cover-m .pdf-cover-clean{display:none}
+  body.no-annot .pdf-cover .pdf-cover-annotated,
+  body.no-annot .pdf-cover-m .pdf-cover-annotated{display:none}
+  body.no-annot .pdf-cover .pdf-cover-clean,
+  body.no-annot .pdf-cover-m .pdf-cover-clean{display:block}
   .page-body{min-height:420px}
   .flight-view{display:none!important}
   .flight-view.active{display:flex!important}
-  .pager,.side,.hint,.header-save,.save-modal,#debrief-src,#tip{display:none}
+  .pager,.side,.hint,.header-save,.save-modal,#debrief-src,#debrief-src-m,#tip{display:none}
+  /* 框选控件 / 拖拽选区框只属于屏幕交互，打印与 PDF 不出现 */
+  .brush-bar,.brush-hint,.brush-rect,.brush-edge{display:none!important}
   /* 曲线显示/隐藏：WYSIWYG —— 打印/PDF 只保留当前可见曲线。
      工具条不打印；被隐藏的 path/area/断口桥/批注圈和图例行（含图例项）整块不出现 */
   .series-bar{display:none!important}
@@ -6831,10 +8916,127 @@ def _css(theme: Theme) -> str:
     chart_print = ("@media print{" + chart_rules + "}") if chart_rules else ""
     # 方案 B（浏览器内生成 PDF）：html2canvas 只能读屏幕样式，所以把 @media print
     # 的纸张 / 批注 / 墨色规则复制成 ``body.pdf-capture`` 作用域，导出瞬间挂上/摘掉。
-    capture = PDF_CAPTURE_CSS + _pdf_capture_css(theme, chart_rules)
+    capture = _capture_base_css() + _pdf_capture_css(theme, chart_rules)
     return (
         root + "\n" + CSS_BASE + theme.extra_css + CSS_PRINT + chart_print
         + capture + print_extra
+    )
+
+
+def _profile_css() -> str:
+    """屏幕舞台 + 两版页面共用的档位 CSS（尺寸由 :data:`PROFILES` 生成）。
+
+    * 屏幕：固定 1600×900 设计画布（16:9），JS 按 ``--stage-scale`` 等比缩放到窗口；
+    * 竖版页面在屏幕上隐藏，只在导出（打印 / PDF）时启用；
+    * 竖版字号相对 1200 宽更大（同一份 CSS 在更窄的页面上排），图例更积极换行。
+    """
+    d = PROFILES["desktop"]
+    m = PROFILES["mobile"]
+    return """
+/* ===== 屏幕舞台：16:9 设计画布 + 等比缩放（JS 设 --stage-scale） ===== */
+.stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  overflow:hidden}
+.app{width:%dpx;height:auto;transform-origin:center center;
+  transform:scale(var(--stage-scale,1))}
+#pages{flex:0 0 %dpx;height:%dpx;min-height:0}
+#pages-mobile{display:none}
+.pages-mobile{display:none!important}
+/* ===== 竖版页面（只在导出时可见）：窄页面 → 字号相对更大、图例换行、卡片两列 ===== */
+#pages-mobile .page{padding:32px 34px 42px}
+#pages-mobile .cards{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+#pages-mobile .card b{font-size:18px}
+#pages-mobile .legend{gap:4px 12px;font-size:12.5px}
+#pages-mobile .legend-row{gap:6px}
+#pages-mobile .surface-stack .legend{gap:3px 10px;font-size:11px}
+#pages-mobile .surface-meta{font-size:11.5px;gap:4px 8px}
+#pages-mobile .surface-note{font-size:11px}
+#pages-mobile .page-title{font-size:19px}
+#pages-mobile .page-sub,#pages-mobile .page-right{font-size:12.5px}
+#pages-mobile .chart-label{font-size:13.5px}
+#pages-mobile .chart-label span{font-size:12px}
+#pages-mobile .ann-legend{font-size:12px}
+#pages-mobile .bp-foot{font-size:10px;left:36px;right:32px;bottom:%dpx}
+#pages-mobile .bp-tb b{font-size:10.5px}
+#pages-mobile .bp-tb em{font-size:8px}
+#pages-mobile .bp-sheet,#pages-mobile .bp-sheet-print{padding:0 10px}
+#pages-mobile .avgbar{gap:16px}
+#pages-mobile .avg-val b{font-size:21px}
+#pages-mobile .strip svg{height:44px}
+/* 竖版图例竖排：堆叠页（舵面 / 全局）信息密度高，图例换行更像清单 */
+#pages-mobile .surface-stack .legend-row .legend{flex-direction:column;align-items:flex-start}
+""" % (d.design_w, d.design_h, d.design_h, m.footer_bottom)
+
+
+def _print_page_css() -> str:
+    """打印 / PDF 页面尺寸：按档位 + 清晰度生成 ``@page`` 与两套页面的物理尺寸。
+
+    * 高清：横版 3200×1800、竖版 1200×1600（设计画布按 zoom = 物理/设计 放大）；
+    * 标准：横版 1600×900、竖版 600×800（zoom 减半）——字号 / 版式完全不变，
+      只是整页按比例缩小，所以标准与高清的 PDF 页码 / 页脚文字一模一样；
+    * 用命名页（``@page d-high`` 等）让一份 HTML 同时支持四种页面尺寸；
+      ``body[data-export-profile]`` / ``body[data-clarity]`` 决定打印哪一版。
+    """
+    d = PROFILES["desktop"]
+    m = PROFILES["mobile"]
+    # (物理宽, 物理高) 给 @page；(设计宽, 设计高, zoom) 给 .page —— zoom 把设计坐标放大到物理像素
+    d_phys = (d.width, d.height)
+    d_std = (d.standard_width, d.standard_height)
+    m_phys = (m.width, m.height)
+    m_std = (m.standard_width, m.standard_height)
+    d_high_rule = (d.design_w, d.design_h, d.render_scale_high)
+    d_std_rule = (d.design_w, d.design_h, d.render_scale(CLARITY_STANDARD))
+    m_high_rule = (m.design_w, m.design_h, m.render_scale_high)
+    m_std_rule = (m.design_w, m.design_h, m.render_scale(CLARITY_STANDARD))
+
+    def _page_rule(name: str, size: Tuple[int, int]) -> str:
+        return "@page %s{size:%dpx %dpx;margin:0}" % (name, size[0], size[1])
+
+    def _layer_rules(sel: str, name: str, rule: Tuple[int, int, float]) -> str:
+        return (
+            "%s{page:%s;width:%dpx!important;height:%dpx!important;zoom:%.4f}"
+            % (sel, name, rule[0], rule[1], rule[2])
+        )
+
+    return "\n".join(
+        [
+            _page_rule("d-high", d_phys),
+            _page_rule("d-std", d_std),
+            _page_rule("m-high", m_phys),
+            _page_rule("m-std", m_std),
+            "@media print{",
+            "  .stage{position:static!important;display:block!important;inset:auto!important;"
+            "overflow:visible!important}",
+            "  .app{width:auto!important;height:auto!important;transform:none!important;"
+            "display:block!important}",
+            "  main{display:block!important;position:static!important;height:auto!important;"
+            "min-height:0!important}",
+            "  #pages-mobile{display:none!important}",
+            '  body[data-export-profile="mobile"] #pages{display:none!important}',
+            '  body[data-export-profile="mobile"] #pages-mobile{display:block!important}',
+            "  #pages>.page,#pages>.pdf-cover{page-break-after:always;break-after:page;"
+            "overflow:hidden;padding:32px 34px 42px;position:relative!important;"
+            "inset:auto!important;display:flex!important;flex-direction:column;margin:0}",
+            "  #pages-mobile>.page,#pages-mobile>.pdf-cover{page-break-after:always;"
+            "break-after:page;overflow:hidden;padding:32px 34px 42px;position:relative!important;"
+            "inset:auto!important;display:flex!important;flex-direction:column;margin:0}",
+            "  #pages>.pdf-cover,#pages-mobile>.pdf-cover{display:block!important;"
+            "padding:0!important;background:#F6F1E3}",
+            "  #pages>.page:last-child,#pages-mobile>.page:last-child,"
+            "#pages>.pdf-cover:last-child,#pages-mobile>.pdf-cover:last-child"
+            "{page-break-after:auto;break-after:auto}",
+            "  " + _layer_rules("#pages>.page,#pages>.pdf-cover", "d-high", d_high_rule),
+            "  " + _layer_rules("#pages-mobile>.page,#pages-mobile>.pdf-cover", "m-high",
+                                m_high_rule),
+            '  body[data-clarity="standard"] #pages>.page,'
+            'body[data-clarity="standard"] #pages>.pdf-cover'
+            + "{page:d-std;width:%dpx!important;height:%dpx!important;zoom:%.4f}"
+            % (d_std_rule[0], d_std_rule[1], d_std_rule[2]),
+            '  body[data-clarity="standard"] #pages-mobile>.page,'
+            'body[data-clarity="standard"] #pages-mobile>.pdf-cover'
+            + "{page:m-std;width:%dpx!important;height:%dpx!important;zoom:%.4f}"
+            % (m_std_rule[0], m_std_rule[1], m_std_rule[2]),
+            "}",
+        ]
     )
 
 
@@ -6997,6 +9199,9 @@ JS = r"""
       var b = axisName === "right" ? p.right : p.left;
       if (!b) return null;
       var frac = (v - b.min) / (b.max - b.min);
+      // 配平轴按分位显示：超出轴范围的真实值把悬停点压到绘图区边缘（读数仍是真实值），
+      // 不然地面尖峰会跑到图外、十字线上看不见点。
+      if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
       return p.y1 - frac * (p.y1 - p.y0);
     }
     function hide(){
@@ -7097,9 +9302,35 @@ JS = r"""
 
   if (DATA.overview) setup(DATA.overview);
   (DATA.flights || []).forEach(setup);
+  // 竖版页面的图表 id 带 m 前缀，用同一份 series/times + 竖版 panels 几何再绑一遍
+  function setupMobile(desc){
+    if (!desc || !desc.panels_m || !desc.panels_m.length) return;
+    var clone = {};
+    for (var k in desc){
+      if (Object.prototype.hasOwnProperty.call(desc, k)) clone[k] = desc[k];
+    }
+    clone.panels = desc.panels_m;
+    setup(clone);
+  }
+  if (DATA.overview) setupMobile(DATA.overview);
+  (DATA.flights || []).forEach(setupMobile);
 
-  // ---------------- 翻页 ----------------
-  var pages = qsa(".page");
+  // ---------------- 舞台等比缩放（屏幕固定 16:9 设计画布，缩放到窗口） ----------------
+  function fitStage(){
+    var app = document.getElementById("app");
+    if (!app || !app.offsetWidth) return;
+    var w = app.offsetWidth, h = app.offsetHeight || 1;
+    var s = Math.min(window.innerWidth / w, window.innerHeight / h);
+    if (!isFinite(s) || s <= 0) s = 1;
+    app.style.setProperty("--stage-scale", s.toFixed(4));
+  }
+  fitStage();
+  window.addEventListener("resize", fitStage);
+  window.addEventListener("load", fitStage);
+
+  // ---------------- 翻页（屏幕只翻横版页面；竖版页面只用于导出） ----------------
+  var pages = qsa("#pages > .page");
+  var mobilePages = qsa("#pages-mobile > .page");
   var labelEl = document.getElementById("page-label");
   var dotsBox = document.getElementById("dots");
   var prevBtns = qsa('[data-nav="prev"]');
@@ -7194,7 +9425,21 @@ JS = r"""
   })();
   var seriesCache = {};
 
+  // 竖版拆页后页号与横版不同（竖版 1 页舵面 = 横版 2 页、页号整体后移），
+  // 这里把竖版页面映射回"同内容"的横版页面，复用同一份曲线显示状态。
+  function seriesSourcePage(pageEl){
+    var key = pageEl ? (pageEl.getAttribute("data-page") || "") : "";
+    if (!key) return pageEl;
+    var want = key.replace(/-[0-9]+$/, "");
+    var desktop = qsa("#pages > .page");
+    for (var i = 0; i < desktop.length; i++){
+      var dk = desktop[i].getAttribute("data-page") || "";
+      if (dk === want) return desktop[i];
+    }
+    return pageEl;
+  }
   function seriesPageNo(pageEl){
+    pageEl = seriesSourcePage(pageEl);
     var n = pageEl ? parseInt(pageEl.getAttribute("data-page-no"), 10) : NaN;
     if (isFinite(n) && n > 0) return n;
     var index = pages.indexOf(pageEl);
@@ -7255,7 +9500,7 @@ JS = r"""
     return state[key] !== false;
   }
   function seriesApply(pageEl){
-    var state = seriesState(pageEl);
+    var state = seriesState(seriesSourcePage(pageEl));
     qsa(".legend .lg[data-series]", pageEl).forEach(function(item){
       var key = item.getAttribute("data-series");
       var shown = state[key] !== false;
@@ -7273,12 +9518,17 @@ JS = r"""
       el.classList.toggle("series-off", state[key] === false);
     });
   }
-  function seriesApplyAll(){ pages.forEach(seriesApply); }
+  function seriesApplyAll(){ pages.forEach(seriesApply); mobilePages.forEach(seriesApply); }
+  function seriesApplyFamily(pageEl){
+    var source = seriesSourcePage(pageEl);
+    pages.forEach(function(p){ if (seriesSourcePage(p) === source) seriesApply(p); });
+    mobilePages.forEach(function(p){ if (seriesSourcePage(p) === source) seriesApply(p); });
+  }
   function seriesSetMany(pageEl, values){
-    var state = seriesState(pageEl);
+    var state = seriesState(seriesSourcePage(pageEl));
     Object.keys(values).forEach(function(key){ state[key] = !!values[key]; });
-    seriesSave(pageEl);
-    seriesApply(pageEl);
+    seriesSave(seriesSourcePage(pageEl));
+    seriesApplyFamily(pageEl);
     hideAll();
   }
   function seriesShowAll(pageEl){
@@ -7292,9 +9542,10 @@ JS = r"""
     seriesSetMany(pageEl, values);
   }
   function seriesReset(pageEl){
+    pageEl = seriesSourcePage(pageEl);
     try { seriesStore.removeItem(seriesStorageKey(pageEl)); } catch (err) { /* ignore */ }
     delete seriesCache[seriesPageNo(pageEl)];
-    seriesApply(pageEl);
+    seriesApplyFamily(pageEl);
     hideAll();
   }
   // 双击 solo：只看这一条；再次双击恢复全部（作用范围 = 该图例所在的这张图）
@@ -7629,15 +9880,99 @@ JS = r"""
   }
   showPage(startPage, false);
 
-  // ---------------- 保存：二级页（PDF 完整版 / PNG 复盘卡 + 批注开关） ----------------
+  // ---------------- 保存：二级页（版式 / 清晰度 / 输出类型 / 批注） ----------------
+  // 版式 = 横版 16:9 / 竖版 3:4；清晰度 = 高清（基准 2×）/ 标准（1×）。
+  // 屏幕始终显示横版高清；这两个选项只影响导出（A 预生成 / B 浏览器内 / PNG）。
   var saveModal = document.getElementById("save-modal");
   var saveBtn = document.getElementById("btn-save");
   var saveLastFocus = null;
+  var PROFILES = DATA.profiles || {};
+  var DEFAULT_PROFILE = DATA.defaultProfile || "desktop";
+  var SAVE_KEY = "wtflightlog:" + (DATA.file || "log") + ":save";
 
   function saveIsOpen(){ return !!(saveModal && !saveModal.hidden); }
+  function saveProfile(){
+    var el = saveModal && saveModal.querySelector('input[name="save-profile"]:checked');
+    return el ? el.value : DEFAULT_PROFILE;
+  }
+  function saveClarity(){
+    var el = saveModal && saveModal.querySelector('input[name="save-clarity"]:checked');
+    return el ? el.value : "high";
+  }
+  function saveKind(){
+    var el = saveModal && saveModal.querySelector('input[name="save-kind"]:checked');
+    return el ? el.value : "pdf";
+  }
+  function saveAnnot(){
+    var el = document.getElementById("save-annot");
+    return el ? !!el.checked : true;
+  }
+  function profileMeta(key){
+    return (PROFILES && PROFILES[key]) || {
+      key: key, label: key, short: "",
+      width: 0, height: 0, standardWidth: 0, standardHeight: 0,
+      designW: 0, designH: 0, contentPages: 0, pdfPages: 0,
+      cardW: 0, cardH: 0, cardSuffix: key === "mobile" ? "-m" : "",
+      captureScaleHigh: 1, captureScaleStandard: 0.5
+    };
+  }
+  function profilePhysical(profile, clarity){
+    var p = profileMeta(profile);
+    if (clarity === "standard") return [p.standardWidth, p.standardHeight];
+    return [p.width, p.height];
+  }
+  function cardSize(profile, clarity){
+    var p = profileMeta(profile);
+    var scale = clarity === "standard" ? 0.5 : 1;
+    return [Math.round(p.cardW * scale), Math.round(p.cardH * scale)];
+  }
+  function saveTexts(){
+    var profile = saveProfile(), clarity = saveClarity();
+    var p = profileMeta(profile);
+    var phys = profilePhysical(profile, clarity);
+    var nodes = pdfPageNodes(profile);
+    var pdfPages = nodes.length || p.pdfPages;
+    var pagesEl = document.getElementById("pages");
+    if (pagesEl && pdfPages) pagesEl.setAttribute("data-pdf-pages", String(pdfPages));
+    qsa("[data-save-pdf-pages]").forEach(function(el){
+      el.textContent = String(pdfPages);
+    });
+    var card = cardSize(profile, clarity);
+    qsa("[data-save-png-size]").forEach(function(el){
+      el.textContent = card[0] + " × " + card[1];
+    });
+    qsa("[data-profile-pages]").forEach(function(el){
+      var key = el.getAttribute("data-profile-pages");
+      var meta = profileMeta(key);
+      var count = pdfPageNodes(key).length || meta.pdfPages;
+      el.textContent = String(count);
+    });
+    qsa("[data-profile-size]").forEach(function(el){
+      var key = el.getAttribute("data-profile-size");
+      var meta = profileMeta(key);
+      el.textContent = meta.width + " × " + meta.height;
+    });
+    if (saveModal){
+      saveModal.setAttribute("data-profile", profile);
+      saveModal.setAttribute("data-clarity", clarity);
+    }
+    document.body.setAttribute("data-export-profile", profile);
+    document.body.setAttribute("data-clarity", clarity);
+    // 有选区时提示「按选区导出将使用浏览器内生成（较慢）」
+    updateSaveSelectionHint();
+    return {profile: profile, clarity: clarity, pdfPages: pdfPages, physical: phys, card: card};
+  }
+  function savePersist(){
+    try {
+      seriesStore.setItem(SAVE_KEY, JSON.stringify({
+        profile: saveProfile(), clarity: saveClarity(), annot: saveAnnot()
+      }));
+    } catch (err) { /* 存储不可写：只留本次打开 */ }
+  }
   function saveOpen(){
     if (!saveModal) return;
     saveLastFocus = document.activeElement;
+    saveTexts();
     saveModal.hidden = false;
     saveModal.setAttribute("aria-hidden", "false");
     document.body.classList.add("modal-open");
@@ -7652,16 +9987,9 @@ JS = r"""
     document.body.classList.remove("modal-open");
     if (saveLastFocus && saveLastFocus.focus) saveLastFocus.focus();
   }
-  function saveKind(){
-    var el = saveModal && saveModal.querySelector('input[name="save-kind"]:checked');
-    return el ? el.value : "pdf";
-  }
-  function saveAnnot(){
-    var el = document.getElementById("save-annot");
-    return el ? !!el.checked : true;
-  }
   function debriefPrefix(){
-    var host = document.getElementById("debrief-src");
+    var host = document.getElementById("debrief-src") ||
+      document.getElementById("debrief-src-m");
     return (DATA.debrief && DATA.debrief.prefix) ||
       (host && host.getAttribute("data-prefix")) || "debrief-";
   }
@@ -7672,9 +10000,12 @@ JS = r"""
       p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
   }
   // 内嵌 SVG -> canvas -> PNG（不引外部库；SVG 里没有外链，canvas 不会被污染）
-  function renderDebriefCanvas(annotated, done, fail){
+  // 卡尺寸 = 档位卡尺寸 × 清晰度（标准 = 半分辨率）；SVG 本身是矢量的，高清更清晰。
+  function renderDebriefCanvas(annotated, profile, clarity, done, fail){
+    var meta = profileMeta(profile);
     var svg = document.getElementById(
-      annotated ? "debrief-svg-annotated" : "debrief-svg-clean");
+      (annotated ? "debrief-svg-annotated" : "debrief-svg-clean") +
+      (meta.cardSuffix || ""));
     if (!svg){ if (fail) fail("缺少复盘卡 SVG"); return; }
     var xml = new XMLSerializer().serializeToString(svg);
     if (xml.indexOf('xmlns="http://www.w3.org/2000/svg"') < 0){
@@ -7686,12 +10017,13 @@ JS = r"""
     var img = new Image();
     img.onload = function(){
       try {
+        var size = cardSize(profile, clarity);
         var canvas = document.createElement("canvas");
-        canvas.width = 1600; canvas.height = 1000;
+        canvas.width = size[0]; canvas.height = size[1];
         var ctx = canvas.getContext("2d");
         ctx.fillStyle = "#C9B28A";
-        ctx.fillRect(0, 0, 1600, 1000);
-        ctx.drawImage(img, 0, 0, 1600, 1000);
+        ctx.fillRect(0, 0, size[0], size[1]);
+        ctx.drawImage(img, 0, 0, size[0], size[1]);
         URL.revokeObjectURL(url);
         done(canvas);
       } catch (err) {
@@ -7705,8 +10037,8 @@ JS = r"""
     };
     img.src = url;
   }
-  function exportDebriefPNG(annotated, done, fail){
-    renderDebriefCanvas(annotated, function(canvas){
+  function exportDebriefPNG(annotated, profile, clarity, done, fail){
+    renderDebriefCanvas(annotated, profile, clarity, function(canvas){
       var name = debriefPrefix() + debriefTimestamp() + ".png";
       var link = document.createElement("a");
       link.href = canvas.toDataURL("image/png");
@@ -7714,15 +10046,17 @@ JS = r"""
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      if (done) done({name: name, width: canvas.width, height: canvas.height});
+      if (done) done({name: name, width: canvas.width, height: canvas.height,
+        profile: profile, clarity: clarity});
     }, fail);
   }
   // 自动化验证钩子：返回 PNG dataURL（headless 通过 CDP 取回写成样张）
-  window.__exportDebrief = function(annotated){
+  window.__exportDebrief = function(annotated, profile, clarity){
     return new Promise(function(resolve, reject){
-      renderDebriefCanvas(annotated !== false, function(canvas){
-        resolve(canvas.toDataURL("image/png"));
-      }, reject);
+      renderDebriefCanvas(annotated !== false, profile || saveProfile(),
+        clarity || saveClarity(), function(canvas){
+          resolve(canvas.toDataURL("image/png"));
+        }, reject);
     });
   };
   window.__debriefInfo = function(){
@@ -7732,22 +10066,30 @@ JS = r"""
   // ---------------- PDF 完整版：file:// 必走内联生成，http(s) 可直下预生成 ----------------
   // file://：Chromium 会拦截 <a download>（file:// 没有常规 origin，等同于跨源），
   //         只能打开 PDF 查看器、不能真下载 → **一律走方案 B**：逐页
-  //         html2canvas(封面 + .page) → jsPDF 1600×1000 px → doc.save("report.pdf")。
-  //         封面（#pdf-cover）是第 1 页，所以进度是 1/10 … 10/10。
+  //         html2canvas(封面 + .page) → jsPDF → doc.save("report.pdf")。
   // http(s)：有 <body data-pdf="report.pdf">（headless 预生成）就 <a download> 直接下载；
-  //         没有也走方案 B。vendor 库始终内联在页面里（不再只在 A 失败时注入）。
-  // 兜底：连内联库都没有（极旧环境）→ 沿用 window.print()（打印 CSS 同样带封面）。
+  //         预生成文件只对应「默认档位 + 高清」，所以切换版式 / 标准清晰度后也走 B。
   function pdfDataFile(){
     var body = document.body;
     return (body && body.getAttribute("data-pdf")) || "";
   }
   function pdfFileProtocol(){
-    // file:// 下 <a download> 不会真的下载 → 只有 http(s) 才能用预生成文件。
     return location.protocol === "file:";
   }
-  function pdfModeName(){
+  function pdfPrebuiltValid(profile, clarity){
+    var file = pdfDataFile();
+    if (!file) return false;
+    if (profile !== DEFAULT_PROFILE) return false;
+    if (clarity && clarity !== "high") return false;
+    // A 预生成 PDF 是生成时的静态文件，无法反映运行期框选 → 有选区一律走 B。
+    if (hasSelection()) return false;
+    return true;
+  }
+  function pdfModeName(profile, clarity){
+    profile = profile || saveProfile();
+    clarity = clarity || saveClarity();
     if (pdfFileProtocol()) return "file-vendor";
-    if (pdfDataFile()) return "prebuilt";
+    if (pdfPrebuiltValid(profile, clarity)) return "prebuilt";
     return pdfFallbackReady() ? "vendor" : "print";
   }
   function pdfFallbackReady(){
@@ -7759,8 +10101,6 @@ JS = r"""
     link.href = href;
     link.download = name;
     if (allowNewTab){
-      // 极旧 WebView 里 download 可能被忽略，target=_blank 至少能打开查看器；
-      // 常规 http(s) 报告走 download，不需要新标签页。
       link.target = "_blank";
       link.rel = "noopener";
     }
@@ -7768,14 +10108,14 @@ JS = r"""
     link.click();
     document.body.removeChild(link);
   }
-  function pdfPageNodes(){
-    // PDF 页序：封面（#pdf-cover，第 1 页）→ 9 页内容；querySelectorAll 按文档顺序
-    // 返回，所以这里不用额外排序。封面不是 .page（屏幕翻页不受影响）。
-    return qsa("#pages > .pdf-cover, #pages > section.page");
+  // PDF 页序：封面（.pdf-cover，第 1 页）→ 全部内容页（页数由 DOM 决定，不写死）
+  function pdfPageNodes(profile){
+    var root = document.getElementById(profile === "mobile" ? "pages-mobile" : "pages");
+    if (!root || !root.querySelectorAll) return [];
+    return Array.prototype.slice.call(
+      root.querySelectorAll(":scope > .pdf-cover, :scope > section.page"));
   }
   function nextFrame(){
-    // 只等一个宏任务：足够让 .pdf-capture 的样式/布局生效；不用 requestAnimationFrame
-    //（标签页在后台 / 被 PDF 查看器盖住时 rAF 不触发，导出会永远卡住）。
     return new Promise(function(resolve){
       window.setTimeout(resolve, 0);
     });
@@ -7790,56 +10130,71 @@ JS = r"""
     } catch (err) { /* 忽略：用下面的兜底色 */ }
     return "#FBF7EC";
   }
-  function generatePdfInBrowser(annotated, done, fail){
+  function generatePdfInBrowser(annotated, profile, clarity, done, fail){
     var body = document.body;
     var jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
     if (!jsPDFCtor || !window.html2canvas){
       fail("离线 PDF 组件缺失");
       return;
     }
-    var pages = pdfPageNodes();
-    if (!pages.length){
+    var meta = profileMeta(profile);
+    var nodes = pdfPageNodes(profile);
+    if (!nodes.length){
       fail("没有可导出的页面");
       return;
     }
-    var W = 1600, H = 1000;
+    // 捕获尺寸 = 设计尺寸（横版 1600×900 / 竖版 1200×1600）；清晰度用 scale 乘。
+    var W = meta.designW, H = meta.designH;
+    var scale = clarity === "standard" ? meta.captureScaleStandard : meta.captureScaleHigh;
+    var outW = Math.round(W * scale), outH = Math.round(H * scale);
+    var orientation = outW > outH ? "landscape" : "portrait";
+    body.setAttribute("data-export-profile", profile);
+    body.setAttribute("data-clarity", clarity);
     body.classList.toggle("no-annot", !annotated);
     body.classList.add("pdf-capture");
+    // 有选区：导出前按当前选区把全部页面重画一遍（`.pdf-capture` 里就是选区视图，
+    // 逐页 html2canvas 抓到的自然是选区范围）；导出后再恢复一次原视图。
+    if (hasSelection()) applySelection();
     var background = pdfBackground();
     nextFrame().then(function(){
       var doc = new jsPDFCtor({
-        unit: "px", format: [W, H], orientation: "landscape",
+        unit: "px", format: [outW, outH], orientation: orientation,
         hotfixes: ["px_scaling"], compress: true
       });
       var index = 0;
       function finishFail(err){
         body.classList.remove("pdf-capture");
         body.classList.remove("no-annot");
+        if (hasSelection()) applySelection();
         fail(err);
       }
       function step(){
-        if (index >= pages.length){
+        if (index >= nodes.length){
           body.classList.remove("pdf-capture");
           body.removeAttribute("data-pdf-progress");
+          // 导出结束：恢复原视图（与导出前完全一致的选区视图，幂等）
+          if (hasSelection()) applySelection();
           try {
             doc.save("report.pdf");
           } catch (err) {
             finishFail("PDF 保存失败: " + (err && err.message ? err.message : err));
             return;
           }
-          done({mode: "vendor", name: "report.pdf", pages: pages.length});
+          done({mode: "vendor", name: "report.pdf", pages: nodes.length,
+            profile: profile, clarity: clarity, width: outW, height: outH,
+            selection: hasSelection() ? [brush.sel.t0, brush.sel.t1] : null});
           return;
         }
-        var page = pages[index];
-        body.setAttribute("data-pdf-progress", (index + 1) + "/" + pages.length);
+        var page = nodes[index];
+        body.setAttribute("data-pdf-progress", (index + 1) + "/" + nodes.length);
         window.html2canvas(page, {
           width: W, height: H, windowWidth: W, windowHeight: H,
-          scale: 1, backgroundColor: background, useCORS: false, logging: false,
+          scale: scale, backgroundColor: background, useCORS: false, logging: false,
           scrollX: 0, scrollY: 0
         }).then(function(canvas){
           var data = canvas.toDataURL("image/jpeg", 0.92);
-          if (index > 0) doc.addPage([W, H], "landscape");
-          doc.addImage(data, "JPEG", 0, 0, W, H);
+          if (index > 0) doc.addPage([outW, outH], orientation);
+          doc.addImage(data, "JPEG", 0, 0, outW, outH);
           canvas.width = 0;
           canvas.height = 0;
           index += 1;
@@ -7852,23 +10207,25 @@ JS = r"""
       step();
     });
   }
-  function exportFullPdf(annotated, done, fail){
+  function exportFullPdf(annotated, profile, clarity, done, fail){
+    profile = profile || saveProfile();
+    clarity = clarity || saveClarity();
     var body = document.body;
     var file = pdfDataFile();
-    // file:// → 预生成 PDF 的 <a download> 会被 Chromium 拦截，只能浏览器内生成；
-    // http(s) + 有 data-pdf → 直接下载预生成文件。
-    if (!pdfFileProtocol() && file){
+    // A 预生成只对应「默认档位 + 高清」；其余组合走 B（逐页渲染，尺寸按档位/清晰度）。
+    if (!pdfFileProtocol() && pdfPrebuiltValid(profile, clarity)){
       var name = (file.split("/").pop() || "").split("\\").pop() || "report.pdf";
-      // http(s) 下同源 <a download> 生效，直接下载预生成文件。
       clickDownload(encodeURI(file), name, false);
-      done({mode: "prebuilt", name: name});
+      done({mode: "prebuilt", name: name, profile: profile, clarity: clarity});
       return;
     }
     if (pdfFallbackReady()){
-      generatePdfInBrowser(annotated, done, fail);
+      generatePdfInBrowser(annotated, profile, clarity, done, fail);
       return;
     }
-    // 最后的兜底：老行为（浏览器打印界面）
+    // 最后的兜底：浏览器打印界面（打印 CSS 按 body 上的档位 / 清晰度属性出页）
+    body.setAttribute("data-export-profile", profile);
+    body.setAttribute("data-clarity", clarity);
     body.classList.toggle("no-annot", !annotated);
     window.setTimeout(function(){
       try {
@@ -7877,29 +10234,50 @@ JS = r"""
         body.classList.remove("no-annot");
       }
     }, 40);
-    done({mode: "print", name: "print"});
+    done({mode: "print", name: "print", profile: profile, clarity: clarity});
   }
   // 自动化验证钩子：返回 {mode, name, pages?}，B 分支会真的走一遍逐页渲染
-  window.__exportPdf = function(annotated){
+  window.__exportPdf = function(annotated, profile, clarity){
     return new Promise(function(resolve, reject){
-      exportFullPdf(annotated !== false, resolve, reject);
+      exportFullPdf(annotated !== false, profile || saveProfile(),
+        clarity || saveClarity(), resolve, reject);
     });
   };
   window.__pdfState = function(){
+    var profile = saveProfile(), clarity = saveClarity();
     var file = pdfDataFile();
+    var nodes = pdfPageNodes(profile);
     return {
+      profile: profile,
+      clarity: clarity,
+      defaultProfile: DEFAULT_PROFILE,
       prebuilt: file || null,
+      prebuiltValid: pdfPrebuiltValid(profile, clarity),
       fallback: pdfFallbackReady(),
       file: pdfFileProtocol(),
-      mode: pdfModeName(),
+      mode: pdfModeName(profile, clarity),
       progress: (document.body && document.body.getAttribute("data-pdf-progress")) || "",
-      pageCount: pdfPageNodes().length,
-      pageIds: pdfPageNodes().map(function(node){ return node.id; })
+      pageCount: nodes.length,
+      pageIds: nodes.map(function(node){ return node.id; }),
+      pages: {
+        desktop: (PROFILES.desktop || {}).pdfPages || 0,
+        mobile: (PROFILES.mobile || {}).pdfPages || 0
+      },
+      contentPages: {
+        desktop: (PROFILES.desktop || {}).contentPages || 0,
+        mobile: (PROFILES.mobile || {}).contentPages || 0
+      },
+      dataPdfPages: (document.getElementById("pages") || {}).getAttribute
+        ? document.getElementById("pages").getAttribute("data-pdf-pages") : ""
     };
   };
 
   window.__saveState = function(){
-    return {open: saveIsOpen(), kind: saveKind(), annot: saveAnnot()};
+    return {
+      open: saveIsOpen(), kind: saveKind(), annot: saveAnnot(),
+      profile: saveProfile(), clarity: saveClarity(),
+      text: saveTexts()
+    };
   };
   if (saveBtn) saveBtn.addEventListener("click", function(ev){
     ev.preventDefault();
@@ -7909,31 +10287,48 @@ JS = r"""
     saveModal.querySelectorAll("[data-save-cancel]").forEach(function(el){
       el.addEventListener("click", function(ev){ ev.preventDefault(); saveClose(); });
     });
+    // 版式 / 清晰度切换：只改状态 + 文案（屏幕始终横版高清；导出时按这两个值）
+    saveModal.querySelectorAll('input[name="save-profile"]').forEach(function(el){
+      el.addEventListener("change", function(){ saveTexts(); savePersist(); });
+    });
+    saveModal.querySelectorAll('input[name="save-clarity"]').forEach(function(el){
+      el.addEventListener("change", function(){ saveTexts(); savePersist(); });
+    });
+    var annotInput = document.getElementById("save-annot");
+    if (annotInput) annotInput.addEventListener("change", function(){
+      document.body.classList.toggle("no-annot", !annotInput.checked);
+      savePersist();
+    });
     var generateBtn = document.getElementById("save-generate");
     if (generateBtn) generateBtn.addEventListener("click", function(ev){
       ev.preventDefault();
       var kind = saveKind();
       var annot = saveAnnot();
+      var profile = saveProfile();
+      var clarity = saveClarity();
       var body = document.body;
-      var state = {kind: kind, annot: annot, result: ""};
+      var state = {kind: kind, annot: annot, profile: profile, clarity: clarity, result: ""};
+      savePersist();
       saveClose();
       if (kind === "png"){
         body.classList.toggle("no-annot", !annot);
-        exportDebriefPNG(annot, function(info){
+        exportDebriefPNG(annot, profile, clarity, function(info){
           state.result = info.name;
           body.setAttribute("data-last-save",
-            "png:" + info.name + ":" + info.width + "x" + info.height);
+            "png:" + info.name + ":" + info.width + "x" + info.height +
+            ":" + info.profile + ":" + info.clarity);
         }, function(message){
           state.result = "error:" + message;
           body.setAttribute("data-last-save", "png-error:" + message);
         });
       } else {
-        // PDF 完整版：有 data-pdf 直下预生成文件；没有就浏览器内生成（离线库）；
-        // 都不行才退回 window.print()。不再无条件弹打印界面。
-        exportFullPdf(annot, function(info){
+        // PDF 完整版：默认档位 + 高清且 http(s) 有预生成 → 直下；否则 B 浏览器内生成；
+        // 都没有才退回 window.print()。
+        exportFullPdf(annot, profile, clarity, function(info){
           state.result = info.mode + ":" + info.name;
           body.setAttribute("data-last-save",
-            "pdf:" + (annot ? "annotated" : "clean") + ":" + info.mode + ":" + info.name);
+            "pdf:" + (annot ? "annotated" : "clean") + ":" + info.mode + ":" +
+            info.name + ":" + profile + ":" + clarity);
         }, function(message){
           state.result = "error:" + message;
           body.setAttribute("data-last-save", "pdf-error:" + message);
@@ -7946,6 +10341,29 @@ JS = r"""
       saveClose();
     });
   }
+  // 初始化：恢复上次的版式 / 清晰度 / 批注（localStorage，按日志文件名隔离）
+  (function initSaveState(){
+    var saved = null;
+    var defaultClarity = DATA.clarity === "standard" ? "standard" : "high";
+    try {
+      var raw = seriesStore.getItem(SAVE_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch (err) { saved = null; }
+    var profile = (saved && saved.profile) || DEFAULT_PROFILE;
+    var clarity = (saved && saved.clarity) || defaultClarity;
+    if (!PROFILES[profile]) profile = DEFAULT_PROFILE;
+    if (clarity !== "standard") clarity = "high";
+    qsa('input[name="save-profile"]').forEach(function(el){
+      el.checked = el.value === profile;
+    });
+    qsa('input[name="save-clarity"]').forEach(function(el){
+      el.checked = el.value === clarity;
+    });
+    var annotEl = document.getElementById("save-annot");
+    if (annotEl) annotEl.checked = saved ? !!saved.annot : true;
+    document.body.classList.toggle("no-annot", annotEl ? !annotEl.checked : false);
+    saveTexts();
+  })();
   document.addEventListener("keydown", function(ev){
     if (!saveIsOpen()) return;
     if (ev.key === "Escape"){
@@ -7960,13 +10378,967 @@ JS = r"""
   window.addEventListener("afterprint", function(){
     document.body.classList.remove("no-annot");
   });
+
+  // ======================================================================
+  // 框选时间段（首交互）：拖拽框选 → 所有页 / 所有图同步缩放 + 选区统计
+  // ======================================================================
+  //
+  // 设计要点：
+  // * 全局状态 ``brush.sel = {t0, t1} | null``（绝对秒，跨页 / 跨版式 / 跨架次同步）；
+  // * **不在 JS 里另写一套画图**：Python 已按图层分组输出
+  //   （``.js-series`` / ``.js-xaxis`` / ``.js-chrome`` + 每个时间元素的 ``data-t``），
+  //   框选时只重画"曲线层 / 时间轴 / 比例尺"，事件竖线 / 断口竖带 / 批注圈 /
+  //   平均速度区间按 ``data-t`` 平移，悬停层（追加在 SVG 根上）完全不受影响；
+  // * 数据结构 + 包络算法与 Python 侧一致（像素列 min/max），缩放后按新的像素密度
+  //   重新分桶，所以放大后能看见更多细节、缩小后也不会糊成实心块；
+  // * 复位 = 把三个图层还原成 Python 生成时的原始 innerHTML（像素级还原，不重算）。
+  var BRUSH_MIN_PX = 4;
+  var brush = {
+    sel: null,
+    scope: "full",
+    panels: [],
+    entryOf: {},
+    orig: {},
+    dragging: null,
+    statsSnap: []
+  };
+
+  function hasSelection(){
+    return !!(brush && brush.sel && (brush.sel.t1 - brush.sel.t0) > 0);
+  }
+  function cfgColors(){ return DATA.colors || {}; }
+  function escText(text){
+    return String(text === null || text === undefined ? "" : text)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function clampNum(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+  function coord1(v){ return (Math.round(v * 10) / 10).toFixed(1); }
+  function fmtClock(sec){
+    if (!isFinite(sec)) return "--:--";
+    var neg = sec < 0;
+    if (neg) sec = -sec;
+    var m = Math.floor(sec / 60);
+    var s = sec - m * 60;
+    return (neg ? "-" : "") + (m < 10 ? "0" : "") + m + ":" +
+      (s < 10 ? "0" : "") + s.toFixed(1);
+  }
+  function flightByIndex(index){
+    var list = DATA.flights || [];
+    for (var i = 0; i < list.length; i++) if (list[i].index === index) return list[i];
+    return null;
+  }
+  function lowerBound(times, value){
+    var lo = 0, hi = times.length;
+    while (lo < hi){
+      var mid = (lo + hi) >> 1;
+      if (times[mid] < value) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+  function upperBound(times, value){
+    var lo = 0, hi = times.length;
+    while (lo < hi){
+      var mid = (lo + hi) >> 1;
+      if (times[mid] <= value) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  }
+
+  // ---------- 像素包络（与 report.py :func:`_envelope` 同一口径） ----------
+  function panelColumns(panel){
+    var meta = (DATA.profiles || {})[panel.profile || "desktop"] || {};
+    var designW = meta.designW || 1600;
+    var viewW = panel.viewW || 1500;
+    return Math.max(160, Math.round((panel.x1 - panel.x0) * designW / viewW));
+  }
+  function envelopeOf(points, panel){
+    var columns = panelColumns(panel);
+    var span = panel.x1 - panel.x0;
+    if (!(span > 0) || points.length < 2) return null;
+    var cols = Math.max(8, Math.min(columns, points.length));
+    var colW = span / cols;
+    var buckets = new Array(cols);
+    for (var i = 0; i < points.length; i++){
+      var index = Math.floor((points[i][0] - panel.x0) / colW);
+      if (index < 0) index = 0; else if (index >= cols) index = cols - 1;
+      var bucket = buckets[index];
+      if (!bucket) buckets[index] = [points[i][1], points[i][1]];
+      else {
+        if (points[i][1] < bucket[0]) bucket[0] = points[i][1];
+        if (points[i][1] > bucket[1]) bucket[1] = points[i][1];
+      }
+    }
+    var upper = [], lower = [], zigzag = [], spikes = 0;
+    var firstX = points[0][0], lastX = points[points.length - 1][0];
+    for (var j = 0; j < cols; j++){
+      var item = buckets[j];
+      if (!item) continue;
+      var x = j === 0 ? firstX : (j === cols - 1 ? lastX : panel.x0 + (j + 0.5) * colW);
+      var lo = item[0], hi = item[1];
+      if (hi - lo < 0.6){
+        var mid = (lo + hi) / 2;
+        upper.push([x, mid]); lower.push([x, mid]); zigzag.push([x, mid]);
+      } else {
+        upper.push([x, lo]); lower.push([x, hi]);
+        zigzag.push([x, lo]); zigzag.push([x, hi]);
+        spikes += 1;
+      }
+    }
+    return {upper: upper, lower: lower, zigzag: zigzag, columns: cols, spikes: spikes};
+  }
+  function polyPath(points){
+    if (!points.length) return "";
+    var out = "M" + coord1(points[0][0]) + "," + coord1(points[0][1]);
+    for (var i = 1; i < points.length; i++){
+      out += "L" + coord1(points[i][0]) + "," + coord1(points[i][1]);
+    }
+    return out;
+  }
+  // 三次贝塞尔（Catmull-Rom 切线 + Fritsch–Carlson 限幅，零过冲）—— report.py 同款
+  function bezierPath(points){
+    var clean = [];
+    for (var i = 0; i < points.length; i++){
+      var x = points[i][0], y = points[i][1];
+      if (!isFinite(x) || !isFinite(y)) continue;
+      if (clean.length && Math.abs(x - clean[clean.length - 1][0]) < 1e-9){
+        clean[clean.length - 1] = [x, y];
+      } else {
+        clean.push([x, y]);
+      }
+    }
+    var n = clean.length;
+    if (n < 2) return "";
+    var h = [], delta = [];
+    for (var i2 = 0; i2 < n - 1; i2++){
+      h.push(clean[i2 + 1][0] - clean[i2][0]);
+      delta.push((clean[i2 + 1][1] - clean[i2][1]) / h[i2]);
+    }
+    var tan = new Array(n);
+    tan[0] = delta[0];
+    tan[n - 1] = delta[n - 2];
+    for (var i3 = 1; i3 < n - 1; i3++){
+      if (delta[i3 - 1] * delta[i3] <= 0){
+        tan[i3] = 0;
+      } else {
+        tan[i3] = (h[i3] * delta[i3 - 1] + h[i3 - 1] * delta[i3]) /
+          (h[i3 - 1] + h[i3]);
+      }
+    }
+    for (var i4 = 0; i4 < n - 1; i4++){
+      if (Math.abs(delta[i4]) < 1e-12){ tan[i4] = 0; tan[i4 + 1] = 0; continue; }
+      var a = Math.max(0, tan[i4] / delta[i4]);
+      var b = Math.max(0, tan[i4 + 1] / delta[i4]);
+      var norm = a * a + b * b;
+      if (norm > 9){
+        var scale = 3 / Math.sqrt(norm);
+        tan[i4] = scale * a * delta[i4];
+        tan[i4 + 1] = scale * b * delta[i4];
+      }
+    }
+    var out = "M" + coord1(clean[0][0]) + "," + coord1(clean[0][1]);
+    for (var i5 = 0; i5 < n - 1; i5++){
+      var step = h[i5] / 3;
+      var p0 = clean[i5], p1 = clean[i5 + 1];
+      out += "C" + coord1(p0[0] + step) + "," + coord1(p0[1] + tan[i5] * step) +
+        " " + coord1(p1[0] - step) + "," + coord1(p1[1] - tan[i5 + 1] * step) +
+        " " + coord1(p1[0]) + "," + coord1(p1[1]);
+    }
+    return out;
+  }
+  function stepPath(points){
+    if (!points.length) return "";
+    var out = "M" + coord1(points[0][0]) + "," + coord1(points[0][1]);
+    var prevY = points[0][1];
+    for (var i = 1; i < points.length; i++){
+      if (Math.abs(points[i][1] - prevY) > 1e-9){
+        out += "L" + coord1(points[i][0]) + "," + coord1(prevY) +
+          "L" + coord1(points[i][0]) + "," + coord1(points[i][1]);
+        prevY = points[i][1];
+      }
+    }
+    var last = points[points.length - 1];
+    out += "L" + coord1(last[0]) + "," + coord1(prevY);
+    return out;
+  }
+  function axisOf(panel, side){
+    var ax = side === "right" ? panel.right : panel.left;
+    if (!ax || !(ax.max > ax.min)) return null;
+    return {
+      lo: ax.min,
+      hi: ax.max,
+      at: function(value){
+        var frac = (value - ax.min) / (ax.max - ax.min);
+        if (!isFinite(frac)) return null;
+        return panel.y1 - frac * (panel.y1 - panel.y0);
+      }
+    };
+  }
+  function seriesHtml(panel, fl, t0, t1){
+    var times = fl.times || [], source = fl.series || {};
+    var span = t1 - t0;
+    if (!(span > 0)) return "";
+    var out = [];
+    var cols = panelColumns(panel);
+    var trigger = (DATA.envelope && DATA.envelope.trigger) || 2;
+    var budget = Math.max(64, Math.round(cols * trigger));
+    (panel.series || []).forEach(function(sd){
+      var values = source[sd.key];
+      if (!values || !values.length) return;
+      var axis = axisOf(panel, sd.axis);
+      if (!axis) return;
+      var segments = [], current = [], bridges = [], lastT = null;
+      var start = lowerBound(times, t0 - 1e-9), end = upperBound(times, t1 + 1e-9);
+      for (var i = start; i < end; i++){
+        var t = times[i], v = values[i];
+        if (v === null || v === undefined){
+          if (current.length){ segments.push(current); current = []; }
+          lastT = null;
+          continue;
+        }
+        if (sd.clip === "pos") v = Math.max(0, v);
+        else if (sd.clip === "neg") v = Math.min(0, v);
+        if (lastT !== null && (t - lastT) > 1.0){
+          if (current.length){
+            bridges.push([lastT, current[current.length - 1][1], t, v]);
+            segments.push(current);
+            current = [];
+          }
+        }
+        current.push([t, v]);
+        lastT = t;
+      }
+      if (current.length) segments.push(current);
+      var seriesAttr = ' data-series="' + escText(sd.sid || sd.key) + '"';
+      var dash = sd.dash ? ' stroke-dasharray="' + escText(sd.dash) + '"' : "";
+      var width = sd.width || 1.7;
+      segments.forEach(function(segment, segIndex){
+        var pixels = [];
+        for (var k = 0; k < segment.length; k++){
+          var tv = segment[k][0];
+          var vv = segment[k][1];
+          if (sd.clamp) vv = clampNum(vv, axis.lo, axis.hi);
+          var py = axis.at(vv);
+          if (py === null || !isFinite(py)) continue;
+          pixels.push([panel.x0 + (tv - t0) / span * (panel.x1 - panel.x0), py]);
+        }
+        if (!pixels.length) return;
+        var env = null;
+        if (pixels.length > budget) env = envelopeOf(pixels, panel);
+        else if (pixels.length > budget) pixels = [];
+        if (env){
+          var envAttr = ' data-env="1" data-env-cols="' + env.columns +
+            '" data-env-points="' + env.zigzag.length + '"';
+          if (sd.fill && env.upper.length > 1){
+            var baseline = sd.fill === "zero" ? axis.at(0) : axis.at(axis.lo);
+            if (baseline !== null){
+              var areaPts = env.upper.slice();
+              out.push('<path d="M' + coord1(areaPts[0][0]) + ',' + coord1(baseline) +
+                polyPath(areaPts).replace(/^M[^L]*/, "") +
+                "L" + coord1(areaPts[areaPts.length - 1][0]) + "," + coord1(baseline) +
+                ' Z" fill="' + escText(sd.color) + '" fill-opacity="' +
+                (sd.fill === "min" ? "0.16" : "0.22") + '" stroke="none"' +
+                seriesAttr + "/>");
+            }
+          }
+          out.push('<path class="series-env" d="' + polyPath(env.zigzag) +
+            '" fill="none" stroke="' + escText(sd.color) + '" stroke-width="' +
+            Math.max(0.9, width * 0.85).toFixed(2) +
+            '" stroke-linejoin="round" stroke-linecap="round" opacity="0.92"' +
+            dash + ' vector-effect="non-scaling-stroke"' + seriesAttr + envAttr + "/>");
+        } else {
+          if (pixels.length === 1){
+            out.push('<circle cx="' + coord1(pixels[0][0]) + '" cy="' +
+              coord1(pixels[0][1]) + '" r="2.2" fill="' + escText(sd.color) + '"' +
+              seriesAttr + "/>");
+          } else {
+            if (sd.fill){
+              var base = sd.fill === "zero" ? axis.at(0) : axis.at(axis.lo);
+              if (base !== null){
+                var first = pixels[0], last = pixels[pixels.length - 1];
+                out.push('<path d="M' + coord1(first[0]) + "," + coord1(base) +
+                  "L" + coord1(first[0]) + "," + coord1(first[1]) +
+                  bezierPath(pixels).replace(/^M[^C]*/, "") +
+                  "L" + coord1(last[0]) + "," + coord1(base) +
+                  ' Z" fill="' + escText(sd.color) + '" fill-opacity="' +
+                  (sd.fill === "min" ? "0.16" : "0.22") + '" stroke="none"' +
+                  seriesAttr + "/>");
+              }
+            }
+            var curve = sd.step ? stepPath(pixels) : bezierPath(pixels);
+            out.push('<path d="' + curve + '" fill="none" stroke="' +
+              escText(sd.color) + '" stroke-width="' + width +
+              '" stroke-linejoin="round" stroke-linecap="round"' + dash +
+              ' vector-effect="non-scaling-stroke"' + seriesAttr + "/>");
+          }
+        }
+        var bridge = bridges[segIndex];
+        if (bridge){
+          var by0 = axis.at(bridge[1]), by1 = axis.at(bridge[3]);
+          if (by0 !== null && by1 !== null){
+            var bx0 = panel.x0 + (bridge[0] - t0) / span * (panel.x1 - panel.x0);
+            var bx1 = panel.x0 + (bridge[2] - t0) / span * (panel.x1 - panel.x0);
+            out.push('<path class="gap-bridge" d="M' + coord1(bx0) + "," +
+              coord1(by0) + "L" + coord1(bx1) + "," + coord1(by1) + '" fill="none" stroke="' +
+              escText(sd.color) + '" stroke-width="1.35" stroke-dasharray="4 4"' +
+              ' stroke-linecap="round" opacity="0.42" vector-effect="non-scaling-stroke"' +
+              seriesAttr + "/>");
+          }
+        }
+      });
+    });
+    return out.join("");
+  }
+
+  // ---------- 时间轴 / 比例尺（与 Python _time_ticks / _fmt_time 同口径） ----------
+  function timeStepOf(t0, t1, target){
+    var span = Math.max(t1 - t0, 1e-6);
+    var raw = span / Math.max(2, target || 8);
+    var candidates = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    var step = candidates[candidates.length - 1];
+    for (var i = 0; i < candidates.length; i++){
+      if (raw <= candidates[i]){ step = candidates[i]; break; }
+    }
+    return step;
+  }
+  function tickDigitsOf(step){
+    if (step >= 1) return 0;
+    if (step >= 0.1) return 1;
+    return 2;
+  }
+  function fmtTick(value, step){
+    if (step >= 1) return String(Math.round(value));
+    return value.toFixed(tickDigitsOf(step));
+  }
+  function timeTicks(t0, t1){
+    var step = timeStepOf(t0, t1, 8);
+    var start = Math.ceil(t0 / step) * step;
+    var ticks = [];
+    for (var i = 0; i < 400; i++){
+      var v = start + i * step;
+      if (v > t1 + 1e-9) break;
+      ticks.push(Math.round(v * 1e6) / 1e6);
+    }
+    return {step: step, ticks: ticks};
+  }
+  function xAxisHtml(panel, t0, t1){
+    var info = timeTicks(t0, t1);
+    var colors = cfgColors();
+    var gridColor = colors.grid || "#3b6a8f";
+    var axisColor = colors.axis || "#c9e0f5";
+    var span = t1 - t0, width = panel.x1 - panel.x0;
+    var out = [];
+    for (var i = 0; i < info.ticks.length; i++){
+      var px = panel.x0 + (info.ticks[i] - t0) / span * width;
+      out.push('<line x1="' + coord1(px) + '" y1="' + coord1(panel.y0) +
+        '" x2="' + coord1(px) + '" y2="' + coord1(panel.y1) +
+        '" stroke="' + escText(gridColor) + '" stroke-width="1"/>');
+      if (panel.labelTime){
+        out.push('<text x="' + coord1(px) + '" y="' +
+          coord1((panel.height || panel.y1 + 26) - 8) +
+          '" text-anchor="middle" font-size="11" fill="' + escText(axisColor) +
+          '">' + escText(fmtTick(info.ticks[i], info.step)) + "</text>");
+      }
+    }
+    return out.join("");
+  }
+  function chromeHtml(panel, t0, t1){
+    var info = timeTicks(t0, t1);
+    if (info.ticks.length < 2) return "";
+    var span = info.ticks[info.ticks.length - 1] - info.ticks[0];
+    if (!(span > 0)) return "";
+    var seg = Math.min(60, span);
+    var axisColor = cfgColors().axis || "#c9e0f5";
+    var width = panel.x1 - panel.x0, range = t1 - t0;
+    function pxOf(t){ return panel.x0 + (t - t0) / range * width; }
+    var barX0 = pxOf(info.ticks[0]);
+    var barX1 = pxOf(info.ticks[0] + seg);
+    var barY = panel.y1 - 8;
+    if (barX1 - barX0 <= 8) return "";
+    var out = ['<line x1="' + coord1(barX0) + '" y1="' + coord1(barY) + '" x2="' +
+      coord1(barX1) + '" y2="' + coord1(barY) + '" stroke="' + escText(axisColor) +
+      '" stroke-width="1" opacity="0.8"/>'];
+    [0, 0.5, 1].forEach(function(frac){
+      var tickX = barX0 + (barX1 - barX0) * frac;
+      out.push('<line x1="' + coord1(tickX) + '" y1="' + coord1(barY - 3) +
+        '" x2="' + coord1(tickX) + '" y2="' + coord1(barY + 3) +
+        '" stroke="' + escText(axisColor) + '" stroke-width="1" opacity="0.8"/>');
+    });
+    out.push('<text x="' + coord1(barX1 + 8) + '" y="' + coord1(barY + 3) +
+      '" text-anchor="start" font-size="9" fill="' + escText(axisColor) +
+      '" letter-spacing="1" opacity="0.9">SCALE ' + Math.round(seg) + " s</text>");
+    return out.join("");
+  }
+
+  // ---------- 时间元素平移（事件 / 断口 / 无效区 / 批注 / 平均速度区间） ----------
+  function pxInPanel(panel, t, t0, t1){
+    return panel.x0 + (t - t0) / (t1 - t0) * (panel.x1 - panel.x0);
+  }
+  function shiftTimeLayer(svg, panel, t0, t1){
+    var full = panel.t1 - panel.t0;
+    if (!(full > 0) || !(t1 - t0 > 0)) return;
+    var nodes = svg.querySelectorAll("[data-t],[data-t0]");
+    Array.prototype.forEach.call(nodes, function(el){
+      if (el.getAttribute("data-t0") !== null){
+        var a = parseFloat(el.getAttribute("data-t0"));
+        var b = parseFloat(el.getAttribute("data-t1"));
+        var start = Math.max(a, t0), end = Math.min(b, t1);
+        if (!(end - start > 0)){ el.style.display = "none"; return; }
+        el.style.display = "";
+        var left = pxInPanel(panel, start, t0, t1);
+        var right = pxInPanel(panel, end, t0, t1);
+        el.setAttribute("x", coord1(left));
+        el.setAttribute("width", coord1(Math.max(right - left, 0.8)));
+        return;
+      }
+      var t = parseFloat(el.getAttribute("data-t"));
+      if (!isFinite(t)) return;
+      if (t < t0 - 1e-9 || t > t1 + 1e-9){ el.style.display = "none"; return; }
+      el.style.display = "";
+      var now = pxInPanel(panel, t, t0, t1);
+      if (el.tagName === "line"){
+        el.setAttribute("x1", coord1(now));
+        el.setAttribute("x2", coord1(now));
+      } else if (el.tagName === "g"){
+        var before = pxInPanel(panel, t, panel.t0, panel.t1);
+        el.setAttribute("transform", "translate(" + (now - before).toFixed(2) + " 0)");
+      } else {
+        el.setAttribute("x", coord1(now));
+      }
+    });
+  }
+
+  // ---------- Es 断崖高亮（同一曲线加粗标红）：按新区间重算路径 ----------
+  function renderEs(svg, panel, fl, t0, t1){
+    var style = DATA.esStyle || {};
+    var groups = svg.querySelectorAll(".js-es");
+    var span = t1 - t0, width = panel.x1 - panel.x0;
+    Array.prototype.forEach.call(groups, function(group){
+      var a = parseFloat(group.getAttribute("data-es-t0"));
+      var b = parseFloat(group.getAttribute("data-es-t1"));
+      var key = group.getAttribute("data-es-series");
+      var side = group.getAttribute("data-es-axis") || "left";
+      var layer = group.getAttribute("data-es-layer") || "screen";
+      var labelEl = group.querySelector(".es-range-label,.ann-type");
+      var label = labelEl ? labelEl.textContent : "";
+      var start = Math.max(a, t0), end = Math.min(b, t1);
+      var values = key && fl.series ? fl.series[key] : null;
+      var axis = axisOf(panel, side);
+      if (!(end - start > 0) || !values || !axis){ group.style.display = "none"; return; }
+      var points = [];
+      var i0 = lowerBound(fl.times, start - 1e-9), i1 = upperBound(fl.times, end + 1e-9);
+      for (var i = i0; i < i1; i++){
+        var v = values[i];
+        if (v === null || v === undefined) continue;
+        var py = axis.at(v);
+        if (py === null) continue;
+        points.push([panel.x0 + (fl.times[i] - t0) / span * width, py]);
+      }
+      if (points.length < 2){ group.style.display = "none"; return; }
+      group.style.display = "";
+      var path = bezierPath(points);
+      var first = points[0], last = points[points.length - 1];
+      var color = layer === "print" ? style.print : style.screen;
+      var lineWidth = layer === "print" ? style.printWidth : style.width;
+      var opacity = layer === "print" ? 0.92 : (style.opacity || 0.62);
+      var dotR = style.dotR || 2;
+      var dots = '<circle class="es-highlight-dot" cx="' + coord1(first[0]) + '" cy="' +
+        coord1(first[1]) + '" r="' + dotR + '" fill="' + escText(color) + '"/>' +
+        '<circle class="es-highlight-dot" cx="' + coord1(last[0]) + '" cy="' +
+        coord1(last[1]) + '" r="' + dotR + '" fill="' + escText(color) + '"/>';
+      if (layer === "print"){
+        var labelW = label.length * 6.2;
+        var tx = Math.max(panel.x0 + 2, Math.min(last[0] - labelW - 6, panel.x1 - labelW - 2));
+        var ty = panel.y1 - 10;
+        group.innerHTML = '<path class="es-highlight-path" d="' + path +
+          '" fill="none" stroke="' + escText(color) + '" stroke-width="' + lineWidth +
+          '" stroke-linecap="round" stroke-linejoin="round" opacity="' + opacity +
+          '" vector-effect="non-scaling-stroke"/>' + dots +
+          '<text class="ann-type" x="' + coord1(tx) + '" y="' + coord1(ty) +
+          '" font-size="11">' + escText(label) + "</text>";
+      } else {
+        var topY = points[0][1];
+        for (var k = 1; k < points.length; k++) if (points[k][1] < topY) topY = points[k][1];
+        var center = (first[0] + last[0]) / 2;
+        var textX = Math.max(panel.x0 + 2, Math.min(center - labelW0(label) / 2,
+          panel.x1 - labelW0(label) - 2));
+        var textY = Math.max(panel.y0 + 15, topY - 12);
+        group.innerHTML = '<path class="es-highlight-path" d="' + path +
+          '" fill="none" stroke="' + escText(color) + '" stroke-width="' + lineWidth +
+          '" stroke-linecap="round" stroke-linejoin="round" opacity="' + opacity +
+          '" vector-effect="non-scaling-stroke"/>' + dots +
+          '<text class="es-range-label" x="' + coord1(textX) + '" y="' + coord1(textY) +
+          '" font-size="10.5" font-family="Consolas,\'Courier New\',monospace">' +
+          escText(label) + "</text>";
+      }
+    });
+  }
+  function labelW0(text){
+    var w = 0;
+    for (var i = 0; i < text.length; i++){
+      w += text.charCodeAt(i) > 255 ? 10.5 : 6.2;
+    }
+    return w;
+  }
+
+  // ---------- 构图：选区 → 每张图的范围 ----------
+  function rangeForPanel(panel){
+    if (!hasSelection()) return null;
+    var a = Math.max(panel.t0, brush.sel.t0);
+    var b = Math.min(panel.t1, brush.sel.t1);
+    if (!(b - a > 0.4)) return null;
+    if (b - a >= (panel.t1 - panel.t0) - 1e-6) return null;
+    return [a, b];
+  }
+  function snapshotPanel(entry){
+    var svg = entry.svg;
+    var orig = {series: "", xaxis: "", chrome: "", es: [], time: []};
+    var seriesG = svg.querySelector(".js-series");
+    var xaxisG = svg.querySelector(".js-xaxis");
+    var chromeG = svg.querySelector(".js-chrome");
+    if (seriesG) orig.series = seriesG.innerHTML;
+    if (xaxisG) orig.xaxis = xaxisG.innerHTML;
+    if (chromeG) orig.chrome = chromeG.innerHTML;
+    Array.prototype.forEach.call(svg.querySelectorAll(".js-es"), function(el){
+      orig.es.push(el.innerHTML);
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll("[data-t],[data-t0]"), function(el){
+      orig.time.push({
+        el: el,
+        x: el.getAttribute("x"),
+        x1: el.getAttribute("x1"),
+        x2: el.getAttribute("x2"),
+        width: el.getAttribute("width"),
+        transform: el.getAttribute("transform"),
+        display: el.style ? el.style.display : ""
+      });
+    });
+    brush.orig[entry.panel.id] = orig;
+  }
+  function restorePanel(entry){
+    var svg = entry.svg, orig = brush.orig[entry.panel.id];
+    if (!svg || !orig) return;
+    var seriesG = svg.querySelector(".js-series");
+    var xaxisG = svg.querySelector(".js-xaxis");
+    var chromeG = svg.querySelector(".js-chrome");
+    if (seriesG) seriesG.innerHTML = orig.series;
+    if (xaxisG) xaxisG.innerHTML = orig.xaxis;
+    if (chromeG) chromeG.innerHTML = orig.chrome;
+    var esGroups = svg.querySelectorAll(".js-es");
+    Array.prototype.forEach.call(esGroups, function(el, index){
+      if (orig.es[index] !== undefined) el.innerHTML = orig.es[index];
+      el.style.display = "";
+    });
+    orig.time.forEach(function(item){
+      var el = item.el;
+      if (item.x !== null) el.setAttribute("x", item.x);
+      if (item.x1 !== null) el.setAttribute("x1", item.x1);
+      if (item.x2 !== null) el.setAttribute("x2", item.x2);
+      if (item.width !== null) el.setAttribute("width", item.width);
+      if (item.transform !== null) el.setAttribute("transform", item.transform);
+      else el.removeAttribute("transform");
+      el.style.display = item.display || "";
+      if (el.tagName === "g" && item.transform === null) el.removeAttribute("transform");
+    });
+    svg.removeAttribute("data-brush-range");
+    var page = svg.closest ? svg.closest(".page") : null;
+    if (page) seriesApply(page);
+  }
+  function renderPanelRange(entry){
+    var svg = entry.svg;
+    if (!svg || !entry.flight) return;
+    var panel = entry.panel;
+    var range = rangeForPanel(panel);
+    if (!range){ restorePanel(entry); return; }
+    var seriesG = svg.querySelector(".js-series");
+    if (seriesG) seriesG.innerHTML = seriesHtml(panel, entry.flight, range[0], range[1]);
+    var xaxisG = svg.querySelector(".js-xaxis");
+    if (xaxisG) xaxisG.innerHTML = xAxisHtml(panel, range[0], range[1]);
+    var chromeG = svg.querySelector(".js-chrome");
+    if (chromeG) chromeG.innerHTML = chromeHtml(panel, range[0], range[1]);
+    shiftTimeLayer(svg, panel, range[0], range[1]);
+    renderEs(svg, panel, entry.flight, range[0], range[1]);
+    var page = svg.closest ? svg.closest(".page") : null;
+    if (page) seriesApply(page);
+    svg.setAttribute("data-brush-range",
+      range[0].toFixed(2) + "," + range[1].toFixed(2));
+  }
+  function applySelection(){
+    if (!brush) return;
+    brush.panels.forEach(renderPanelRange);
+    updateBrushBar();
+    updateSurfaceStats();
+  }
+
+  // ---------- 顶部工具条 ----------
+  function updateBrushBar(){
+    var bar = document.getElementById("brush-bar");
+    if (!bar) return;
+    var has = hasSelection();
+    bar.setAttribute("data-selection", has ? "yes" : "none");
+    var label = document.getElementById("brush-sel-text");
+    var hint = document.getElementById("brush-sel-hint");
+    if (label){
+      label.textContent = has
+        ? ("已选 " + fmtClock(brush.sel.t0) + "–" + fmtClock(brush.sel.t1))
+        : "未选区间";
+    }
+    if (hint){
+      hint.textContent = has
+        ? ("共 " + (brush.sel.t1 - brush.sel.t0).toFixed(1) +
+           " s · 所有页 / 所有图已同步 · 双击任意图复位")
+        : "在任意图表上按住拖动即可框选时间段；双击任意图表复位";
+    }
+    var reset = document.getElementById("brush-reset");
+    if (reset) reset.disabled = !has;
+    qsa("[data-stat-scope]").forEach(function(btn){
+      var scope = btn.getAttribute("data-stat-scope");
+      if (scope === "sel") btn.disabled = !has;
+      var active = brush.scope === scope && (scope !== "sel" || has);
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (!has && brush.scope !== "full") brush.scope = "full";
+    updateSaveSelectionHint();
+  }
+
+  // ---------- 统计：全程（Python 预算）/ 选区（JS 用全速率样本现算） ----------
+  function snapshotSurfaceStats(){
+    brush.statsSnap = [];
+    qsa(".surface-meta").forEach(function(block){
+      var entry = {block: block, r: {}, p90: "", steps: "", samples: "", window: "",
+        scope: ""};
+      var win = block.querySelector("[data-sm-window]");
+      var samples = block.querySelector("[data-sm-samples]");
+      var p90 = block.querySelector("[data-sm-p90]");
+      var steps = block.querySelector("[data-sm-steps]");
+      var scope = block.querySelector("[data-sm-scope]");
+      if (win) entry.window = win.textContent;
+      if (samples) entry.samples = samples.textContent;
+      if (p90) entry.p90 = p90.textContent;
+      if (steps) entry.steps = steps.textContent;
+      if (scope) entry.scope = scope.textContent;
+      block.querySelectorAll("[data-sm-r]").forEach(function(el){
+        entry.r[el.getAttribute("data-sm-r")] = el.textContent;
+      });
+      brush.statsSnap.push(entry);
+    });
+  }
+  function percentile(sorted, q){
+    if (!sorted.length) return null;
+    var index = Math.floor(sorted.length * q);
+    if (index > sorted.length - 1) index = sorted.length - 1;
+    if (index < 0) index = 0;
+    return sorted[index];
+  }
+  function pearson(xs, ys){
+    if (xs.length < 8) return null;
+    var mx = 0, my = 0, i;
+    for (i = 0; i < xs.length; i++){ mx += xs[i]; my += ys[i]; }
+    mx /= xs.length; my /= ys.length;
+    var num = 0, dx = 0, dy = 0;
+    for (i = 0; i < xs.length; i++){
+      var ax = xs[i] - mx, ay = ys[i] - my;
+      num += ax * ay; dx += ax * ax; dy += ay * ay;
+    }
+    if (!(dx > 0) || !(dy > 0)) return null;
+    return num / Math.sqrt(dx * dy);
+  }
+  function computeSurfaceStats(fl, t0, t1){
+    var out = {};
+    var times = fl.times || [];
+    var i0 = lowerBound(times, t0 - 1e-9), i1 = upperBound(times, t1 + 1e-9);
+    var rows = 0;
+    ((fl.surface && fl.surface.axes) || []).forEach(function(ax){
+      var surf = fl.series ? fl.series[ax.surf] : null;
+      var cmd = fl.series ? fl.series[ax.cmd] : null;
+      if (!surf || !cmd){ out[ax.id] = {n: 0}; return; }
+      var xs = [], ys = [], aligned = [], diffs = [], quant = {};
+      for (var i = i0; i < i1; i++){
+        var s = surf[i], k = cmd[i];
+        if (s === null || s === undefined || k === null || k === undefined) continue;
+        xs.push(k); ys.push(s);
+        diffs.push(Math.abs(s - k));
+        quant[Math.round(s * 1000)] = 1;
+        if (i > 0 && surf[i - 1] !== null && surf[i - 1] !== undefined){
+          aligned.push(Math.abs(surf[i - 1] - k));
+        }
+      }
+      if (xs.length > rows) rows = xs.length;
+      aligned.sort(function(a, b){ return a - b; });
+      diffs.sort(function(a, b){ return a - b; });
+      out[ax.id] = {
+        n: xs.length,
+        corr: pearson(xs, ys),
+        aligned_p90: percentile(aligned, 0.9),
+        steps: Object.keys(quant).length,
+        max_abs_diff: diffs.length ? diffs[diffs.length - 1] : null
+      };
+    });
+    // 样本数口径与 Python 一致 = 区间内的样本行数（不按轴重复计数）
+    out._rows = Math.max(0, i1 - i0);
+    return out;
+  }
+  function updateSurfaceStats(){
+    if (!brush || !brush.statsSnap.length) return;
+    var useSel = brush.scope === "sel" && hasSelection();
+    brush.statsSnap.forEach(function(entry){
+      var block = entry.block;
+      var index = parseInt(block.getAttribute("data-surface-flight"), 10);
+      var fl = flightByIndex(index);
+      var win = block.querySelector("[data-sm-window]");
+      var samples = block.querySelector("[data-sm-samples]");
+      var p90 = block.querySelector("[data-sm-p90]");
+      var steps = block.querySelector("[data-sm-steps]");
+      var scope = block.querySelector("[data-sm-scope]");
+      var stats = null, a = 0, b = 0;
+      if (useSel && fl){
+        a = Math.max(brush.sel.t0, fl.t0);
+        b = Math.min(brush.sel.t1, fl.t1);
+        if (b - a > 0.4) stats = computeSurfaceStats(fl, a, b);
+      }
+      if (!stats){
+        if (win) win.textContent = entry.window;
+        if (samples) samples.textContent = entry.samples;
+        if (p90) p90.textContent = entry.p90;
+        if (steps) steps.textContent = entry.steps;
+        block.querySelectorAll("[data-sm-r]").forEach(function(el){
+          var id = el.getAttribute("data-sm-r");
+          if (entry.r[id] !== undefined) el.textContent = entry.r[id];
+        });
+        if (scope) scope.textContent = entry.scope || "全程";
+        return;
+      }
+      var p90Bits = [], stepBits = [];
+      var axes = (fl.surface && fl.surface.axes) || [];
+      block.querySelectorAll("[data-sm-r]").forEach(function(el){
+        var id = el.getAttribute("data-sm-r");
+        var st = stats[id];
+        if (!st || !st.n){ el.textContent = "—"; return; }
+        el.textContent = st.corr === null ? "—" : st.corr.toFixed(4);
+      });
+      axes.forEach(function(ax){
+        var st = stats[ax.id];
+        p90Bits.push(st && st.n && st.aligned_p90 !== null
+          ? st.aligned_p90.toFixed(2) : "—");
+        stepBits.push(st && st.n ? String(st.steps) : "—");
+      });
+      if (p90) p90.textContent = p90Bits.join(" / ");
+      if (steps) steps.textContent = stepBits.join(" / ");
+      if (samples) samples.textContent = String(stats._rows);
+      if (win) win.textContent = "选区 " + a.toFixed(1) + "–" + b.toFixed(1) + " s";
+      if (scope) scope.textContent = "选区";
+    });
+  }
+
+  // ---------- 保存设置里的选区提示 ----------
+  function updateSaveSelectionHint(){
+    var host = document.getElementById("save-sel");
+    if (!host) return;
+    var has = hasSelection();
+    host.setAttribute("data-selection", has ? "yes" : "none");
+    host.classList.toggle("warn", has);
+    var text = host.querySelector("[data-save-sel-text]");
+    var hint = host.querySelector("[data-save-sel-hint]");
+    if (text){
+      text.textContent = has
+        ? ("当前选区 " + fmtClock(brush.sel.t0) + "–" + fmtClock(brush.sel.t1) +
+           "（共 " + (brush.sel.t1 - brush.sel.t0).toFixed(1) + " s）：PDF 只画该区间")
+        : "当前没有选区：PDF / PNG 都按全程导出";
+    }
+    if (hint){
+      hint.textContent = has
+        ? "按选区导出将使用浏览器内生成（较慢）· PNG 复盘卡 / PDF 封面保持全程"
+        : "先在任意图表上拖动框选时间段，再导出即可只出该区间";
+    }
+  }
+
+  // ---------- 拖拽框选 / 双击复位 ----------
+  function setBarScope(scope){
+    if (scope === "sel" && !hasSelection()) scope = "full";
+    brush.scope = scope;
+    updateBrushBar();
+    updateSurfaceStats();
+  }
+  function resetSelection(){
+    if (!hasSelection()) return;
+    brush.sel = null;
+    brush.scope = "full";
+    applySelection();
+  }
+  function commitSelection(entry, px0, px1){
+    var panel = entry.panel;
+    var range = rangeForPanel(panel) || [panel.t0, panel.t1];
+    var left = clampNum(Math.min(px0, px1), panel.x0, panel.x1);
+    var right = clampNum(Math.max(px0, px1), panel.x0, panel.x1);
+    if (right - left < 2){ return; }
+    var t0 = range[0] + (left - panel.x0) / (panel.x1 - panel.x0) * (range[1] - range[0]);
+    var t1 = range[0] + (right - panel.x0) / (panel.x1 - panel.x0) * (range[1] - range[0]);
+    if (!(t1 - t0 > 0.4)) return;
+    brush.sel = {t0: Math.round(t0 * 1000) / 1000, t1: Math.round(t1 * 1000) / 1000};
+    brush.scope = "full";
+    applySelection();
+  }
+  function brushLayer(svg){
+    var layer = svg.querySelector(".brush-layer");
+    if (!layer){
+      layer = document.createElementNS(NS, "g");
+      layer.setAttribute("class", "brush-layer");
+      svg.appendChild(layer);
+    }
+    return layer;
+  }
+  function drawBrushRect(drag, left, right, panel){
+    var layer = brushLayer(drag.svg);
+    layer.innerHTML = '<rect class="brush-rect" x="' + coord1(left) + '" y="' +
+      coord1(panel.y0) + '" width="' + coord1(Math.max(right - left, 0.5)) +
+      '" height="' + coord1(panel.y1 - panel.y0) + '"/>' +
+      '<line class="brush-edge" x1="' + coord1(left) + '" y1="' + coord1(panel.y0) +
+      '" x2="' + coord1(left) + '" y2="' + coord1(panel.y1) + '"/>' +
+      '<line class="brush-edge" x1="' + coord1(right) + '" y1="' + coord1(panel.y0) +
+      '" x2="' + coord1(right) + '" y2="' + coord1(panel.y1) + '"/>';
+  }
+  function clearBrushRect(svg){
+    var layer = svg.querySelector(".brush-layer");
+    if (layer && layer.parentNode) layer.parentNode.removeChild(layer);
+  }
+  function onBrushDown(ev){
+    if (ev.button !== undefined && ev.button !== 0) return;
+    var entry = brush.entryOf[ev.currentTarget.id];
+    if (!entry) return;
+    var q = localPoint(ev.currentTarget, ev.clientX, ev.clientY);
+    if (!isFinite(q.x)) return;
+    brush.dragging = {
+      entry: entry, svg: ev.currentTarget, startClientX: ev.clientX,
+      startX: clampNum(q.x, entry.panel.x0, entry.panel.x1),
+      pointerId: ev.pointerId, moved: false, lastX: q.x
+    };
+    try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (err) { /* ignore */ }
+  }
+  function onBrushMove(ev){
+    var drag = brush.dragging;
+    if (!drag || drag.svg !== ev.currentTarget) return;
+    if (!drag.moved && Math.abs(ev.clientX - drag.startClientX) < BRUSH_MIN_PX) return;
+    drag.moved = true;
+    drag.svg.classList.add("is-brushing");
+    if (typeof hideAll === "function") hideAll();
+    var q = localPoint(drag.svg, ev.clientX, ev.clientY);
+    if (!isFinite(q.x)) return;
+    drag.lastX = q.x;
+    var panel = drag.entry.panel;
+    var left = clampNum(Math.min(drag.startX, q.x), panel.x0, panel.x1);
+    var right = clampNum(Math.max(drag.startX, q.x), panel.x0, panel.x1);
+    drawBrushRect(drag, left, right, panel);
+  }
+  function onBrushUp(ev){
+    var drag = brush.dragging;
+    if (!drag || drag.svg !== ev.currentTarget) return;
+    brush.dragging = null;
+    try { drag.svg.releasePointerCapture(drag.pointerId); } catch (err) { /* ignore */ }
+    drag.svg.classList.remove("is-brushing");
+    clearBrushRect(drag.svg);
+    if (!drag.moved) return;
+    commitSelection(drag.entry, drag.startX, drag.lastX);
+  }
+  function bindBrush(){
+    var panels = [];
+    (DATA.flights || []).forEach(function(fl){
+      var list = (fl.panels || []).concat([]);
+      var listM = (fl.panels_m || []).concat([]);
+      list.forEach(function(panel){ panels.push({panel: panel, flight: fl, mobile: false}); });
+      listM.forEach(function(panel){ panels.push({panel: panel, flight: fl, mobile: true}); });
+    });
+    panels.forEach(function(entry){
+      var id = "svg-" + entry.panel.id;
+      var svg = document.getElementById(id);
+      if (!svg || !svg.querySelector(".js-series")) return;
+      entry.svg = svg;
+      entry.svgId = id;
+      brush.panels.push(entry);
+      brush.entryOf[id] = entry;
+      snapshotPanel(entry);
+      svg.classList.add("is-brushable");
+      svg.addEventListener("pointerdown", onBrushDown);
+      svg.addEventListener("pointermove", onBrushMove);
+      svg.addEventListener("pointerup", onBrushUp);
+      svg.addEventListener("pointercancel", onBrushUp);
+      svg.addEventListener("dblclick", function(ev){
+        ev.preventDefault();
+        ev.stopPropagation();
+        resetSelection();
+      });
+    });
+    snapshotSurfaceStats();
+    var resetBtn = document.getElementById("brush-reset");
+    if (resetBtn){
+      resetBtn.addEventListener("click", function(ev){
+        ev.preventDefault();
+        resetSelection();
+      });
+    }
+    qsa("[data-stat-scope]").forEach(function(btn){
+      btn.addEventListener("click", function(ev){
+        ev.preventDefault();
+        setBarScope(btn.getAttribute("data-stat-scope"));
+      });
+    });
+    updateBrushBar();
+  }
+  bindBrush();
+
+  // 自动化 / 自检钩子（headless 证据脚本用）
+  window.__brushState = function(){
+    return {
+      selection: brush.sel,
+      hasSelection: hasSelection(),
+      scope: brush.scope,
+      panels: brush.panels.length,
+      panelsWithRange: qsa(".chart-svg[data-brush-range]").length,
+      pdfMode: pdfModeName(saveProfile(), saveClarity()),
+      ranges: qsa(".chart-svg[data-brush-range]").map(function(el){
+        return [el.id, el.getAttribute("data-brush-range")];
+      }),
+      statsScope: qsa(".surface-meta [data-sm-scope]").map(function(el){
+        return el.textContent;
+      })
+    };
+  };
+  window.__brushSelect = function(t0, t1){
+    brush.sel = {t0: Number(t0), t1: Number(t1)};
+    brush.scope = "full";
+    applySelection();
+    return window.__brushState();
+  };
+  window.__brushReset = function(){
+    brush.sel = null;
+    brush.scope = "full";
+    applySelection();
+    return window.__brushState();
+  };
+  window.__brushStats = function(index){
+    var fl = flightByIndex(index === undefined ? null : index) ||
+      (DATA.flights || [])[0];
+    if (!fl) return null;
+    if (!hasSelection()) return {scope: brush.scope, selection: null};
+    var a = Math.max(brush.sel.t0, fl.t0), b = Math.min(brush.sel.t1, fl.t1);
+    return {scope: brush.scope, a: a, b: b, stats: computeSurfaceStats(fl, a, b)};
+  };
+  window.__brushScope = function(scope){ setBarScope(scope); return window.__brushState(); };
+  document.addEventListener("keydown", function(ev){
+    if (ev.key !== "Escape") return;
+    if (!hasSelection()) return;
+    ev.preventDefault();
+    resetSelection();
+  });
+
 })();
 """
 
 NOSCRIPT = """<noscript><style>
 html,body{height:auto;overflow:auto}
-.app{height:auto}
-main{position:static}
+.stage{position:static;display:block}
+.app{width:auto;height:auto;transform:none!important}
+main{position:static;height:auto!important}
 .page{position:relative;inset:auto;display:flex!important;flex-direction:column;
   height:auto;min-height:70vh;border-top:1px solid var(--line);margin-top:8px}
 .page-body{min-height:420px}
@@ -7975,23 +11347,47 @@ main{position:static}
 本报告用脚本实现翻页；当前浏览器禁用了脚本，已改为纵向平铺显示全部页面。
 </p></noscript>"""
 
-#: 页眉「保存」打开的二级页（模态）：输出类型 + 批注开关。
+#: 页眉「保存」打开的二级页（模态）：版式 + 清晰度 + 输出类型 + 批注开关。
+#: 页数 / 尺寸占位由 :func:`render_report` 按两版实际页数替换；运行中切版式时
+#: JS 会就地更新 ``[data-save-pdf-pages]`` / ``[data-save-png-size]`` 文案。
 SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal="true"
-     aria-labelledby="save-title" aria-hidden="true" hidden>
+     aria-labelledby="save-title" aria-hidden="true" hidden
+     data-profile="@@PROFILE@@" data-clarity="@@CLARITY@@">
   <div class="save-backdrop" data-save-cancel></div>
   <div class="save-dialog" role="document">
     <div class="save-head"><b id="save-title">保存设置</b><span>SAVE / EXPORT</span></div>
     <div class="save-body">
       <div class="save-group">
+        <div class="save-label">版式 / LAYOUT</div>
+        <label class="save-opt"><input type="radio" name="save-profile" value="desktop"@@PROFILE_DESKTOP_CHECKED@@>
+          <span><b>横版 16:9（电脑）</b><i><span data-profile-size="desktop">3200 × 1800</span> · <span data-profile-pages="desktop">@@DESKTOP_PDF_PAGES@@</span> 页 PDF · 屏幕浏览 + 横版导出</i></span></label>
+        <label class="save-opt"><input type="radio" name="save-profile" value="mobile"@@PROFILE_MOBILE_CHECKED@@>
+          <span><b>竖版 3:4（手机）</b><i><span data-profile-size="mobile">1200 × 1600</span> · <span data-profile-pages="mobile">@@MOBILE_PDF_PAGES@@</span> 页 PDF · 只用于导出（手机竖屏）</i></span></label>
+      </div>
+      <div class="save-group">
+        <div class="save-label">清晰度 / CLARITY</div>
+        <label class="save-opt"><input type="radio" name="save-clarity" value="high"@@CLARITY_HIGH_CHECKED@@>
+          <span><b>高清（基准 2×）</b><i>3200 × 1800 / 1200 × 1600 · 默认，B 路径更慢但更清晰</i></span></label>
+        <label class="save-opt"><input type="radio" name="save-clarity" value="standard"@@CLARITY_STANDARD_CHECKED@@>
+          <span><b>标准（1×）</b><i>1600 × 900 / 600 × 800 · 只用于导出，屏幕始终高清</i></span></label>
+      </div>
+      <div class="save-group">
         <div class="save-label">输出类型 / OUTPUT</div>
         <label class="save-opt"><input type="radio" name="save-kind" value="pdf" checked>
-          <span><b>PDF 完整版</b><i>10 页 · 档案纸（封面 + 9 页内容）· 直接下载 PDF 文件（file:// 双击打开时浏览器内生成，http 下用预生成同名 .pdf）</i></span></label>
+          <span><b>PDF 完整版</b><i><span data-save-pdf-pages>@@PDF_PAGES@@</span> 页 · 档案纸（封面 + @@CONTENT_PAGES@@ 页内容）· 直接下载 PDF 文件（file:// 双击打开时浏览器内生成，http 下用预生成同名 .pdf）</i></span></label>
         <label class="save-opt"><input type="radio" name="save-kind" value="png">
-          <span><b>PNG 单张复盘卡</b><i>1600 × 1000 · 档案袋风格 · 下载单张 PNG</i></span></label>
+          <span><b>PNG 单张复盘卡</b><i><span data-save-png-size>3200 × 1800</span> · 档案袋风格 · 下载单张 PNG</i></span></label>
       </div>
       <div class="save-group">
         <label class="save-check"><input type="checkbox" id="save-annot" checked>
           <span><b>保留批注</b><i>红色审阅标记 / 手绘双圈 / 打字机短注；关闭后只留曲线、坐标、事件竖线</i></span></label>
+      </div>
+      <div class="save-group">
+        <div class="save-label">选区 / SELECTION</div>
+        <div class="save-sel" id="save-sel" data-selection="none">
+          <span data-save-sel-text>当前没有选区：PDF / PNG 都按全程导出</span>
+          <b data-save-sel-hint>先在任意图表上拖动框选时间段，再导出即可只出该区间</b>
+        </div>
       </div>
     </div>
     <div class="save-foot">
@@ -8002,11 +11398,154 @@ SAVE_MODAL = """<div class="save-modal" id="save-modal" role="dialog" aria-modal
 </div>"""
 
 
+#: 页眉下面的「框选时间段」工具条（0.5.10 1/2）。
+#:
+#: * 左侧 = 当前选区读数（无选区时是一句操作提示）；
+#: * 中间 = 统计口径切换（全程 / 选区；无选区时「选区」禁用）；
+#: * 右侧 = 复位按钮（有选区时高亮）+ 操作提示。
+#:
+#: 交互全部在内联 JS 里：在任意 ``.chart-svg`` 上拖动 > 4 px 进入框选，
+#: 松手后把全局选区应用到**所有页 / 所有图**（含竖版页面），双击任意图复位。
+BRUSH_BAR = """<div class="brush-bar" id="brush-bar" data-selection="none"
+     data-brush-hint="拖动 = 框选时间段 · 双击 = 复位 · 翻页保持">
+  <span class="brush-sel"><b id="brush-sel-text">未选区间</b><span id="brush-sel-hint">在任意图表上按住拖动即可框选时间段；双击任意图表复位</span></span>
+  <span class="brush-scope" role="group" aria-label="统计口径">
+    <button type="button" class="brush-btn active" data-stat-scope="full"
+      aria-pressed="true" title="顶部统计（r / 对齐后 p90 / 量化台阶 / 样本）按全程计算">统计：全程</button>
+    <button type="button" class="brush-btn" data-stat-scope="sel" aria-pressed="false"
+      disabled title="按当前框选区间用全速率样本重算统计">统计：选区</button>
+  </span>
+  <button type="button" class="brush-reset" id="brush-reset" disabled
+    title="双击任意图表也可以复位到全程">复位（双击图表）</button>
+  <span class="brush-hint">拖动 &gt; 4 px 才进入框选（不影响悬停读数）· 选区会同步到所有页</span>
+</div>"""
+
+
+def _profile_meta(profile: PageProfile, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """内联给 JS 的档位元数据（尺寸 / 页数 / 清晰度倍率 / 复盘卡尺寸）。"""
+    content_pages = int(payload["html"]["page_count"])
+    pdf_pages = int(payload["html"]["pdf_page_count"])
+    return {
+        "key": profile.key,
+        "label": profile.label,
+        "short": profile.short,
+        "width": profile.width,
+        "height": profile.height,
+        "standardWidth": profile.standard_width,
+        "standardHeight": profile.standard_height,
+        "designW": profile.design_w,
+        "designH": profile.design_h,
+        "contentPages": content_pages,
+        "pdfPages": pdf_pages,
+        "cardW": profile.card_w,
+        "cardH": profile.card_h,
+        "cardSuffix": "-m" if profile.key == "mobile" else "",
+        "captureScaleHigh": round(profile.render_scale(CLARITY_HIGH), 4),
+        "captureScaleStandard": round(profile.render_scale(CLARITY_STANDARD), 4),
+        "surfaceSplit": list(profile.surface_split),
+    }
+
+
+def _merge_report_data(
+    desktop: Dict[str, Any],
+    mobile: Dict[str, Any],
+    default_key: str,
+    theme_obj: Theme,
+    stem: str,
+    clarity: str = CLARITY_HIGH,
+) -> Dict[str, Any]:
+    """把两版 payload 合成一份内联数据（series / times 只存一份，panels 各存一套）。"""
+    flights: List[Dict[str, Any]] = []
+    for d_flight, m_flight in zip(desktop["raw_flights"], mobile["raw_flights"]):
+        surface = d_flight.get("surface")
+        surface_meta = None
+        if surface:
+            surface_meta = {
+                "window": surface.get("window"),
+                "windowT0": surface.get("window_t0"),
+                "windowT1": surface.get("window_t1"),
+                "rows": surface.get("rows"),
+                "stats": surface.get("stats"),
+                "axes": [
+                    {
+                        "id": axis_id,
+                        "label": label,
+                        "surf": axis_id.upper() + "_SURF",
+                        "cmd": axis_id.upper() + "_CMD",
+                        "color": COLORS[color_key],
+                    }
+                    for axis_id, label, _surf, _stick, color_key in SURFACE_AXES
+                ],
+            }
+        flights.append(
+            {
+                "index": d_flight["index"],
+                "title": d_flight["title"],
+                "player": d_flight.get("player"),
+                "t0": d_flight["t0"],
+                "t1": d_flight["t1"],
+                "times": d_flight["times"],
+                "series": d_flight["series"],
+                "panels": d_flight["panels"],
+                "panels_m": m_flight["panels"],
+                "surface": surface_meta,
+            }
+        )
+    overview = desktop["overview"]
+    if overview is not None:
+        overview = dict(overview)
+        overview["panels_m"] = (mobile["overview"] or {}).get("panels") or []
+    profiles = {
+        "desktop": _profile_meta(PROFILES["desktop"], desktop),
+        "mobile": _profile_meta(PROFILES["mobile"], mobile),
+    }
+    return {
+        "title": desktop["title"],
+        "file": desktop["file"],
+        "overview": overview,
+        "flights": flights,
+        "players": desktop.get("players") or [],
+        "debrief": {
+            "prefix": "debrief-%s-" % stem,
+            "suffix": {"desktop": "", "mobile": "-m"},
+        },
+        "limits": desktop.get("limits"),
+        "profiles": profiles,
+        "defaultProfile": default_key,
+        "clarity": normalize_clarity(clarity),
+        "clarityKeys": list(CLARITY_KEYS),
+        "theme": {
+            "key": theme_obj.key,
+            "label": theme_obj.label,
+            "crosshair": COLORS["crosshair"],
+            "crosshairStroke": COLORS["crosshair_stroke"],
+        },
+        # 框选重绘用的主题色（x 轴网格 / 刻度字 / 图框 / ES 高亮两层的颜色与线宽）
+        "colors": {
+            "grid": COLORS["grid"],
+            "gridZero": COLORS.get("grid_zero", COLORS["grid"]),
+            "axis": COLORS["axis"],
+            "border": COLORS["border"],
+        },
+        "esStyle": {
+            "screen": ES_HIGHLIGHT_COLOR,
+            "print": ES_HIGHLIGHT_PRINT_COLOR,
+            "width": ES_HIGHLIGHT_WIDTH,
+            "printWidth": ES_HIGHLIGHT_PRINT_WIDTH,
+            "opacity": ES_HIGHLIGHT_OPACITY,
+            "dotR": ES_HIGHLIGHT_DOT_R,
+        },
+        "envelope": {"trigger": ENVELOPE_TRIGGER},
+    }
+
+
 def render_report(
     model: LogModel,
     title: Optional[str] = None,
     theme: Optional[str] = None,
     limits: Optional[SpeedLimits] = None,
+    profile: Optional[str] = None,
+    clarity: Optional[str] = None,
 ) -> str:
     """把模型渲染成完整 HTML 字符串（翻页式、单文件自包含）。
 
@@ -8016,16 +11555,33 @@ def render_report(
 
     ``limits`` 是预先读好的限速表（:func:`load_speed_limits`）；省略时跳过
     限速批注（不影响其它批注）。
+
+    ``profile`` 是**默认导出档位**（``desktop`` 横版 / ``mobile`` 竖版）：屏幕始终
+    显示横版；它决定 ``<body data-export-profile>`` 初值（A 预生成 PDF 用哪一版）
+    和保存设置里的默认选项。HTML 里两版页面都在（竖版默认隐藏），保存设置可以在
+    运行时切换版式 / 清晰度做 B/PNG 导出。
+
+    ``clarity`` 是**默认导出清晰度**（``high`` 高清 = 基准 2× / ``standard`` 标准 = 1×）：
+    只决定 A 预生成打印时的页面物理尺寸与保存设置的初始选项；屏幕始终高清。
     """
     theme_obj = _apply_theme(get_theme(theme))
-    payload = _build_payload(model, limits)
-    page_title = title or payload["title"]
-    page_count = payload["html"]["page_count"]
-    pages_html = "\n".join(payload["html"]["pages"])
+    default_profile = get_profile(profile)
+    default_clarity = normalize_clarity(clarity)
+    desktop = _build_payload(model, limits, PROFILES["desktop"])
+    mobile = _build_payload(model, limits, PROFILES["mobile"])
+    # 屏幕 / 页眉 / 保存设置默认值按「默认导出档位」来；页面本身两版都渲染好了。
+    _apply_profile(PROFILES["desktop"])
+    page_title = title or desktop["title"]
+    desktop_count = int(desktop["html"]["page_count"])
+    mobile_count = int(mobile["html"]["page_count"])
+    desktop_pdf = int(desktop["html"]["pdf_page_count"])
+    mobile_pdf = int(mobile["html"]["pdf_page_count"])
+    pages_html = "\n".join(desktop["html"]["pages"])
+    mobile_pages_html = "\n".join(mobile["html"]["pages"])
 
     meta = model.meta or {}
     replay = meta.get("replay") or {}
-    meta_bits = ["文件 <code>%s</code>" % _html_escape(payload["file"])]
+    meta_bits = ["文件 <code>%s</code>" % _html_escape(desktop["file"])]
     if replay:
         header = replay.get("header") or {}
         if header.get("title"):
@@ -8038,13 +11594,15 @@ def render_report(
         meta_bits.append("机型 %s" % _html_escape(meta.get("vehicle") or "未知"))
         meta_bits.append("WtHud %s" % _html_escape(meta.get("app") or "未知"))
         meta_bits.append(
-            "schema %s" % _html_escape(meta.get("schema") if meta.get("schema") is not None else "?")
+            "schema %s"
+            % _html_escape(meta.get("schema") if meta.get("schema") is not None else "?")
         )
     meta_bits.append("采样 %s" % _html_escape(meta.get("rate") or "?"))
     meta_bits.append("生成于 %s" % _html_escape(model.summary.get("generated_utc", "")))
-    for item in payload.get("vne") or []:
+    for item in desktop.get("vne") or []:
         meta_bits.append(
-            "限速 %s %s km/h" % (_html_escape(item["vehicle"]), _html_escape(_fmt_number(item["vne"], 0)))
+            "限速 %s %s km/h"
+            % (_html_escape(item["vehicle"]), _html_escape(_fmt_number(item["vne"], 0)))
         )
     subline = " · ".join(meta_bits)
     replay_banner = ""
@@ -8065,33 +11623,23 @@ def render_report(
         '<button type="button" class="pbtn" data-nav="next" id="nav-next"'
         ' aria-label="下一页">下一页 &#8250;</button>'
         '<span class="hint">&#8592; &#8594; / PageUp PageDown 翻页 · 鼠标悬停看数值</span>'
-        "</nav>" % page_count
+        "</nav>" % desktop_count
     )
     save_button = (
         '<button type="button" class="header-save" id="btn-save"'
-        ' title="导出 PDF 完整版 / PNG 复盘卡">保存</button>'
+        ' title="导出 PDF 完整版 / PNG 复盘卡（横版 / 竖版）">保存</button>'
     )
-    debrief_host = payload["html"].get("debrief") or ""
-    cover_html = payload["html"].get("cover") or ""
-    pdf_page_count = payload["html"].get("pdf_page_count") or page_count
+    debrief_host = (desktop["html"].get("debrief") or "") + (
+        mobile["html"].get("debrief") or ""
+    )
+    cover_html = desktop["html"].get("cover") or ""
+    mobile_cover_html = mobile["html"].get("cover") or ""
     stem = os.path.splitext(os.path.basename(model.path))[0]
 
     data_json = json.dumps(
-        {
-            "title": page_title,
-            "file": payload["file"],
-            "overview": payload["overview"],
-            "flights": payload["flights"],
-            "players": payload.get("players") or [],
-            "debrief": {"prefix": "debrief-%s-" % stem},
-            "limits": payload.get("limits"),
-            "theme": {
-                "key": theme_obj.key,
-                "label": theme_obj.label,
-                "crosshair": COLORS["crosshair"],
-                "crosshairStroke": COLORS["crosshair_stroke"],
-            },
-        },
+        _merge_report_data(
+            desktop, mobile, default_profile.key, theme_obj, stem, default_clarity
+        ),
         ensure_ascii=False,
         allow_nan=False,
         separators=(",", ":"),
@@ -8099,26 +11647,71 @@ def render_report(
     # 避免数据里出现 </script> 提前闭合
     data_json = data_json.replace("</", "<\\/")
 
+    # 保存设置页的页数 / 尺寸文案按两版实际页数动态生成。
+    save_modal = (
+        SAVE_MODAL.replace("@@PROFILE@@", default_profile.key)
+        .replace("@@CLARITY@@", default_clarity)
+        .replace(
+            "@@PDF_PAGES@@",
+            str(desktop_pdf if default_profile.key == "desktop" else mobile_pdf),
+        )
+        .replace(
+            "@@CONTENT_PAGES@@",
+            str(desktop_count if default_profile.key == "desktop" else mobile_count),
+        )
+        .replace("@@DESKTOP_PDF_PAGES@@", str(desktop_pdf))
+        .replace("@@DESKTOP_CONTENT_PAGES@@", str(desktop_count))
+        .replace("@@MOBILE_PDF_PAGES@@", str(mobile_pdf))
+        .replace("@@MOBILE_CONTENT_PAGES@@", str(mobile_count))
+        .replace(
+            "@@PROFILE_DESKTOP_CHECKED@@",
+            " checked" if default_profile.key == "desktop" else "",
+        )
+        .replace(
+            "@@PROFILE_MOBILE_CHECKED@@",
+            " checked" if default_profile.key == "mobile" else "",
+        )
+        .replace(
+            "@@CLARITY_HIGH_CHECKED@@",
+            " checked" if default_clarity == CLARITY_HIGH else "",
+        )
+        .replace(
+            "@@CLARITY_STANDARD_CHECKED@@",
+            " checked" if default_clarity == CLARITY_STANDARD else "",
+        )
+    )
+    stage_css = _profile_css()
+    print_css = _print_page_css()
+
     return (
         "<!DOCTYPE html>\n"
-        '<html lang="zh-CN" data-theme="%s">\n<head>\n<meta charset="utf-8">\n'
+        '<html lang="zh-CN" data-theme="%s" data-default-profile="%s">\n<head>\n'
+        '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        "<title>%s</title>\n<style>%s</style>\n</head>\n<body>\n"
-        '<div class="app">\n'
+        "<title>%s</title>\n<style>%s\n%s\n%s</style>\n</head>\n<body"
+        ' data-export-profile="%s" data-clarity="%s">\n'
+        '<div class="stage" id="stage">\n'
+        '<div class="app" id="app">\n'
         "<header>\n"
         '<div class="hrow"><h1>%s</h1>%s%s</div>\n'
         "%s"
         "%s"
         '<div class="subline">%s</div>\n'
+        "%s"
         "</header>\n"
         "%s\n"
-        '<main id="pages" data-pdf-pages="%d">\n%s\n%s\n'
+        '<main id="pages" class="pages-desktop" data-profile="desktop"'
+        ' data-pdf-pages="%d" data-content-pages="%d">\n%s\n%s\n'
         '<button type="button" class="side prev" data-nav="prev" aria-label="上一页" disabled>'
         "&#8249;</button>"
         '<button type="button" class="side next" data-nav="next" aria-label="下一页">'
         "&#8250;</button>\n"
         "</main>\n"
+        '<main id="pages-mobile" class="pages-mobile" data-profile="mobile"'
+        ' data-pdf-pages="%d" data-content-pages="%d" aria-hidden="true">\n%s\n%s\n'
+        "</main>\n"
         "%s\n"
+        "</div>\n"
         "</div>\n"
         "%s\n"
         '<div id="tip" class="tip"></div>\n'
@@ -8128,21 +11721,32 @@ def render_report(
         "</body>\n</html>\n"
         % (
             theme_obj.key,
+            default_profile.key,
             _html_escape(page_title),
             _css(theme_obj),
+            stage_css,
+            print_css,
+            default_profile.key,
+            default_clarity,
             "回放分析" if replay else "飞行日志分析",
-            payload["html"]["flight_selector"],
+            desktop["html"]["flight_selector"],
             save_button,
-            payload["html"].get("player_switch") or "",
+            desktop["html"].get("player_switch") or "",
             replay_banner,
             subline,
+            BRUSH_BAR,
             NOSCRIPT,
-            pdf_page_count,
+            desktop_pdf,
+            desktop_count,
             cover_html,
             pages_html,
+            mobile_pdf,
+            mobile_count,
+            mobile_cover_html,
+            mobile_pages_html,
             pager,
             debrief_host,
-            SAVE_MODAL,
+            save_modal,
             data_json,
             JS,
         )
@@ -8411,8 +12015,15 @@ def inject_pdf_fallback(html_text: str) -> str:
         return html_text
     marker = "<script>window.__FLIGHTLOG__="
     body_marked = html_text
-    if "<body>" in body_marked:
-        body_marked = body_marked.replace("<body>", '<body data-pdf-fallback="inline">', 1)
+    # body 开标签现在带 data-export-profile / data-clarity / data-pdf 等属性，
+    # 不能再用 replace("<body>")（会匹配不到）。
+    body_match = re.search(r"<body(?P<attrs>[^>]*)>", body_marked)
+    if body_match and "data-pdf-fallback=" not in (body_match.group("attrs") or ""):
+        body_marked = (
+            body_marked[: body_match.start()]
+            + '<body%s data-pdf-fallback="inline">' % (body_match.group("attrs") or "")
+            + body_marked[body_match.end():]
+        )
     index = body_marked.find(marker)
     if index < 0:
         return body_marked
@@ -8436,6 +12047,8 @@ def write_report(
     limits: Optional[SpeedLimits] = None,
     pdf: Optional[bool] = None,
     status: Optional[Dict[str, Any]] = None,
+    profile: Optional[str] = None,
+    clarity: Optional[str] = None,
 ) -> str:
     """渲染并写盘（UTF-8，自动建目录），返回绝对路径。
 
@@ -8449,14 +12062,22 @@ def write_report(
     * ``True`` = 强制尝试方案 A（失败仍退 B）；
     * ``False`` = 跳过方案 A（selftest / 调试用），B 的库仍然内联。
 
-    ``status`` 非空时填入本次的报告状态（html / pdf / mode / browser / error），
-    供 ``launch.py`` / ``__main__.py`` 打印「PDF 已生成 / 回退浏览器内生成」。
+    ``profile`` / ``clarity`` 是 A 预生成 PDF 用的默认档位与清晰度（横版高清 /
+    竖版高清 / 标准减半），同时写进保存设置默认选项；HTML 里两版页面始终都在。
+
+    ``status`` 非空时填入本次的报告状态（html / pdf / mode / browser / error /
+    profile / clarity），供 ``launch.py`` / ``__main__.py`` 打印导出方式。
     """
     out_path = os.path.abspath(out_path)
     directory = os.path.dirname(out_path)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    content = render_report(model, title=title, theme=theme, limits=limits)
+    active_profile = get_profile(profile)
+    active_clarity = normalize_clarity(clarity)
+    content = render_report(
+        model, title=title, theme=theme, limits=limits,
+        profile=active_profile.key, clarity=active_clarity,
+    )
     # 始终内联方案 B：file:// 双击打开时也能真下载 report.pdf（不再只在 A 失败时注入）
     content = inject_pdf_fallback(content)
     with open(out_path, "w", encoding="utf-8", newline="\n") as handle:
@@ -8468,6 +12089,8 @@ def write_report(
         "mode": "html-only",
         "browser": None,
         "error": None,
+        "profile": active_profile.key,
+        "clarity": active_clarity,
     }
     if _pdf_enabled(pdf):
         pdf_path = os.path.splitext(out_path)[0] + ".pdf"

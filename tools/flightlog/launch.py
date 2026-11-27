@@ -329,12 +329,17 @@ def main(argv: list[str]) -> int:
 def _log_pdf(status: dict) -> None:
     """打印 PDF 导出方式：A 预生成（http 直下）/ B 浏览器内生成（file:// 必走）/ 退回打印。"""
     mode = (status or {}).get("mode")
+    profile = str((status or {}).get("profile") or "desktop")
+    clarity = str((status or {}).get("clarity") or "high")
+    label = ("竖版 3:4 1200×1600" if profile == "mobile" else "横版 16:9 3200×1800")
+    label += " · 高清 2×" if clarity != "standard" else " · 标准 1×（页面减半）"
     if mode == "prebuilt":
-        _log("PDF: %s（headless 预生成；http 下直接下载，file:// 下浏览器内生成）" % status.get("pdf"))
+        _log("PDF: %s（headless 预生成，默认 %s）" % (status.get("pdf"), label))
+        _log("     报告内「保存」可切横版 / 竖版与高清 / 标准再导出（PNG 复盘卡两版）")
     elif mode == "inline":
-        _log("PDF: 未找到 Edge/Chrome → 报告内联 jsPDF + html2canvas，浏览器内生成")
+        _log("PDF: 未找到 Edge/Chrome → 报告内联 jsPDF + html2canvas，浏览器内生成（默认 %s）" % label)
     elif mode == "print":
-        _log("PDF: 离线组件不可用 → 报告退回浏览器打印")
+        _log("PDF: 离线组件不可用 → 报告退回浏览器打印（默认 %s）" % label)
 
 
 def _run_jsonl(source: Path) -> Path:

@@ -84,6 +84,16 @@ EXTRA_NUMERIC_FIELDS = (
     "gear_pct",
     "flaps_pct",
     "airbrake_pct",
+    # schema 2 起可选：舵面实际偏转（%）、俯仰配平量（−1..1）、舵面指令轴（−1..1）。
+    # 旧日志没有这些键，解析结果就是 None —— 不能当 0，0 会画成「舵面中立」，None 才是「没这个数据」。
+    # stick_* 已含配平与增稳（不是原始杆量），记它的理由是精度：% 是 1% 量化，stick 是 0.001 级。
+    "aileron_pct",
+    "elevator_pct",
+    "rudder_pct",
+    "trimmer",
+    "stick_ailerons",
+    "stick_elevator",
+    "pedals",
     "fuel_kg",
     "fuel0_kg",
 )

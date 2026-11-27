@@ -100,12 +100,43 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--surface-preview",
+        action="store_true",
+        help="生成实验性的「舵面 / 配平 / 指令轴」单页预览（正式报告已内置同源舵面页，"
+             "这里用于单独放大查看 / 导出）；默认只画最长一段空中数据",
+    )
+    parser.add_argument(
+        "--surface-preview-all",
+        action="store_true",
+        help="预览页包含地面段（默认只画空中段，避免动作被压扁）",
+    )
+    parser.add_argument(
         "--summary",
         action="store_true",
         help="只打印统计摘要 JSON（配合 --out 时同时写出 HTML）",
     )
     parser.add_argument("--png", default=None, help="额外输出 Pillow PNG 预览到该路径")
     parser.add_argument("--title", default=None, help="HTML 页面标题")
+    parser.add_argument(
+        "--profile",
+        default="desktop",
+        choices=("desktop", "mobile"),
+        metavar="PROFILE",
+        help=(
+            "默认导出档位：desktop = 横版 16:9（3200×1800，默认）/ mobile = 竖版 3:4"
+            "（1200×1600，只用于导出）；屏幕始终显示横版，报告内保存设置可切换"
+        ),
+    )
+    parser.add_argument(
+        "--clarity",
+        default="high",
+        choices=("high", "standard"),
+        metavar="CLARITY",
+        help=(
+            "默认导出清晰度：high = 高清（基准 2×，默认）/ standard = 标准（1×，"
+            "PDF 页面尺寸减半）；只影响导出，屏幕始终高清"
+        ),
+    )
     parser.add_argument(
         "--theme",
         default=DEFAULT_THEME,
@@ -485,32 +516,48 @@ def _speed_limits(args):
     return limits
 
 
+def _profile_label(profile: str, clarity: str) -> str:
+    """导出档位 / 清晰度的中文说明（打印状态行用）。"""
+    profile_text = (
+        "横版 16:9 3200×1800" if profile != "mobile" else "竖版 3:4 1200×1600"
+    )
+    clarity_text = "高清 2×" if clarity != "standard" else "标准 1×（页面尺寸减半）"
+    return "%s · %s" % (profile_text, clarity_text)
+
+
 def _print_pdf_status(status) -> None:
     """打印 PDF 导出方式：A 预生成（http 直下）/ B 浏览器内生成（file:// 必走）/ 退回打印。"""
     if not status:
         return
     mode = status.get("mode")
+    profile = str(status.get("profile") or "desktop")
+    clarity = str(status.get("clarity") or "high")
+    extra = _profile_label(profile, clarity)
     if mode == "prebuilt":
         browser = os.path.basename(str(status.get("browser") or "browser"))
-        print("PDF : %s（%s headless 预生成；http 下报告按钮直接下载，file:// 下浏览器内生成）"
-              % (status.get("pdf"), browser))
+        print("PDF : %s（%s headless 预生成；默认档位 %s）"
+              % (status.get("pdf"), browser, extra))
+        print("      报告内页眉「保存」可切横版 / 竖版与高清 / 标准，B 路径按所选档位逐页渲染。")
     elif mode == "inline":
-        print("PDF : 浏览器内生成（未找到 Edge/Chrome；报告已内联 jsPDF + html2canvas）")
+        print("PDF : 浏览器内生成（未找到 Edge/Chrome；报告已内联 jsPDF + html2canvas；"
+              "默认档位 %s）" % extra)
     elif mode == "print":
-        print("PDF : 浏览器打印（离线 PDF 组件不可用）")
+        print("PDF : 浏览器打印（离线 PDF 组件不可用；默认档位 %s）" % extra)
     elif status.get("error"):
         print("PDF : 未生成（%s）" % status.get("error"))
 
 
 def _finish_model(args, model, source_stem: str) -> int:
     limits = _speed_limits(args)
+    profile = getattr(args, "profile", "desktop") or "desktop"
+    clarity = getattr(args, "clarity", "high") or "high"
     if args.summary:
         print(json.dumps(model.summary, ensure_ascii=False, indent=2))
         if args.out:
             status: Dict[str, Any] = {}
             out_path = write_report(
                 model, args.out, title=args.title, theme=args.theme, limits=limits,
-                status=status,
+                status=status, profile=profile, clarity=clarity,
             )
             print("\nHTML: %s" % out_path, file=sys.stderr)
             _print_pdf_status(status)
@@ -523,7 +570,7 @@ def _finish_model(args, model, source_stem: str) -> int:
     status = {}
     written = write_report(
         model, str(out_path), title=args.title, theme=args.theme, limits=limits,
-        status=status,
+        status=status, profile=profile, clarity=clarity,
     )
     size_kb = os.path.getsize(written) / 1024.0
     print("HTML: %s (%.1f KB)" % (written, size_kb))
@@ -570,6 +617,24 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.mfd_json:
         return _mfd_main(args)
+
+    if args.surface_preview:
+        from .surface_preview import build_preview
+
+        if not args.log:
+            _say('错误: --surface-preview 需要位置参数指定日志，例如：FlightLog --surface-preview "<log.jsonl>"')
+            return 2
+        try:
+            written = build_preview(args.log, args.out, args.title,
+                                    whole_log=bool(getattr(args, "surface_preview_all", False)))
+        except LogError as exc:
+            _say("错误: %s" % exc)
+            return 2
+        except Exception as exc:  # noqa: BLE001 - 预览页失败不该带崩主流程
+            _say("错误: 预览页生成失败: %s" % exc)
+            return 2
+        _say("预览页: %s (%.1f KB)" % (written, os.path.getsize(written) / 1024.0), "stdout")
+        return 0
 
     if not args.log:
         _say('错误: 缺少输入文件（位置参数 log；MFD 导出用 --mfd-json "<log.jsonl>"）')

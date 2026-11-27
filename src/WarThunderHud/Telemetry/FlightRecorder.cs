@@ -57,7 +57,10 @@ public sealed class FlightRecorder : IDisposable
         rec.TryEnqueue(JsonSerializer.Serialize(new MetaLine
         {
             Type = "meta",
-            Schema = 1,
+            // JSONL 录制 schema（和 FlightLog --mfd-json 的 payload schema 是两套，别混）：
+            // schema 2（0.5.10 起）样本行可选带舵面/杆舵 6 个字段，缺键时整条省略。
+            // schema 1 的旧文件解析器的 get() 逻辑完全兼容，不需要迁移。
+            Schema = 2,
             App = WtHud.Program.ShortVersion,
             Utc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
             Vehicle = vehicle,
@@ -97,11 +100,22 @@ public sealed class FlightRecorder : IDisposable
             Gear = Math.Round(s.GearPercent, 1),
             Flaps = Math.Round(s.FlapsPercent, 1),
             Airbrake = Math.Round(s.AirbrakePercent, 1),
+            Aileron = Round(s.AileronPercent, 1),
+            Elevator = Round(s.ElevatorPercent, 1),
+            Rudder = Round(s.RudderPercent, 1),
+            Trimmer = Round(s.Trimmer, 3),
+            StickAilerons = Round(s.StickAilerons, 3),
+            StickElevator = Round(s.StickElevator, 3),
+            Pedals = Round(s.Pedals, 3),
             Fuel = Math.Round(s.FuelKg, 1),
             Fuel0 = Math.Round(s.Fuel0Kg, 1),
         }, JsonOpts);
         TryEnqueue(line);
     }
+
+    /// <summary>可空值取整：null 保持 null（写进 JSONL 时整条字段省略）。</summary>
+    private static double? Round(double? value, int digits) =>
+        value is double v ? Math.Round(v, digits) : null;
 
     /// <summary>在时间轴上记一个事件（死亡/重生/换机型/击落/数据中断）。</summary>
     /// <param name="kind">事件种类：death / spawn / vehicle_change / kill / gap。</param>
@@ -284,6 +298,19 @@ public sealed class FlightRecorder : IDisposable
         [JsonPropertyName("gear_pct")] public double Gear { get; set; }
         [JsonPropertyName("flaps_pct")] public double Flaps { get; set; }
         [JsonPropertyName("airbrake_pct")] public double Airbrake { get; set; }
+        // 舵面实际偏转（−100..100 %）：/state "aileron, %" 等。没这个键的机型为 null，
+        // 序列化时整条省略（旧版 FlightLog 读到的样本形状不变）。
+        [JsonPropertyName("aileron_pct")] public double? Aileron { get; set; }
+        [JsonPropertyName("elevator_pct")] public double? Elevator { get; set; }
+        [JsonPropertyName("rudder_pct")] public double? Rudder { get; set; }
+        // 俯仰配平量（−1..1）：/indicators "trimmer"。8111 的 stick_* 已被配平/增稳合并，
+        // 只有这个键还保留原始设定，所以单独记它（不记 stick_*，那三个等于舵面 ÷ 100）。
+        [JsonPropertyName("trimmer")] public double? Trimmer { get; set; }
+        // 舵面指令轴（−1..1）：/indicators "stick_ailerons" / "stick_elevator" / "pedals"。
+        // 含配平与增稳，不是原始杆量；记它的理由是精度 —— %/100 的 1% 量化在这里是 0.001 级。
+        [JsonPropertyName("stick_ailerons")] public double? StickAilerons { get; set; }
+        [JsonPropertyName("stick_elevator")] public double? StickElevator { get; set; }
+        [JsonPropertyName("pedals")] public double? Pedals { get; set; }
         [JsonPropertyName("fuel_kg")] public double Fuel { get; set; }
         [JsonPropertyName("fuel0_kg")] public double Fuel0 { get; set; }
     }

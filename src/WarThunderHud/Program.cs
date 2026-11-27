@@ -2482,6 +2482,10 @@ public static partial class Program
         }
 
         cursorStop = true;
+        // ★ 先停轮询、再收录制器：反过来的话，摘掉 recorder 之后轮询线程还会再投一帧
+        // 有效快照，把记录器重新拉起来写 1 条样本，进程退出时只落下一个几百字节的空壳
+        // 文件（2026-11-27 实测到一个 665 B、存在 40 ms 的 wtlog）。
+        telemetry.Dispose();
         FlightRecorder? recOnExit;
         lock (recGate)
         {
@@ -2491,7 +2495,6 @@ public static partial class Program
         }
         StopRecorderOutsideGate(recOnExit);   // Stop 的 Join 不在 recGate 里
         configLink?.Dispose();
-        telemetry.Dispose();
         Console.WriteLine($"overlay closed after {frames} frames");
         return 0;
     }
